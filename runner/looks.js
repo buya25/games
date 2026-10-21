@@ -32,55 +32,169 @@ window.NeonLooks = (() => {
 
   const byId = (list, id) => list.find((x) => x.id === id) || list[0];
 
-  // ---------- Runner (screen space: x,y = feet, s = pixels per unit) ----------
-  function line(ctx, x0, y0, x1, y1, color, w) {
-    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x1, y1);
-    ctx.strokeStyle = color; ctx.lineWidth = w; ctx.stroke();
+  // ---------- Runner ----------
+  // A simple skeleton animated in side view (y up, z forward), then projected as
+  // seen from behind and slightly above: things further forward appear higher.
+  const SKINS = ['#f3cfb3', '#e0a986', '#c08058', '#8d5a3b', '#5a3825'];
+  const DEPTH = 0.18;
+  const B = { hip: 0.93, hipW: 0.1, thigh: 0.45, shin: 0.46, shoulderY: 1.42, shoulderW: 0.235, upper: 0.29, fore: 0.27 };
+
+  // Darken (amt < 0) or lighten (amt > 0) a #rrggbb colour.
+  function shade(hex, amt) {
+    if (typeof hex !== 'string' || hex[0] !== '#' || hex.length !== 7) return hex;
+    const n = parseInt(hex.slice(1), 16);
+    const f = (c) => Math.round(amt < 0 ? c * (1 + amt) : c + (255 - c) * amt);
+    return `rgb(${f(n >> 16)}, ${f((n >> 8) & 255)}, ${f(n & 255)})`;
   }
 
-  function drawRunner(ctx, x, y, s, pose, outfit, t) {
+  // One leg: thigh swings with the gait; the knee bends most mid-recovery (heel kick).
+  function legPose(a) {
+    const thigh = 0.55 * Math.sin(a);
+    const rec = Math.max(0, Math.cos(a));
+    return { thigh, knee: 0.15 + 1.45 * rec * rec };
+  }
+
+  function limbChain(x0, y0, z0, ang1, len1, ang2, len2) {
+    const x1 = x0, y1 = y0 - Math.cos(ang1) * len1, z1 = z0 + Math.sin(ang1) * len1;
+    const y2 = y1 - Math.cos(ang2) * len2, z2 = z1 + Math.sin(ang2) * len2;
+    return [{ x: x0, y: y0, z: z0 }, { x: x1, y: y1, z: z1 }, { x: x1, y: y2, z: z2 }];
+  }
+
+  function drawRunner(ctx, x, y, s, pose, outfit, t, skinIdx = 2) {
     const of = outfit;
-    let jacket = of.jacket, arms = of.arms;
-    ctx.save();
+    const skin = SKINS[skinIdx] || SKINS[2];
+    let jacket = of.jacket, sleeve = of.arms;
     if (of.holo) {
       const h = (t * 90) % 360;
       jacket = `hsl(${h}, 100%, 62%)`;
-      arms = `hsl(${(h + 40) % 360}, 90%, 48%)`;
-      ctx.globalAlpha = 0.88;
+      sleeve = `hsl(${(h + 40) % 360}, 90%, 52%)`;
     }
-    ctx.translate(x, y);
-    ctx.rotate((pose.lean || 0) * 0.18);
-    ctx.lineCap = 'round';
     const air = !!pose.air;
-    const run = air ? 0 : Math.sin(pose.phase || 0);
-    const hipY = -0.85 * s;
+    const a = pose.phase || 0;
 
-    // legs (from behind: the leg pushing off is down, the swinging one is lifted)
-    const legs = [[-0.13, air ? 0.25 : Math.max(0, run) * 0.32], [0.13, air ? 0.12 : Math.max(0, -run) * 0.32]];
-    for (const [lx, lift] of legs) {
-      const fx = lx * s, fy = -lift * s;
-      line(ctx, lx * s * 0.8, hipY, fx, fy - 0.06 * s, of.pants, 0.17 * s);
-      ctx.fillStyle = of.shoes;
-      ctx.fillRect(fx - 0.09 * s, fy - 0.1 * s, 0.18 * s, 0.1 * s);
+    // --- pose ---
+    let L, R, armL, armR;
+    if (air) {
+      L = { thigh: 0.95, knee: 1.7 }; R = { thigh: -0.15, knee: 1.15 };
+      armL = { sh: -0.45, el: 0.9 }; armR = { sh: 0.5, el: 1.0 };
+    } else {
+      L = legPose(a); R = legPose(a + Math.PI);
+      // arms swing opposite to the leg on the same side, elbows bent ~90°
+      armL = { sh: 0.6 * Math.sin(a + Math.PI), el: 1.45 + 0.3 * Math.sin(a + Math.PI) };
+      armR = { sh: 0.6 * Math.sin(a), el: 1.45 + 0.3 * Math.sin(a) };
     }
-    // arms
-    const swing = air ? -0.25 : run * 0.18;
-    line(ctx, -0.3 * s, -1.38 * s, -0.36 * s, (-0.95 + swing) * s, arms, 0.13 * s);
-    line(ctx, 0.3 * s, -1.38 * s, 0.36 * s, (-0.95 - swing) * s, arms, 0.13 * s);
-    // torso
-    ctx.fillStyle = jacket;
-    roundRect(ctx, -0.3 * s, -1.48 * s, 0.6 * s, 0.68 * s, 0.12 * s);
-    ctx.fill();
-    ctx.fillStyle = of.stripe;
-    ctx.fillRect(-0.3 * s, -1.2 * s, 0.6 * s, 0.07 * s);
-    // head
-    const hy = -1.66 * s, hr = 0.17 * s;
-    ctx.fillStyle = of.head;
-    ctx.beginPath(); ctx.arc(0, hy, hr, 0, Math.PI * 2); ctx.fill();
-    drawAccessory(ctx, of, s, hy, hr, t);
+    const legs = [[-1, L], [1, R]].map(([side, p]) => ({
+      side, kind: 'leg', pts: limbChain(side * B.hipW, B.hip, 0, p.thigh, B.thigh, p.thigh - p.knee, B.shin), kick: p.knee,
+    }));
+    // keep the lowest foot on the ground; this also produces the natural bounce
+    let lift = 0;
+    if (!air) lift = -Math.min(legs[0].pts[2].y, legs[1].pts[2].y) + 0.02;
+    const twist = air ? 0 : 0.05 * Math.sin(a);
+    const arms = [[-1, armL, twist], [1, armR, -twist]].map(([side, p, tz]) => {
+      const pts = limbChain(side * B.shoulderW, B.shoulderY, tz, p.sh, B.upper, p.sh + p.el, B.fore);
+      pts[1].x = side * B.shoulderW * 1.08;
+      pts[2].x = side * B.shoulderW * 0.85; // hands come in toward the body
+      return { side, kind: 'arm', pts };
+    });
+
+    const P = (px, py, pz) => ({ x: px * s, y: -(py + lift + pz * DEPTH) * s });
+
+    ctx.save();
+    if (of.holo) ctx.globalAlpha = 0.9;
+    ctx.translate(x, y);
+    ctx.rotate((pose.lean || 0) * 0.16);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    const seg = (p0, p1, color, w) => {
+      const a0 = P(p0.x, p0.y, p0.z), a1 = P(p1.x, p1.y, p1.z);
+      ctx.beginPath(); ctx.moveTo(a0.x, a0.y); ctx.lineTo(a1.x, a1.y);
+      ctx.strokeStyle = shade(color, -0.35); ctx.lineWidth = (w + 0.025) * s; ctx.stroke();
+      ctx.strokeStyle = color; ctx.lineWidth = w * s; ctx.stroke();
+    };
+
+    const drawLeg = (lg) => {
+      const [hp, kn, ft] = lg.pts;
+      seg(hp, kn, of.pants, 0.15);
+      seg(kn, ft, of.pants, 0.11);
+      // shoe: we see the heel; when the foot kicks up behind, the sole shows
+      const f = P(ft.x, ft.y, ft.z);
+      ctx.fillStyle = shade(of.shoes, -0.3);
+      ctx.beginPath(); ctx.ellipse(f.x, f.y - 0.02 * s, 0.075 * s, 0.055 * s, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = of.shoes;
+      ctx.beginPath(); ctx.ellipse(f.x, f.y - 0.035 * s, 0.065 * s, 0.045 * s, 0, 0, Math.PI * 2); ctx.fill();
+      if (lg.kick > 0.9) {
+        ctx.fillStyle = '#f4f4f4';
+        ctx.beginPath(); ctx.ellipse(f.x, f.y + 0.005 * s, 0.06 * s, 0.022 * s, 0, 0, Math.PI * 2); ctx.fill();
+      }
+    };
+
+    const drawArm = (arm) => {
+      const [sh, el, hd] = arm.pts;
+      seg(sh, el, sleeve, 0.11);
+      seg(el, hd, skin, 0.085);
+      const h = P(hd.x, hd.y, hd.z);
+      ctx.fillStyle = skin;
+      ctx.beginPath(); ctx.arc(h.x, h.y, 0.052 * s, 0, Math.PI * 2); ctx.fill();
+    };
+
+    const drawBody = () => {
+      // hips / shorts
+      const hl = P(-0.17, 0.86, 0), hr = P(0.17, 1.04, 0);
+      ctx.fillStyle = of.pants;
+      ctx.beginPath();
+      ctx.moveTo(hl.x, hr.y); ctx.lineTo(hr.x, hr.y); ctx.lineTo(hr.x * 0.95, hl.y);
+      ctx.quadraticCurveTo(0, hl.y + 0.05 * s, hl.x * 0.95, hl.y); ctx.closePath(); ctx.fill();
+      // torso: waist -> chest -> rounded shoulders -> neckline
+      const q = (px, py) => P(px, py, 0);
+      const w0 = q(-0.155, 0.97), c0 = q(-0.2, 1.3), s0 = q(-0.225, 1.41), n0 = q(-0.075, 1.5);
+      const n1 = q(0.075, 1.5), s1 = q(0.225, 1.41), c1 = q(0.2, 1.3), w1 = q(0.155, 0.97);
+      const top = q(0, 1.47);
+      ctx.beginPath();
+      ctx.moveTo(w0.x, w0.y);
+      ctx.quadraticCurveTo(c0.x * 1.05, (w0.y + c0.y) / 2, c0.x, c0.y);
+      ctx.quadraticCurveTo(s0.x * 1.02, s0.y + 0.02 * s, s0.x * 0.85, s0.y - 0.04 * s);
+      ctx.quadraticCurveTo(n0.x * 1.6, top.y, n0.x, n0.y);
+      ctx.lineTo(n1.x, n1.y);
+      ctx.quadraticCurveTo(n1.x * 1.6, top.y, s1.x * 0.85, s1.y - 0.04 * s);
+      ctx.quadraticCurveTo(s1.x * 1.02, s1.y + 0.02 * s, c1.x, c1.y);
+      ctx.quadraticCurveTo(c1.x * 1.05, (w1.y + c1.y) / 2, w1.x, w1.y);
+      ctx.closePath();
+      ctx.fillStyle = jacket; ctx.fill();
+      ctx.strokeStyle = shade(of.jacket, -0.35); ctx.lineWidth = 0.02 * s; ctx.stroke();
+      // stripe, spine seam and a soft shadow on one side for volume
+      ctx.save(); ctx.clip();
+      const st = q(0, 1.25);
+      ctx.fillStyle = of.stripe; ctx.fillRect(-0.3 * s, st.y, 0.6 * s, 0.06 * s);
+      ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(0.06 * s, top.y, 0.3 * s, (w0.y - top.y));
+      ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 0.012 * s;
+      ctx.beginPath(); ctx.moveTo(0, top.y + 0.04 * s); ctx.lineTo(0, w0.y); ctx.stroke();
+      ctx.restore();
+      // neck
+      const nk = q(0, 1.47), nt = q(0, 1.58);
+      ctx.strokeStyle = skin; ctx.lineWidth = 0.1 * s;
+      ctx.beginPath(); ctx.moveTo(nk.x, nk.y); ctx.lineTo(nt.x, nt.y); ctx.stroke();
+      // head: ears, skin, then hair covering the back of the head
+      const hc = q(0, 1.68);
+      ctx.fillStyle = shade(skin, -0.1);
+      ctx.beginPath(); ctx.ellipse(-0.115 * s, hc.y + 0.01 * s, 0.028 * s, 0.042 * s, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.beginPath(); ctx.ellipse(0.115 * s, hc.y + 0.01 * s, 0.028 * s, 0.042 * s, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = skin;
+      ctx.beginPath(); ctx.ellipse(0, hc.y, 0.11 * s, 0.135 * s, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = of.head;
+      ctx.beginPath(); ctx.ellipse(0, hc.y - 0.022 * s, 0.115 * s, 0.125 * s, 0, 0, Math.PI * 2); ctx.fill();
+      drawAccessory(ctx, of, s, hc.y, 0.13 * s, t);
+    };
+
+    // painter's order: furthest from the camera first
+    const parts = [
+      ...legs.map((l) => ({ z: (l.pts[1].z + l.pts[2].z) / 2 - 0.05, draw: () => drawLeg(l) })),
+      ...arms.map((r) => ({ z: (r.pts[1].z + r.pts[2].z) / 2, draw: () => drawArm(r) })),
+      { z: 0, draw: drawBody },
+    ];
+    parts.sort((p, q) => q.z - p.z).forEach((p) => p.draw());
     ctx.restore();
   }
-
   function drawAccessory(ctx, of, s, hy, hr, t) {
     const c = of.accColor;
     switch (of.acc) {
@@ -129,15 +243,6 @@ window.NeonLooks = (() => {
     }
   }
 
-  function roundRect(ctx, x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r);
-    ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r);
-    ctx.arcTo(x, y, x + w, y, r);
-    ctx.closePath();
-  }
 
   // ---------- Trails (world space; the runner stays at z = 0) ----------
   // History points are stored by the distance they were recorded at, so a point
@@ -244,5 +349,5 @@ window.NeonLooks = (() => {
     ctx.restore();
   }
 
-  return { OUTFITS, TRAILS, byId, drawRunner, createTrail, updateTrail, drawTrail };
+  return { OUTFITS, TRAILS, SKINS, byId, drawRunner, createTrail, updateTrail, drawTrail };
 })();

@@ -60,7 +60,7 @@
   let city = store.get('neonDash.city', {});      // { buildingId: level }
   let playerName = store.get('neonDash.name', '');
   const owned = Object.assign({ outfits: ['classic'], trails: ['none'] }, store.get('neonDash.owned', {}));
-  const look = Object.assign({ outfit: 'classic', trail: 'none' }, store.get('neonDash.look', {}));
+  const look = Object.assign({ outfit: 'classic', trail: 'none', skin: 2 }, store.get('neonDash.look', {}));
   const boosts = Object.assign({ magnet: 0, shield: 0, double: 0 }, store.get('neonDash.boosts', {}));
   const powerTime = (id) => POWERS[id].base + POWERS[id].per * boosts[id];
 
@@ -158,6 +158,7 @@
   reset();
 
   const score = () => Math.floor(distance) + coinCount * 10;
+  const cadence = (v) => Math.PI * 2 * (1.3 + v * 0.025); // stride phase per second
 
   // ---------- Spawning ----------
   const clampX = (x, hw) => Math.max(-ROAD + hw, Math.min(ROAD - hw, x));
@@ -453,11 +454,28 @@
     c.style.width = '44px'; c.style.height = '56px';
     const x = c.getContext('2d');
     x.setTransform(dpr, 0, 0, dpr, 0, 0);
-    NeonLooks.drawRunner(x, 22, 53, 23, { phase: 0 }, o, 0);
+    NeonLooks.drawRunner(x, 22, 54, 26, { phase: 0.5 }, o, 0, look.skin);
     return c;
   }
 
+  function renderSkinPicker() {
+    const card = document.createElement('div');
+    card.className = 'card skin-card';
+    card.innerHTML = '<div class="info"><div class="name">Skin tone</div><div class="swatches"></div></div>';
+    const row = card.querySelector('.swatches');
+    NeonLooks.SKINS.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.className = 'swatch' + (look.skin === i ? ' on' : '');
+      b.style.background = c;
+      b.setAttribute('aria-label', `Skin tone ${i + 1}`);
+      b.addEventListener('click', () => { look.skin = i; store.set('neonDash.look', look); renderShop(); });
+      row.appendChild(b);
+    });
+    ui.shop.appendChild(card);
+  }
+
   function renderLookCards(kind) {
+    if (kind === 'outfits') renderSkinPicker();
     const list = kind === 'outfits' ? NeonLooks.OUTFITS : NeonLooks.TRAILS;
     const key = kind === 'outfits' ? 'outfit' : 'trail';
     for (const item of list) {
@@ -617,7 +635,7 @@
   function renderRunnerPreview(dt) {
     const sp = 15;
     pv.d += sp * dt;
-    pv.phase += dt * sp * 0.55;
+    pv.phase += dt * cadence(sp);
     const target = Math.sin(time * 1.1) * 1.4;
     const px = pv.x;
     pv.x += (target - pv.x) * Math.min(1, dt * 6);
@@ -659,7 +677,7 @@
     cctx.beginPath(); cctx.ellipse(base.x, base.y, 0.42 * p.s * sh, 0.12 * p.s * sh, 0, 0, Math.PI * 2); cctx.fill();
     NeonLooks.drawTrail(cctx, proj, pv.trail, look.trail, pv.d, time, TRAIL_Z);
     NeonLooks.drawRunner(cctx, p.x, p.y, p.s, { lean: pv.lean, phase: pv.phase, air: pv.y > 0.01 },
-      NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time);
+      NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time, look.skin);
   }
 
   function renderCityPreview() {
@@ -761,7 +779,7 @@
       player.y = Math.max(0, player.y + player.vy * dt);
       if (player.y === 0) player.vy = 0;
     }
-    player.phase += dt * speed * 0.55;
+    player.phase += dt * cadence(speed);
 
     // power-up timers
     for (const id in power) if (power[id] > 0) power[id] = Math.max(0, power[id] - dt);
@@ -1067,7 +1085,7 @@
     NeonLooks.drawTrail(ctx, project, trail, look.trail, distance, time, TRAIL_Z);
     if (invuln > 0 && Math.sin(time * 30) < 0) return; // blink while invulnerable
     NeonLooks.drawRunner(ctx, p.x, p.y, s, { lean: player.lean, phase: player.phase, air: player.y > 0.01 },
-      NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time);
+      NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time, look.skin);
     if (power.shield > 0 && !(power.shield < 2 && Math.sin(time * 20) < 0)) {
       ctx.globalAlpha = 0.5 + Math.sin(time * 5) * 0.15;
       ctx.strokeStyle = C.cyan; ctx.lineWidth = Math.max(2, s * 0.05);
