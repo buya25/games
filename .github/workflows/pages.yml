@@ -2,7 +2,7 @@ name: Deploy to GitHub Pages
 
 on:
   push:
-    branches: [main, claude/blissful-dirac-7o3x7g]
+    branches: [main] # only merged work goes live
   workflow_dispatch:
 
 permissions:

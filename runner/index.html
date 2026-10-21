@@ -26,6 +26,9 @@
       <button id="pauseBtn" aria-label="Pause">❚❚</button>
     </div>
   </div>
+  <div id="reactions" class="reactions hidden">
+    <button aria-label="Laugh">😂</button><button aria-label="Fire">🔥</button><button aria-label="Clap">👏</button>
+  </div>
 
   <div id="menu" class="overlay">
     <h1>NEON<br>DASH</h1>
@@ -33,6 +36,7 @@
     <p class="how desktop">Keyboard: ← → to steer · Space to jump</p>
     <button id="playBtn" class="big">ENDLESS RUN</button>
     <button id="mazeBtn" class="big alt">🌀 MAZE RUN</button>
+    <button id="raceBtn" class="big alt race-btn">🏁 RACE FRIENDS</button>
     <p class="how small-how">Maze: swipe ◀ ▶ to turn at junctions, swipe ▼ to turn back. Find the exit beam before time runs out!</p>
     <button id="cityBtn" class="city-btn">🛍️ CITY &amp; SHOP <span class="wallet">🪙 <span id="walletMenu">0</span></span></button>
     <p class="best">Best: <span id="bestMenu">0</span> · Best maze: <span id="bestMazeMenu">0</span></p>
@@ -91,6 +95,42 @@
     <button id="chSkip" class="small">Not now</button>
   </div>
 
+  <div id="lobby" class="overlay hidden">
+    <h2 class="race-title">🏁 RACE FRIENDS</h2>
+    <div id="lobbyJoin" class="lobby-col">
+      <input id="lbName" maxlength="12" placeholder="Your name" autocomplete="nickname">
+      <p class="sub">Create a race</p>
+      <div id="lbFormats" class="formats"></div>
+      <button id="lbCreate" class="big">CREATE ROOM</button>
+      <p class="sub">or join a friend's room</p>
+      <div class="row">
+        <input id="lbCode" maxlength="4" placeholder="CODE" class="code-in" autocapitalize="characters">
+        <button id="lbJoin" class="small">JOIN</button>
+      </div>
+      <p id="lbError" class="err"></p>
+      <button id="lbBack" class="small">Back</button>
+    </div>
+    <div id="lobbyRoom" class="lobby-col hidden">
+      <p class="sub">Room code</p>
+      <div class="room-code" id="lbRoomCode">----</div>
+      <button id="lbInvite" class="small">📨 Invite friends</button>
+      <p class="detail" id="lbFormatLabel"></p>
+      <div id="lbPlayers" class="players"></div>
+      <button id="lbStart" class="big">START RACE</button>
+      <p id="lbWaiting" class="detail">Waiting for the host to start…</p>
+      <button id="lbLeave" class="small">Leave room</button>
+    </div>
+  </div>
+
+  <div id="results" class="overlay hidden">
+    <h2 id="rsTitle">RESULTS</h2>
+    <ol id="rsList" class="standings"></ol>
+    <p class="earned" id="rsReward"></p>
+    <button id="rsRematch" class="big">REMATCH</button>
+    <p id="rsWaiting" class="detail">Waiting for the host to start a rematch…</p>
+    <button id="rsLeave" class="small">Leave room</button>
+  </div>
+
   <div id="toast" class="toast hidden"></div>
 
   <div id="city" class="hidden">
@@ -114,6 +154,8 @@
   <script src="looks.js"></script>
   <script src="maze.js"></script>
   <script src="ghost.js"></script>
+  <script src="firebase-config.js"></script>
+  <script src="net.js"></script>
   <script src="game.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

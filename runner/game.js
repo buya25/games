@@ -54,6 +54,11 @@
     finalLabel: $('finalLabel'), finalDetail: $('finalDetail'), contNote: $('contNote'), bestMazeMenu: $('bestMazeMenu'),
     raceResult: $('raceResult'), shareBtn: $('shareBtn'), againBtn: $('againBtn'), challenge: $('challenge'),
     chName: $('chName'), chDist: $('chDist'), chCanvas: $('chCanvas'), toast: $('toast'),
+    lobby: $('lobby'), lobbyJoin: $('lobbyJoin'), lobbyRoom: $('lobbyRoom'), lbName: $('lbName'), lbFormats: $('lbFormats'),
+    lbCreate: $('lbCreate'), lbCode: $('lbCode'), lbJoin: $('lbJoin'), lbError: $('lbError'), lbRoomCode: $('lbRoomCode'),
+    lbFormatLabel: $('lbFormatLabel'), lbPlayers: $('lbPlayers'), lbStart: $('lbStart'), lbWaiting: $('lbWaiting'),
+    results: $('results'), rsTitle: $('rsTitle'), rsList: $('rsList'), rsReward: $('rsReward'), rsRematch: $('rsRematch'),
+    rsWaiting: $('rsWaiting'), reactions: $('reactions'),
     cont: $('cont'), contTime: $('contTime'), contCost: $('contCost'), contWallet: $('contWallet'), contRing: $('contRing'),
     walletMenu: $('walletMenu'), walletOver: $('walletOver'), walletCity: $('walletCity'),
     earned: $('earned'), goal: $('goal'), city: $('city'), shop: $('shop'), cityCanvas: $('cityCanvas'),
@@ -379,10 +384,11 @@
   });
 
   // challengeRun: a friend's decoded run to race (same seed = same track), or null
-  function start(challengeRun = null) {
+  // raceSeed: the shared track seed of a live race
+  function start(challengeRun = null, raceSeed = null) {
     initAudio();
     reset();
-    const seed = challengeRun ? challengeRun.seed : NeonGhost.newSeed();
+    const seed = raceSeed !== null ? raceSeed : challengeRun ? challengeRun.seed : NeonGhost.newSeed();
     rng = NeonGhost.seeded(seed);
     playSteps = 0;
     recorder = NeonGhost.createRecorder(seed, look, playerName || 'Runner');
@@ -400,7 +406,7 @@
     last = performance.now();
   }
   function pause() {
-    if (state !== 'play') return;
+    if (state !== 'play' || race) return; // a live race can't be paused
     store.set('neonDash.wallet', wallet);
     state = 'paused';
     drag = null;
@@ -627,6 +633,12 @@
   // Opening a challenge link (?c=...) shows who challenged you and lets you race their ghost.
   let pendingChallenge = null;
   async function readChallengeLink() {
+    const room = new URLSearchParams(location.search).get('room');
+    if (room) {
+      history.replaceState(null, '', location.pathname + location.hash);
+      openLobby(room.toUpperCase().slice(0, 4));
+      return;
+    }
     const code = new URLSearchParams(location.search).get('c');
     if (!code) return;
     history.replaceState(null, '', location.pathname + location.hash);
@@ -1014,11 +1026,12 @@
   // ---------- Update ----------
   function update(dt) {
     time += dt;
+    if (race) smoothRivals(dt);
 
     if (state === 'dying' || state === 'continue' || state === 'over') updateFall(dt);
     if (state === 'dying') {
       deathTimer -= dt;
-      if (deathTimer <= 0) offerContinue();
+      if (deathTimer <= 0) { if (race) raceAfterCrash(); else offerContinue(); }
     }
     if (state === 'continue') {
       contTimer -= dt;
@@ -1031,6 +1044,7 @@
     particles = particles.filter((p) => p.life > 0);
 
     if (state !== 'play') return;
+    if (race) { raceTick(); if (state !== 'play') return; }
     if (mode === 'maze') { updateMaze(dt); return; }
 
     if (runup > 0) {
@@ -1391,20 +1405,19 @@
   }
 
   // A friend's ghost: see-through runner in their look, name tag above.
-  function drawGhost(z) {
+  // A see-through runner in someone else's look, with a name tag (challenge ghosts and live rivals).
+  function drawGhostFigure(g, x, y, z) {
     if (z < -CAM_D + 0.8 || z > SPAWN_Z) return;
-    const run = ghost.run, lk = run.look;
-    const p = project(ghost.x, ghost.y, z), s = p.s;
-    const lying = ghost.done && run.crashed;
+    const lk = g.look || {};
+    const p = project(x, y, z), s = p.s;
     ctx.save();
     ctx.globalAlpha = 0.5;
-    const pose = lying ? { fall: { grounded: true, t: 1 }, roll: Math.PI / 2 }
-      : { phase: ghost.phase, air: ghost.y > 0.01, stride: 1 };
+    const pose = g.lying ? { fall: { grounded: true, t: 1 }, roll: Math.PI / 2 }
+      : { phase: g.phase, air: y > 0.01, stride: g.still ? 0 : 1 };
     NeonLooks.drawRunner(ctx, p.x, p.y, s, pose, NeonLooks.byId(NeonLooks.OUTFITS, lk.outfit), time, lk);
     ctx.restore();
-    // name tag
-    const tag = project(ghost.x, (lying ? 0.6 : ghost.y + 2.15), z);
-    const label = `👻 ${run.name}${lying ? ' 💥' : ''}`;
+    const tag = project(x, g.lying ? 0.6 : y + 2.15, z);
+    const label = `${g.icon} ${g.name}${g.lying ? ' 💥' : ''}`;
     ctx.font = `800 ${Math.max(10, Math.min(16, tag.s * 0.28))}px system-ui, sans-serif`;
     const tw = ctx.measureText(label).width;
     ctx.fillStyle = 'rgba(11,2,33,.7)';
@@ -1413,7 +1426,18 @@
     ctx.textAlign = 'center';
     ctx.fillText(label, tag.x, tag.y);
     ctx.textAlign = 'start';
+    if (g.emoji) drawEmoji(g.emoji, project(x, y + 2.9, z));
   }
+
+  function drawGhost(z) {
+    const run = ghost.run;
+    drawGhostFigure({ name: run.name, look: run.look, phase: ghost.phase, lying: ghost.done && run.crashed, icon: '👻' }, ghost.x, ghost.y, z);
+  }
+
+  const rivalFigure = (rv) => ({
+    name: rv.name, look: rv.look, phase: rv.phase, icon: '🏃', emoji: rivalEmoji(rv),
+    lying: !!(rv.tgt && rv.tgt.a === false), still: !!(rv.tgt && rv.tgt.f),
+  });
 
   // Gap to the ghost, top centre.
   function drawGhostHud() {
@@ -1478,15 +1502,18 @@
     // far to near; the player sits at z = 0
     const items = objects.slice();
     if (ghost && state !== 'menu') items.push({ kind: 'ghost', z: ghost.d - distance });
+    if (race) for (const rv of Object.values(race.rivals)) if (rv.tgt) items.push({ kind: 'rival', z: rv.d - distance, rv });
     const sorted = items.sort((a, b) => b.z - a.z);
     let playerDrawn = false;
     const playerZ = fall ? fall.z : 0;
     for (const o of sorted) {
       if (!playerDrawn && o.z < playerZ) { drawPlayer(); playerDrawn = true; }
       if (o.kind === 'ghost') drawGhost(o.z);
+      else if (o.kind === 'rival') drawGhostFigure(rivalFigure(o.rv), o.rv.x, o.rv.y, o.z);
       else if (o.kind === 'coin') drawCoin(o); else if (o.kind === 'power') drawPower(o); else drawBox(o);
     }
     if (!playerDrawn) drawPlayer();
+    if (myEmoji()) drawEmoji(myEmoji(), project(player.x, player.y + 2.9, 0));
 
     for (const pt of particles) {
       ctx.globalAlpha = Math.max(0, Math.min(1, pt.life * 1.5));
@@ -1503,7 +1530,8 @@
     if (state === 'play' || state === 'paused') drawPowerHud();
     if (ghost && (state === 'play' || state === 'paused')) drawGhostHud();
     if (banner) drawBanner();
-    if (state === 'play' && runup > RUNUP - 1) {
+    drawRaceHud();
+    if (state === 'play' && runup > RUNUP - 1 && !race) {
       const k = (RUNUP - runup); // 0 -> 1 over the first second
       ctx.globalAlpha = Math.max(0, 1 - k);
       ctx.fillStyle = C.yellow;
@@ -1539,7 +1567,7 @@
   // legs keep jogging on the spot while waiting at a junction
   const gaitSpeed = () => (mode === 'maze' && mz && mz.waiting && !fall ? 7 : speed);
 
-  function startMaze(level) {
+  function startMaze(level, seed = null) {
     initAudio();
     const keepCoins = state === 'cleared' ? coinCount : 0;
     reset();
@@ -1549,14 +1577,16 @@
     mode = 'maze';
     coinCount = keepCoins;
     const n = Math.min(13, 4 + level);
-    const maze = NeonMaze.generate(n, n);
+    const mrng = seed !== null ? NeonGhost.seeded(seed) : Math.random; // a race seed gives everyone the same maze
+    const maze = NeonMaze.generate(n, n, 0.08, mrng);
     mz = {
-      maze, level, segs: NeonMaze.wallSegments(maze),
+      maze, level, rng: mrng, segs: NeonMaze.wallSegments(maze),
       pos: { x: 0, y: 0 }, heading: [0, 1, 2, 3].find((d) => NeonMaze.isOpen(maze, 0, 0, d)), yaw: 0,
       want: null, waiting: false, trip: 0, visited: new Set(['0,0']), items: [], popups: [],
     };
     // generous: players explore wrong turns, the shortest path is only a floor
     mz.timeMax = mz.timeLeft = Math.round((maze.pathLength * CELL) / mazeSpeed(level) * 2.3 + 15);
+    if (race) mz.timeMax = mz.timeLeft = 1e9; // races have no clock, just first out
     mz.toExit = NeonMaze.distances(maze, maze.exit.x, maze.exit.y);
     placeMazeItems();
     speed = 0;
@@ -1576,7 +1606,7 @@
     const spots = [];
     for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (fromStart[y][x] >= 2 && !(x === m.exit.x && y === m.exit.y)) spots.push(`${x},${y}`);
     const reveal = new Set();
-    for (let i = 0; i < 1 + Math.floor(mz.level / 3) && spots.length; i++) reveal.add(spots.splice((Math.random() * spots.length) | 0, 1)[0]);
+    for (let i = 0; i < 1 + Math.floor(mz.level / 3) && spots.length; i++) reveal.add(spots.splice((mz.rng() * spots.length) | 0, 1)[0]);
     for (let y = 0; y < m.h; y++) {
       for (let x = 0; x < m.w; x++) {
         if ((x === 0 && y === 0) || (x === m.exit.x && y === m.exit.y)) continue;
@@ -1586,11 +1616,11 @@
         }
         const open = [0, 1, 2, 3].filter((d) => NeonMaze.isOpen(m, x, y, d));
         const straight = open.length === 2 && (open[0] + 2) % 4 === open[1];
-        if (mz.level >= 2 && straight && Math.random() < Math.min(0.35, 0.1 * mz.level)) {
+        if (mz.level >= 2 && straight && mz.rng() < Math.min(0.35, 0.1 * mz.level)) {
           // a barrier across a straight corridor (never at a junction)
           mz.items.push({ kind: 'barrier', wx: x * CELL, wy: y * CELL, axis: open[0] % 2, h: 0.9 });
-        } else if (Math.random() < 0.45) {
-          const d = open[(Math.random() * open.length) | 0];
+        } else if (mz.rng() < 0.45) {
+          const d = open[(mz.rng() * open.length) | 0];
           for (let i = 0; i < 3; i++) mz.items.push({ kind: 'coin', wx: x * CELL + DIRS[d][0] * 1.6 * i, wy: y * CELL + DIRS[d][1] * 1.6 * i, y: 0.9 });
         }
       }
@@ -1750,7 +1780,7 @@
     mz.items = mz.items.filter((it) => !it.taken && !it.dead);
     NeonLooks.updateTrail(trail, look.trail, player, distance, speed, dt, TRAIL_Z);
 
-    ui.score.textContent = Math.max(0, Math.ceil(mz.timeLeft));
+    ui.score.textContent = race ? Math.floor(race.steps / 60) : Math.max(0, Math.ceil(mz.timeLeft));
     ui.score.parentElement.classList.toggle('warn', mz.timeLeft < 10);
     ui.coins.textContent = coinCount;
   }
@@ -1768,6 +1798,7 @@
   }
 
   function mazeCleared() {
+    if (race) { raceFinished(); return; }
     state = 'cleared';
     speed = 0;
     const bonus = 10 * mz.level + Math.ceil(mz.timeLeft);
@@ -1845,7 +1876,15 @@
     }
     const ex = toLocal(m.exit.x * CELL, m.exit.y * CELL);
     if (ex.z > zNear + 0.5) list.push({ depth: ex.z, draw: () => drawExitBeam(ex) });
-    list.push({ depth: -1, draw: drawPlayer });
+    if (race) {
+      for (const rv of Object.values(race.rivals)) {
+        if (!rv.tgt || rv.tgt.mx === undefined) continue;
+        const l = toLocal(rv.mx, rv.my);
+        if (l.z < zNear + 0.3 || l.z > far) continue;
+        list.push({ depth: l.z, draw: () => drawGhostFigure(rivalFigure(rv), l.x, rv.y, l.z) });
+      }
+    }
+    list.push({ depth: -1, draw: () => { drawPlayer(); if (myEmoji()) drawEmoji(myEmoji(), project(0, player.y + 2.9, 0)); } });
     list.sort((p, q) => q.depth - p.depth).forEach((it) => it.draw());
 
     for (const pt of particles) {
@@ -1859,6 +1898,7 @@
     drawMinimap();
     drawMazeHints();
     if (state === 'play' || state === 'paused') drawPowerHud();
+    drawRaceHud();
   }
 
   function drawMazeWall(a, b, facing, zNear, fillPoly) {
@@ -1971,6 +2011,14 @@
     }
     ctx.fillStyle = Math.sin(time * 6) > 0 ? C.gold : '#fff5c2';
     ctx.fillRect(sx(m.exit.x) + cs * 0.2, sy(m.exit.y) + cs * 0.2, cs * 0.6, cs * 0.6);
+    // rivals in a live maze race
+    if (race) {
+      for (const rv of Object.values(race.rivals)) {
+        if (!rv.tgt || rv.tgt.mx === undefined) continue;
+        ctx.fillStyle = C.pink;
+        ctx.beginPath(); ctx.arc(x0 + (rv.mx / CELL + 0.5) * cs, y0 + (m.h - 0.5 - rv.my / CELL) * cs, Math.max(2.5, cs * 0.3), 0, Math.PI * 2); ctx.fill();
+      }
+    }
     // the runner as an arrow
     const px = x0 + (mz.pos.x / CELL + 0.5) * cs, py = y0 + (m.h - 0.5 - mz.pos.y / CELL) * cs;
     const ang = (mz.heading * Math.PI) / 2;
@@ -2011,6 +2059,392 @@
     ctx.textAlign = 'start';
   }
 
+  // ---------- Race Friends (live, 2-4 players) ----------
+  // Everyone runs the same seeded track (or maze) on their own phone and sends their
+  // position ~8 times a second; rivals are drawn as see-through runners.
+  const SPRINT_D = 1000;          // Sprint finish line, metres
+  const RACE_PUBLISH_STEPS = 8;   // send our position every 8 fixed steps
+  const RACE_GRACE_MS = 45000;    // after the first finisher, the race ends this long later
+  const FORMATS = {
+    sprint: { name: 'Sprint', desc: 'First to 1,000 m' },
+    survival: { name: 'Survival', desc: 'Last runner standing' },
+    maze: { name: 'Maze race', desc: 'First out of the same maze' },
+  };
+  let net = null;
+  let race = null;
+  let lobbyFormat = 'sprint';
+  const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const myLook = () => ({ outfit: look.outfit, trail: look.trail, skin: look.skin, hair: look.hair, hairColor: look.hairColor });
+  const fmtTime = (steps) => { const s = steps / 60; return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, '0')}`; };
+  const ordinal = (n) => n + (['th', 'st', 'nd', 'rd'][n] || 'th');
+
+  function lobbyMsg(msg, isError = true) {
+    ui.lbError.textContent = msg || '';
+    ui.lbError.classList.toggle('ok', !isError);
+  }
+  function lobbyBusy(on) { for (const b of [ui.lbCreate, ui.lbJoin]) b.disabled = on; if (on) lobbyMsg('Connecting…', false); }
+
+  function openLobby(code = '') {
+    show(ui.menu, false);
+    show(ui.lobby, true); show(ui.lobbyJoin, true); show(ui.lobbyRoom, false);
+    ui.lbName.value = playerName;
+    ui.lbCode.value = code;
+    lobbyMsg('');
+    renderFormatChips();
+    if (!NeonNet.available()) { lobbyMsg('Online races are not set up yet (the Firebase config is missing).'); return; }
+    if (code && playerName) joinRace(code);
+  }
+
+  function renderFormatChips() {
+    ui.lbFormats.innerHTML = '';
+    for (const [id, f] of Object.entries(FORMATS)) {
+      const b = document.createElement('button');
+      b.className = 'fmt' + (lobbyFormat === id ? ' on' : '');
+      b.innerHTML = `<b>${f.name}</b><small>${f.desc}</small>`;
+      b.addEventListener('click', () => { lobbyFormat = id; renderFormatChips(); });
+      ui.lbFormats.appendChild(b);
+    }
+  }
+
+  function lobbyName() {
+    const n = ui.lbName.value.trim().slice(0, 12);
+    if (!n) { lobbyMsg('Enter your name first.'); ui.lbName.focus(); return null; }
+    playerName = n;
+    store.set('neonDash.name', n);
+    return n;
+  }
+
+  async function createRace() {
+    if (!lobbyName()) return;
+    lobbyBusy(true);
+    try {
+      net = net || await NeonNet.connect();
+      const code = await net.createRoom(lobbyFormat, { name: playerName, look: myLook() });
+      enterRoom(code);
+      lobbyMsg('');
+    } catch (e) { lobbyMsg((e && e.message) || 'Could not connect.'); }
+    lobbyBusy(false);
+  }
+
+  async function joinRace(codeIn) {
+    if (!lobbyName()) return;
+    const code = String(codeIn || ui.lbCode.value).trim().toUpperCase();
+    if (!/^[A-Z0-9]{4}$/.test(code)) { lobbyMsg('Room codes are 4 letters or numbers.'); return; }
+    lobbyBusy(true);
+    try {
+      net = net || await NeonNet.connect();
+      const res = await net.joinRoom(code, { name: playerName, look: myLook() });
+      if (res.ok) { enterRoom(code); lobbyMsg(''); } else lobbyMsg(res.reason);
+    } catch (e) { lobbyMsg((e && e.message) || 'Could not connect.'); }
+    lobbyBusy(false);
+  }
+
+  function enterRoom(code) {
+    race = { code, host: false, format: 'sprint', round: 0, phase: 'lobby', room: null, rivals: {} };
+    race.unsub = net.watchRoom(code, onRoom);
+    ui.lbRoomCode.textContent = code;
+    show(ui.lobbyJoin, false);
+    show(ui.lobbyRoom, true);
+  }
+
+  async function leaveRace() {
+    if (!race) return;
+    const r = race;
+    race = null;
+    if (r.unsub) r.unsub();
+    show(ui.lobby, false); show(ui.results, false); show(ui.reactions, false);
+    show($('pauseBtn'), true);
+    toMenu();
+    try { await net.leaveRoom(r.code, r.host); } catch { /* ignore */ }
+  }
+
+  function onRoom(room) {
+    if (!race) return;
+    race.room = room;
+    const m = room.meta;
+    if (!m) { toast('The host closed the room.'); leaveRace(); return; }
+    race.format = m.format;
+    race.host = m.host === net.uid;
+    for (const [uid, p] of Object.entries(room.players)) {
+      if (uid === net.uid) continue;
+      const rv = race.rivals[uid] || (race.rivals[uid] = { uid, d: 0, x: 0, y: 0, mx: 0, my: 0, phase: Math.random() * 6 });
+      rv.name = p.name; rv.look = p.look || {};
+      const st = room.state[uid];
+      rv.tgt = st && st.r === race.round ? st : null;
+    }
+    for (const uid of Object.keys(race.rivals)) if (!room.players[uid]) delete race.rivals[uid];
+    if (m.status === 'countdown' && m.round !== race.round) { race.round = m.round; beginRace(m); return; }
+    if (race.phase === 'lobby') renderLobbyRoom();
+    if (race.phase === 'racing' || race.phase === 'done') checkRaceOver();
+  }
+
+  function runnerIcon(lk) {
+    const c = document.createElement('canvas');
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    c.width = 40 * dpr; c.height = 52 * dpr;
+    c.style.width = '40px'; c.style.height = '52px';
+    const x = c.getContext('2d');
+    x.setTransform(dpr, 0, 0, dpr, 0, 0);
+    NeonLooks.drawRunner(x, 20, 50, 24, { phase: 0.5 }, NeonLooks.byId(NeonLooks.OUTFITS, lk.outfit), 0, lk);
+    return c;
+  }
+
+  function renderLobbyRoom() {
+    const room = race.room;
+    const f = FORMATS[race.format] || FORMATS.sprint;
+    ui.lbFormatLabel.textContent = `${f.name}: ${f.desc}`;
+    ui.lbPlayers.innerHTML = '';
+    const entries = Object.entries(room.players).sort((a, b) => (a[1].joinedAt || 0) - (b[1].joinedAt || 0));
+    for (const [uid, p] of entries) {
+      const row = document.createElement('div');
+      row.className = 'player';
+      row.appendChild(runnerIcon(p.look || {}));
+      const nm = document.createElement('span');
+      nm.textContent = p.name + (uid === net.uid ? ' (you)' : '');
+      row.appendChild(nm);
+      if (uid === room.meta.host) { const h = document.createElement('small'); h.textContent = 'HOST'; row.appendChild(h); }
+      ui.lbPlayers.appendChild(row);
+    }
+    for (let i = entries.length; i < NeonNet.MAX_PLAYERS; i++) {
+      const row = document.createElement('div');
+      row.className = 'player empty';
+      row.textContent = 'Waiting for a friend…';
+      ui.lbPlayers.appendChild(row);
+    }
+    const enough = entries.length >= 2;
+    show(ui.lbStart, race.host);
+    ui.lbStart.disabled = !enough;
+    ui.lbStart.textContent = enough ? 'START RACE' : 'NEED 2+ RUNNERS';
+    show(ui.lbWaiting, !race.host);
+  }
+
+  function hostStart() {
+    if (!race || !race.host) return;
+    net.setMeta(race.code, { status: 'countdown', seed: NeonGhost.newSeed(), startAt: net.serverNow() + 4000, round: race.round + 1 })
+      .catch(() => toast('Could not start, please try again.'));
+  }
+
+  async function inviteFriends() {
+    if (!race) return;
+    const url = `${location.origin}${location.pathname}?room=${race.code}`;
+    const text = `🏁 Race me in Neon Dash! Room ${race.code}`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Neon Dash race', text, url }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    try { await navigator.clipboard.writeText(`${text} ${url}`); toast('Invite link copied!'); } catch { window.prompt('Send this link to your friends:', url); }
+  }
+
+  function beginRace(m) {
+    for (const el of [ui.lobby, ui.results, ui.over, ui.cleared, ui.cont, ui.paused, ui.city]) show(el, false);
+    Object.assign(race, {
+      phase: 'countdown', seed: m.seed, startAt: m.startAt, steps: 0, finished: 0, dead: false, deadAt: 0,
+      over: false, rewarded: false, firstFinishAt: 0, emoji: '', emojiAt: 0,
+    });
+    for (const rv of Object.values(race.rivals)) Object.assign(rv, { d: 0, x: 0, y: 0, mx: 0, my: 0, tgt: null });
+    if (m.format === 'maze') startMaze(2, m.seed); else start(null, m.seed);
+    state = 'countdown';
+    show(ui.reactions, true);
+    show($('pauseBtn'), false); // a live race can't be paused
+    publishRace();
+  }
+
+  // Ease each rival toward its latest reported position (runs every step while racing or waiting).
+  function smoothRivals(dt) {
+    const k = Math.min(1, dt * 10);
+    for (const rv of Object.values(race.rivals)) {
+      const t = rv.tgt;
+      if (!t) continue;
+      const prev = rv.d;
+      // a report is ~0.1-0.3 s old when it arrives: move the rival on by how far they ran since
+      // (everyone's speed follows the same race clock, so ours is a good estimate of theirs)
+      const lag = t.t ? Math.min(0.6, Math.max(0, (net.serverNow() - t.t) / 1000)) : 0;
+      const running = t.a !== false && !t.f && mode !== 'maze' && state === 'play';
+      // dead reckoning: keep them moving at race speed, and use each report to correct the error
+      if (running) rv.d += speed * dt;
+      rv.d += ((t.d || 0) + (running ? speed * lag : 0) - rv.d) * k;
+      rv.x += ((t.x || 0) - rv.x) * k;
+      rv.y += ((t.y || 0) - rv.y) * k;
+      if (t.mx !== undefined) { rv.mx += (t.mx - rv.mx) * k; rv.my += (t.my - rv.my) * k; }
+      const v = Math.max(0, (rv.d - prev) / dt);
+      if (v > 0.5) rv.phase += dt * cadence(v);
+    }
+  }
+
+  function raceTick() {
+    race.steps++;
+    if (race.format === 'sprint' && !race.finished && distance >= SPRINT_D) { raceFinished(); return; }
+    if (race.steps % RACE_PUBLISH_STEPS === 0) publishRace();
+  }
+
+  function publishRace() {
+    if (!race || !net) return;
+    const st = { r: race.round, t: Math.round(net.serverNow()), d: +distance.toFixed(1), x: +player.x.toFixed(2), y: +player.y.toFixed(2), a: !race.dead, f: race.finished, k: race.deadAt };
+    if (mode === 'maze' && mz) { st.mx = +mz.pos.x.toFixed(2); st.my = +mz.pos.y.toFixed(2); }
+    if (race.emoji && net.serverNow() - race.emojiAt < 2000) { st.e = race.emoji; st.et = race.emojiAt; }
+    net.setState(race.code, st).catch(() => {});
+  }
+
+  function raceFinished() {
+    race.finished = race.steps;
+    race.phase = 'done';
+    state = 'raceDone';
+    speed = 0;
+    banner = { text: 'FINISHED!', color: C.gold, t: 0 };
+    sfx.build();
+    publishRace();
+    checkRaceOver();
+  }
+
+  // After a fall in a race: Survival knocks you out; Sprint gets you back up.
+  function raceAfterCrash() {
+    if (race.format === 'survival') {
+      race.dead = true;
+      race.deadAt = race.steps;
+      race.phase = 'done';
+      state = 'raceDone';
+      banner = { text: "YOU'RE OUT!", color: C.pink, t: 0 };
+      publishRace();
+      checkRaceOver();
+      return;
+    }
+    fall = null;
+    objects = objects.filter((o) => o.kind === 'coin' || o.kind === 'power' || o.z > 25);
+    invuln = 1.5;
+    runup = RUNUP * 0.4;
+    player.y = 0;
+    player.vy = 0;
+    state = 'play';
+  }
+
+  // Cells from a world position to the exit (maze races).
+  const mazeLeft = (wx, wy) => {
+    if (!mz) return 0;
+    const x = Math.max(0, Math.min(mz.maze.w - 1, Math.round(wx / CELL))), y = Math.max(0, Math.min(mz.maze.h - 1, Math.round(wy / CELL)));
+    return mz.toExit[y][x];
+  };
+
+  function raceStandings() {
+    const rows = [{ me: true, uid: net.uid, name: playerName || 'You', d: distance, f: race.finished, a: !race.dead, k: race.deadAt,
+      left: mode === 'maze' && mz ? mazeLeft(mz.pos.x, mz.pos.y) : 0 }];
+    for (const rv of Object.values(race.rivals)) {
+      const t = rv.tgt || {};
+      rows.push({ me: false, uid: rv.uid, name: rv.name, d: t.d || 0, f: t.f || 0, a: t.a !== false, k: t.k || 0, left: t.mx !== undefined ? mazeLeft(t.mx, t.my) : 99 });
+    }
+    const fmt = race.format;
+    const order = (p, q) => {
+      if (fmt === 'survival') return (q.a - p.a) || (p.a ? q.d - p.d : q.k - p.k);
+      if (!!q.f !== !!p.f) return q.f ? 1 : -1;
+      if (p.f) return p.f - q.f;
+      return fmt === 'maze' ? p.left - q.left : q.d - p.d;
+    };
+    // exact ties are broken by player id, so every phone shows the same order
+    rows.sort((p, q) => order(p, q) || (p.uid < q.uid ? -1 : 1));
+    return rows;
+  }
+
+  function checkRaceOver() {
+    if (!race || race.over || !(race.phase === 'racing' || race.phase === 'done')) return;
+    const rows = raceStandings();
+    let over;
+    if (race.format === 'survival') {
+      const alive = rows.filter((r) => r.a).length;
+      over = rows.length < 2 ? !rows[0].a : alive <= 1;
+    } else {
+      if (!race.firstFinishAt && rows.some((r) => r.f)) race.firstFinishAt = Date.now();
+      over = rows.every((r) => r.f) || (race.firstFinishAt && Date.now() - race.firstFinishAt > RACE_GRACE_MS);
+    }
+    if (over) showResults(rows);
+  }
+
+  function showResults(rows) {
+    race.over = true;
+    race.phase = 'results';
+    if (state === 'play' || state === 'dying' || state === 'countdown') state = 'raceDone';
+    speed = 0;
+    const place = rows.findIndex((r) => r.me) + 1;
+    const reward = [50, 25, 10, 10][place - 1] || 10;
+    if (!race.rewarded) { race.rewarded = true; wallet += reward; store.set('neonDash.wallet', wallet); }
+    const metric = (r) => {
+      if (race.format === 'survival') return `${Math.floor(r.d)} m${r.a ? ' · still running' : ''}`;
+      if (r.f) return fmtTime(r.f);
+      return race.format === 'maze' ? `${r.left} cells from exit` : `${Math.floor(r.d)} m`;
+    };
+    ui.rsTitle.textContent = place === 1 ? 'YOU WIN! 🏆' : `YOU CAME ${ordinal(place).toUpperCase()}`;
+    ui.rsList.innerHTML = rows.map((r, i) => `<li class="${r.me ? 'me' : ''}"><span class="medal">${['🥇', '🥈', '🥉', '4️⃣'][i] || ''}</span>`
+      + `<span class="nm">${esc(r.name)}${r.me ? ' (you)' : ''}</span><span class="st">${metric(r)}</span></li>`).join('');
+    ui.rsReward.textContent = `+${reward} 🪙 → wallet: ${wallet}`;
+    show(ui.rsRematch, race.host);
+    show(ui.rsWaiting, !race.host);
+    show(ui.hud, false);
+    show(ui.reactions, false);
+    show(ui.results, true);
+    if (place === 1) sfx.build();
+  }
+
+  function sendReaction(e) {
+    if (!race || !net) return;
+    race.emoji = e;
+    race.emojiAt = net.serverNow();
+    publishRace();
+  }
+
+  // Countdown, standings and status text over the road.
+  function drawRaceHud() {
+    if (!race) return;
+    ctx.textAlign = 'center';
+    if (state === 'countdown') {
+      const left = Math.min(3, Math.ceil((race.startAt - net.serverNow()) / 1000));
+      ctx.font = `900 italic ${Math.min(W, H) * 0.3}px system-ui, sans-serif`;
+      ctx.lineJoin = 'round'; ctx.lineWidth = 8; ctx.strokeStyle = '#0b0221';
+      const txt = left > 0 ? String(left) : 'GO!';
+      ctx.strokeText(txt, W / 2, H * 0.36); ctx.fillStyle = C.yellow; ctx.fillText(txt, W / 2, H * 0.36);
+      ctx.font = '800 18px system-ui, sans-serif'; ctx.fillStyle = '#fff';
+      ctx.fillText(FORMATS[race.format].name + ': ' + FORMATS[race.format].desc, W / 2, H * 0.36 + 40);
+    } else if (race.phase === 'racing' || race.phase === 'done') {
+      const rows = raceStandings();
+      const top = mode === 'maze' ? 200 : 62;
+      ctx.font = '800 13px system-ui, sans-serif';
+      rows.forEach((r, i) => {
+        const val = race.format === 'sprint' ? (r.f ? '🏁' : `${Math.floor(r.d)}/${SPRINT_D} m`)
+          : race.format === 'survival' ? (r.a ? `${Math.floor(r.d)} m` : '💥 out')
+          : (r.f ? '🏁' : `${r.left} to exit`);
+        const line = `${i + 1}. ${r.name}  ${val}`;
+        const tw = ctx.measureText(line).width;
+        const x = mode === 'maze' ? W - 14 - tw / 2 - 8 : W / 2;
+        ctx.fillStyle = 'rgba(11,2,33,.7)';
+        ctx.fillRect(x - tw / 2 - 8, top + i * 22, tw + 16, 20);
+        ctx.fillStyle = r.me ? C.gold : '#e2c7ff';
+        ctx.fillText(line, x, top + i * 22 + 15);
+      });
+      if (race.phase === 'done') {
+        ctx.font = '800 16px system-ui, sans-serif'; ctx.fillStyle = '#fff';
+        ctx.fillText(race.dead ? "You're out. Waiting for the others…" : 'Finished! Waiting for the others…', W / 2, H * 0.9);
+      }
+    }
+    ctx.textAlign = 'start';
+  }
+
+  // Emoji bubble above a runner (screen point at head height).
+  function drawEmoji(e, p) {
+    ctx.font = `${Math.max(18, Math.min(40, p.s * 0.6))}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText(e, p.x, p.y);
+    ctx.textAlign = 'start';
+  }
+  const rivalEmoji = (rv) => (rv.tgt && rv.tgt.e && net.serverNow() - rv.tgt.et < 2000 ? rv.tgt.e : '');
+  const myEmoji = () => (race && race.emoji && net.serverNow() - race.emojiAt < 2000 ? race.emoji : '');
+
+  $('raceBtn').addEventListener('click', () => openLobby());
+  $('lbCreate').addEventListener('click', () => createRace());
+  $('lbJoin').addEventListener('click', () => joinRace());
+  $('lbBack').addEventListener('click', () => { show(ui.lobby, false); show(ui.menu, true); });
+  $('lbStart').addEventListener('click', hostStart);
+  $('lbInvite').addEventListener('click', inviteFriends);
+  $('lbLeave').addEventListener('click', () => leaveRace());
+  $('rsRematch').addEventListener('click', hostStart);
+  $('rsLeave').addEventListener('click', () => leaveRace());
+  for (const b of ui.reactions.querySelectorAll('button')) b.addEventListener('click', () => sendReaction(b.textContent));
+
   readChallengeLink();
 
   // Test hook for automated checks (only when the URL ends in #test).
@@ -2021,6 +2455,9 @@
       barrier: (z) => objects.push({ kind: 'barrier', x: 0, hw: ROAD, z, hd: 0.3, h: 0.9 }),
       peek: () => ({ state, power: { ...power }, invuln, coinCount, wallet, x: player.x }),
       god: (on) => { invuln = on ? 1e9 : 0; },
+      race: () => race && { phase: race.phase, code: race.code, host: race.host, format: race.format, round: race.round,
+        rivals: Object.values(race.rivals).map((r) => ({ name: r.name, d: r.d, tgt: r.tgt })), state, distance, finished: race.finished, dead: race.dead },
+      sprintTo: (d) => { distance = d; },
       run: () => ({ distance, playSteps, recorder, ghost, shareCode, objects: objects.map((o) => ({ kind: o.kind, x: +o.x.toFixed(3), z: +(o.z + distance).toFixed(2) })) }),
       maze: () => mz,
       steer: (d) => mazeSteer(d),
@@ -2032,6 +2469,7 @@
   let last = performance.now();
   const STEP = 1 / 60;
   let stepAcc = 0;
+  let lastRaceCheck = 0;
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
@@ -2040,6 +2478,8 @@
       time += dt;
       camX = Math.sin(time * 0.5) * 0.6;
     } else if (state !== 'paused') {
+      if (race && state === 'countdown' && net.serverNow() >= race.startAt) { state = 'play'; race.phase = 'racing'; stepAcc = 0; }
+      if (race && now - lastRaceCheck > 500) { lastRaceCheck = now; checkRaceOver(); }
       // fixed 1/60 s steps: the same seed and the same moves give the same run on every phone
       stepAcc += dt;
       let n = 0;

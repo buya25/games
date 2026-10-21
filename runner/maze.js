@@ -7,7 +7,8 @@ window.NeonMaze = (() => {
 
   // Recursive backtracker (long winding corridors), then a few extra openings so
   // there is more than one way through and fewer endless dead ends.
-  function generate(w, h, loops = 0.08) {
+  // rng: random source (a seeded one gives every racer the same maze)
+  function generate(w, h, loops = 0.08, rng = Math.random) {
     const cells = [];
     for (let y = 0; y < h; y++) {
       cells.push([]);
@@ -29,7 +30,7 @@ window.NeonMaze = (() => {
         return inside(nx, ny) && !seen.has(`${nx},${ny}`);
       });
       if (!options.length) { stack.pop(); continue; }
-      const d = options[(Math.random() * options.length) | 0];
+      const d = options[(rng() * options.length) | 0];
       carve(x, y, d);
       const nx = x + DIRS[d][0], ny = y + DIRS[d][1];
       seen.add(`${nx},${ny}`);
@@ -39,7 +40,7 @@ window.NeonMaze = (() => {
       for (let x = 0; x < w; x++) {
         for (const d of [0, 1]) {
           const nx = x + DIRS[d][0], ny = y + DIRS[d][1];
-          if (inside(nx, ny) && cells[y][x].walls[d] && Math.random() < loops) carve(x, y, d);
+          if (inside(nx, ny) && cells[y][x].walls[d] && rng() < loops) carve(x, y, d);
         }
       }
     }
