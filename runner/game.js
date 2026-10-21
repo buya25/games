@@ -15,6 +15,17 @@
   const KEY_STEER = 11;      // units/second when steering with the keyboard
   const DRAG_SENS = 1.5;     // finger drag -> world movement multiplier
   const TRAIL_Z = -2.4;      // how far behind the runner trails reach (toward the camera)
+  const POWER_CHANCE = 0.3;  // chance of a power-up in the gap after each obstacle pattern
+  const CONTINUE_TIME = 5;   // seconds to decide on a continue
+  const CONTINUE_BASE = 25;  // first continue costs this, then doubles each time in the same run
+
+  // Power-ups: duration = base + per * upgrade level. costs[i] buys level i + 1.
+  const POWERS = {
+    magnet: { name: 'Coin Magnet', icon: '🧲', color: '#ff2a6d', base: 8, per: 2, desc: 'Pulls in every coin nearby' },
+    shield: { name: 'Shield', icon: '🛡️', color: '#05d9e8', base: 10, per: 3, desc: 'Survive one crash' },
+    double: { name: 'Double Coins', icon: '×2', color: '#ffd23f', base: 10, per: 3, desc: 'Every coin counts twice' },
+  };
+  const POWER_COSTS = [200, 500, 1000, 2000];
 
   const C = {
     skyTop: '#0b0221', skyMid: '#2a0845', skyLow: '#6a0f5c',
@@ -33,6 +44,7 @@
     bestMenu: $('bestMenu'), bestOver: $('bestOver'), newBest: $('newBest'),
     finalScore: $('finalScore'), finalDist: $('finalDist'), finalCoins: $('finalCoins'),
     muteBtn: $('muteBtn'), installBtn: $('installBtn'), iosHint: $('iosHint'),
+    cont: $('cont'), contTime: $('contTime'), contCost: $('contCost'), contWallet: $('contWallet'), contRing: $('contRing'),
     walletMenu: $('walletMenu'), walletOver: $('walletOver'), walletCity: $('walletCity'),
     earned: $('earned'), goal: $('goal'), city: $('city'), shop: $('shop'), cityCanvas: $('cityCanvas'),
   };
@@ -49,6 +61,8 @@
   let playerName = store.get('neonDash.name', '');
   const owned = Object.assign({ outfits: ['classic'], trails: ['none'] }, store.get('neonDash.owned', {}));
   const look = Object.assign({ outfit: 'classic', trail: 'none' }, store.get('neonDash.look', {}));
+  const boosts = Object.assign({ magnet: 0, shield: 0, double: 0 }, store.get('neonDash.boosts', {}));
+  const powerTime = (id) => POWERS[id].base + POWERS[id].per * boosts[id];
 
   // ---------- Audio ----------
   let actx = null;
@@ -75,6 +89,9 @@
     coin: () => { tone(988, 0.07, 'square', 0.05); setTimeout(() => tone(1319, 0.12, 'square', 0.05), 60); },
     crash: () => { tone(200, 0.5, 'sawtooth', 0.12, 40); tone(90, 0.6, 'triangle', 0.15, 30); },
     build: () => [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.16, 'square', 0.05), i * 80)),
+    power: () => { tone(440, 0.25, 'triangle', 0.08, 1760); setTimeout(() => tone(880, 0.2, 'square', 0.04, 1320), 120); },
+    shieldBreak: () => { tone(1200, 0.25, 'sawtooth', 0.06, 200); tone(300, 0.3, 'triangle', 0.1, 80); },
+    revive: () => [392, 523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.12, 'triangle', 0.07), i * 60)),
   };
   function updateMuteBtn() { ui.muteBtn.textContent = muted ? '🔇' : '🔊'; }
   updateMuteBtn();
@@ -115,6 +132,7 @@
   // ---------- Game state ----------
   let state = 'menu'; // menu | play | paused | dying | over
   let speed, distance, coinCount, player, targetX, objects, untilNext, shake, deathTimer, particles, jumpBuffer, time, trail;
+  let power, powerMax, invuln, continues, contTimer;
 
   function reset() {
     speed = START_SPEED;
@@ -129,6 +147,11 @@
     deathTimer = 0;
     particles = [];
     trail = NeonLooks.createTrail();
+    power = { magnet: 0, shield: 0, double: 0 };
+    powerMax = { magnet: 1, shield: 1, double: 1 };
+    invuln = 0;
+    continues = 0;
+    contTimer = 0;
     jumpBuffer = 0;
     time = 0;
   }
@@ -292,6 +315,7 @@
   }
   function pause() {
     if (state !== 'play') return;
+    store.set('neonDash.wallet', wallet);
     state = 'paused';
     drag = null;
     show(ui.paused, true);
@@ -311,6 +335,7 @@
   }
   function crash() {
     state = 'dying';
+    store.set('neonDash.wallet', wallet);
     deathTimer = 0.9;
     shake = 0.45;
     sfx.crash();
@@ -331,13 +356,46 @@
     ui.bestOver.textContent = best;
     ui.newBest.firstChild.textContent = record ? 'NEW BEST! ' : 'Best: ';
     ui.newBest.classList.toggle('record', record);
-    wallet += coinCount;
-    store.set('neonDash.wallet', wallet);
+    store.set('neonDash.wallet', wallet); // coins were banked as they were picked up
     ui.earned.textContent = coinCount;
     ui.walletOver.textContent = wallet;
     ui.goal.innerHTML = goalText();
     show(ui.hud, false);
     show(ui.over, true);
+  }
+
+  const continueCost = () => CONTINUE_BASE * 2 ** continues;
+
+  function offerContinue() {
+    if (wallet < continueCost()) { gameOver(); return; }
+    state = 'continue';
+    contTimer = CONTINUE_TIME;
+    ui.contCost.textContent = continueCost();
+    ui.contWallet.textContent = wallet;
+    show(ui.cont, true);
+  }
+
+  function continueRun() {
+    if (state !== 'continue' || wallet < continueCost()) return;
+    initAudio();
+    wallet -= continueCost();
+    continues++;
+    store.set('neonDash.wallet', wallet);
+    // clear the road ahead so the runner doesn't respawn into a wall
+    objects = objects.filter((o) => o.kind === 'coin' || o.kind === 'power' || o.z > 30);
+    invuln = 2.5;
+    jumpBuffer = 0;
+    particles = [];
+    state = 'play';
+    show(ui.cont, false);
+    sfx.revive();
+    last = performance.now();
+  }
+
+  function declineContinue() {
+    if (state !== 'continue') return;
+    show(ui.cont, false);
+    gameOver();
   }
 
   // ---------- Neon City shop ----------
@@ -353,6 +411,7 @@
     }
     for (const o of NeonLooks.OUTFITS) if (!owned.outfits.includes(o.id)) goals.push({ name: `${o.name} outfit`, cost: o.cost, verb: 'buy' });
     for (const t of NeonLooks.TRAILS) if (!owned.trails.includes(t.id)) goals.push({ name: `${t.name} trail`, cost: t.cost, verb: 'buy' });
+    for (const id in POWERS) if (boosts[id] < POWER_COSTS.length) goals.push({ name: POWERS[id].name, cost: POWER_COSTS[boosts[id]], verb: 'upgrade' });
     return goals;
   }
 
@@ -373,6 +432,7 @@
     city: ['NEON CITY', 'Your city glows on the horizon while you run.'],
     outfits: ['OUTFITS', 'Tap Equip to wear an outfit you own.'],
     trails: ['TRAILS', 'Your trail streams behind you while you run.'],
+    boosts: ['POWER-UPS', 'Grab power-ups on the road. Upgrades make them last longer.'],
   };
 
   function renderShop() {
@@ -382,6 +442,7 @@
     $('cityTip').textContent = TAB_INFO[shopTab][1];
     for (const tb of document.querySelectorAll('#tabs button')) tb.classList.toggle('active', tb.dataset.tab === shopTab);
     if (shopTab === 'city') renderCityCards();
+    else if (shopTab === 'boosts') renderBoostCards();
     else renderLookCards(shopTab);
   }
 
@@ -441,6 +502,40 @@
     try { navigator.vibrate && navigator.vibrate(40); } catch { /* ignore */ }
     renderShop();
     ui.shop.querySelector(`[data-id="${item.id}"]`).classList.add('bought');
+  }
+
+  function renderBoostCards() {
+    for (const id in POWERS) {
+      const P = POWERS[id], lv = boosts[id], max = POWER_COSTS.length, cost = POWER_COSTS[lv];
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.id = id;
+      card.innerHTML = `
+        <div class="icon power-icon" style="color:${P.color};border-color:${P.color}">${P.icon}</div>
+        <div class="info">
+          <div class="name">${P.name}<span class="lvl">LV ${lv}/${max}</span></div>
+          <div class="desc">${P.desc}. Lasts ${powerTime(id)}s${cost === undefined ? '' : ` → ${powerTime(id) + P.per}s`}</div>
+        </div>`;
+      const btn = document.createElement('button');
+      if (cost === undefined) { btn.textContent = 'MAX'; btn.className = 'max'; btn.disabled = true; }
+      else {
+        btn.textContent = `Upgrade 🪙${cost}`;
+        btn.disabled = cost > wallet;
+        btn.addEventListener('click', () => {
+          if (boosts[id] >= max || cost > wallet) return;
+          initAudio();
+          wallet -= cost;
+          boosts[id]++;
+          store.set('neonDash.wallet', wallet);
+          store.set('neonDash.boosts', boosts);
+          sfx.build();
+          renderShop();
+          ui.shop.querySelector(`[data-id="${id}"]`).classList.add('bought');
+        });
+      }
+      card.appendChild(btn);
+      ui.shop.appendChild(card);
+    }
   }
 
   function renderCityCards() {
@@ -589,6 +684,8 @@
   $('cityBtn').addEventListener('click', () => openCity('menu'));
   $('cityBtn2').addEventListener('click', () => openCity('over'));
   $('cityBack').addEventListener('click', closeCity);
+  $('contBtn').addEventListener('click', continueRun);
+  $('contSkip').addEventListener('click', declineContinue);
   for (const tb of document.querySelectorAll('#tabs button')) {
     tb.addEventListener('click', () => { shopTab = tb.dataset.tab; renderShop(); ui.shop.scrollTop = 0; });
   }
@@ -628,7 +725,13 @@
 
     if (state === 'dying') {
       deathTimer -= dt;
-      if (deathTimer <= 0) gameOver();
+      if (deathTimer <= 0) offerContinue();
+    }
+    if (state === 'continue') {
+      contTimer -= dt;
+      ui.contTime.textContent = Math.max(0, Math.ceil(contTimer));
+      ui.contRing.style.setProperty('--p', Math.max(0, contTimer / CONTINUE_TIME));
+      if (contTimer <= 0) declineContinue();
     }
     if (shake > 0) shake = Math.max(0, shake - dt);
     for (const p of particles) { p.x += p.vx * dt; p.y += p.vy * dt; p.vy += 700 * dt; p.life -= dt; }
@@ -660,12 +763,30 @@
     }
     player.phase += dt * speed * 0.55;
 
+    // power-up timers
+    for (const id in power) if (power[id] > 0) power[id] = Math.max(0, power[id] - dt);
+    if (invuln > 0) invuln = Math.max(0, invuln - dt);
+    if (power.magnet > 0) {
+      const k = Math.min(1, dt * 9);
+      for (const o of objects) {
+        if (o.kind !== 'coin' || o.taken || o.z > 18 || o.z < -0.5) continue;
+        o.x += (player.x - o.x) * k;
+        o.y += (player.y + 0.9 - o.y) * k;
+      }
+    }
+
     // spawning
     untilNext -= speed * dt;
     if (untilNext <= 0) {
       const used = spawnPattern();
       const diff = Math.min(1, distance / 3000);
-      untilNext = used + rand(16, 26) - diff * 6;
+      const gap = rand(16, 26) - diff * 6;
+      untilNext = used + gap;
+      if (Math.random() < POWER_CHANCE) {
+        const ids = Object.keys(POWERS);
+        objects.push({ kind: 'power', ptype: ids[(Math.random() * ids.length) | 0],
+          x: rand(-ROAD + 0.8, ROAD - 0.8), y: 1, z: SPAWN_Z + used + gap / 2, hw: 0.45, hd: 0.45, h: 0 });
+      }
     }
 
     // move world in small sub-steps so fast objects can't skip past the player
@@ -678,19 +799,41 @@
         o.z -= stepMove;
         if (o.moving) o.x = Math.sin(time * o.freq + o.phase) * o.amp;
         if (Math.abs(o.z) > o.hd + PLAYER_HD) continue;
-        if (o.kind === 'coin') {
+        if (o.kind === 'coin' || o.kind === 'power') {
           if (!o.taken && Math.abs(o.x - player.x) < 0.75 && Math.abs(o.y - (player.y + 0.9)) < 1.1) {
             o.taken = true;
-            coinCount++;
-            sfx.coin();
+            if (o.kind === 'coin') {
+              const n = power.double > 0 ? 2 : 1;
+              coinCount += n;
+              wallet += n;
+              sfx.coin();
+            } else {
+              power[o.ptype] = powerMax[o.ptype] = powerTime(o.ptype);
+              sfx.power();
+            }
           }
-        } else if (Math.abs(o.x - player.x) < o.hw + PLAYER_HW && player.y < o.h) {
+        } else if (!o.dead && Math.abs(o.x - player.x) < o.hw + PLAYER_HW && player.y < o.h) {
+          if (invuln > 0) continue;
+          if (power.shield > 0) {
+            // the shield takes the hit: smash the obstacle and keep running
+            power.shield = 0;
+            invuln = 0.8;
+            o.dead = true;
+            shake = 0.2;
+            sfx.shieldBreak();
+            try { navigator.vibrate && navigator.vibrate(30); } catch { /* ignore */ }
+            const p = project(player.x, 1, 0.5);
+            for (let i = 0; i < 30; i++) {
+              particles.push({ x: p.x, y: p.y, vx: rand(-300, 300), vy: rand(-350, 50), life: rand(0.4, 0.8), c: Math.random() < 0.5 ? C.cyan : '#ffffff' });
+            }
+            continue;
+          }
           crash();
           break;
         }
       }
     }
-    objects = objects.filter((o) => o.z > -CAM_D + 0.6 && !(o.kind === 'coin' && o.taken));
+    objects = objects.filter((o) => o.z > -CAM_D + 0.6 && !o.taken && !o.dead);
     NeonLooks.updateTrail(trail, look.trail, player, distance, speed, dt, TRAIL_Z);
 
     ui.score.textContent = score();
@@ -867,6 +1010,49 @@
     ctx.globalAlpha = 1;
   }
 
+  function drawPower(o) {
+    if (o.z < -CAM_D + 0.5) return;
+    const P = POWERS[o.ptype];
+    const p = project(o.x, o.y + Math.sin(time * 3 + o.z) * 0.12, o.z);
+    const r = 0.45 * p.s;
+    if (r < 1) return;
+    ctx.globalAlpha = Math.min(1, Math.max(0, (SPAWN_Z + 30 - o.z) / 25));
+    const pulse = 1 + Math.sin(time * 6) * 0.08;
+    ctx.fillStyle = P.color + '33';
+    ctx.beginPath(); ctx.arc(p.x, p.y, r * 1.5 * pulse, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#0b0221';
+    ctx.beginPath(); ctx.arc(p.x, p.y, r, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = P.color; ctx.lineWidth = Math.max(1.5, r * 0.15); ctx.stroke();
+    ctx.fillStyle = P.color;
+    ctx.font = `900 ${r * 1.05}px system-ui, sans-serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(P.icon, p.x, p.y + r * 0.05);
+    ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+    ctx.globalAlpha = 1;
+  }
+
+  // Active power-ups: icon + shrinking bar under the score.
+  function drawPowerHud() {
+    let y = 92;
+    for (const id in power) {
+      if (power[id] <= 0) continue;
+      const P = POWERS[id], k = power[id] / powerMax[id];
+      if (power[id] < 2 && Math.sin(time * 20) < 0) { y += 30; continue; } // blink when ending
+      ctx.fillStyle = 'rgba(11,2,33,.6)';
+      ctx.fillRect(14, y - 12, 118, 24);
+      ctx.fillStyle = P.color;
+      ctx.font = '800 15px system-ui, sans-serif';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(P.icon, 20, y + 1);
+      ctx.fillStyle = 'rgba(255,255,255,.15)';
+      ctx.fillRect(46, y - 4, 78, 8);
+      ctx.fillStyle = P.color;
+      ctx.fillRect(46, y - 4, 78 * k, 8);
+      ctx.textBaseline = 'alphabetic';
+      y += 30;
+    }
+  }
+
   function drawPlayer() {
     const base = project(player.x, 0, 0);
     const p = project(player.x, player.y, 0);
@@ -876,11 +1062,19 @@
     ctx.fillStyle = 'rgba(0,0,0,.5)';
     ctx.beginPath(); ctx.ellipse(base.x, base.y, 0.42 * s * sh, 0.12 * s * sh, 0, 0, Math.PI * 2); ctx.fill();
 
-    if (state === 'dying' || state === 'over') return; // runner "explodes" into particles
+    if (state === 'dying' || state === 'over' || state === 'continue') return; // runner "explodes" into particles
 
     NeonLooks.drawTrail(ctx, project, trail, look.trail, distance, time, TRAIL_Z);
+    if (invuln > 0 && Math.sin(time * 30) < 0) return; // blink while invulnerable
     NeonLooks.drawRunner(ctx, p.x, p.y, s, { lean: player.lean, phase: player.phase, air: player.y > 0.01 },
       NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time);
+    if (power.shield > 0 && !(power.shield < 2 && Math.sin(time * 20) < 0)) {
+      ctx.globalAlpha = 0.5 + Math.sin(time * 5) * 0.15;
+      ctx.strokeStyle = C.cyan; ctx.lineWidth = Math.max(2, s * 0.05);
+      ctx.fillStyle = 'rgba(5,217,232,.12)';
+      ctx.beginPath(); ctx.ellipse(p.x, p.y - 0.9 * s, 0.7 * s, 1.15 * s, 0, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
   }
 
   function render() {
@@ -894,7 +1088,7 @@
     let playerDrawn = false;
     for (const o of sorted) {
       if (!playerDrawn && o.z < 0) { drawPlayer(); playerDrawn = true; }
-      if (o.kind === 'coin') drawCoin(o); else drawBox(o);
+      if (o.kind === 'coin') drawCoin(o); else if (o.kind === 'power') drawPower(o); else drawBox(o);
     }
     if (!playerDrawn) drawPlayer();
 
@@ -910,6 +1104,16 @@
       ctx.fillStyle = `rgba(255,42,109,${Math.max(0, deathTimer - 0.5) * 0.8})`;
       ctx.fillRect(0, 0, W, H);
     }
+    if (state === 'play' || state === 'paused') drawPowerHud();
+  }
+
+  // Test hook for automated checks (only when the URL ends in #test).
+  if (location.hash === '#test') {
+    window.neonTest = {
+      put: (o) => objects.push(Object.assign({ x: 0, y: 1, hw: 0.45, hd: 0.45, h: 0 }, o)),
+      wall: (z, x = 0) => objects.push({ kind: 'wall', x, hw: 1, z, hd: 0.6, h: 2.4 }),
+      peek: () => ({ state, power: { ...power }, invuln, coinCount, wallet, x: player.x }),
+    };
   }
 
   // ---------- Loop ----------

@@ -28,6 +28,13 @@ The shop also sells runner **outfits** (Hot Pink, Sunset Punk, DJ, Cyber Ninja, 
 and **trails** (Neon Streak, Fire Feet, Rainbow, Stardust, Lightning), with a live preview of your
 runner. Definitions and drawing live in `runner/looks.js`.
 
+### Power-ups & continues
+
+Power-ups appear on the road between obstacles: **🧲 Magnet** (pulls in coins), **🛡️ Shield** (survive one
+crash) and **×2 Double Coins**. Each can be upgraded in the shop's ⚡ Power tab to last longer.
+After a crash you can pay coins to keep running (25, then 50, 100, … within the same run).
+Coins go into your wallet the moment you collect them.
+
 Progress (wallet, city, owned items) is stored on the device (`localStorage`).
 
 ### Play locally

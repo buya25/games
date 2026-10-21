@@ -29,7 +29,7 @@
 
   <div id="menu" class="overlay">
     <h1>NEON<br>DASH</h1>
-    <p class="how">Drag left / right to steer<br>Tap or swipe up to jump</p>
+    <p class="how">Drag left / right to steer<br>Tap or swipe up to jump<br><small>Grab 🧲 🛡️ ×2 power-ups on the road</small></p>
     <p class="how desktop">Keyboard: ← → to steer · Space to jump</p>
     <button id="playBtn" class="big">PLAY</button>
     <button id="cityBtn" class="city-btn">🛍️ CITY &amp; SHOP <span class="wallet">🪙 <span id="walletMenu">0</span></span></button>
@@ -42,6 +42,14 @@
     <h2>PAUSED</h2>
     <button id="resumeBtn" class="big">RESUME</button>
     <button id="quitBtn" class="small">Main menu</button>
+  </div>
+
+  <div id="cont" class="overlay hidden">
+    <h2>CONTINUE?</h2>
+    <div class="ring" id="contRing"><span id="contTime">5</span></div>
+    <button id="contBtn" class="big">KEEP RUNNING 🪙<span id="contCost">25</span></button>
+    <p class="detail">Wallet: 🪙 <span id="contWallet">0</span></p>
+    <button id="contSkip" class="small">No thanks</button>
   </div>
 
   <div id="over" class="overlay hidden">
@@ -68,6 +76,7 @@
       <button data-tab="city" class="active">🏙️ City</button>
       <button data-tab="outfits">🧥 Outfits</button>
       <button data-tab="trails">✨ Trails</button>
+      <button data-tab="boosts">⚡ Power</button>
     </div>
     <canvas id="cityCanvas"></canvas>
     <p class="city-tip" id="cityTip">Your city glows on the horizon while you run.</p>
