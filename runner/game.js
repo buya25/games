@@ -27,6 +27,8 @@
     magnet: { name: 'Coin Magnet', icon: '🧲', color: '#ff2a6d', base: 8, per: 2, desc: 'Pulls in every coin nearby' },
     shield: { name: 'Shield', icon: '🛡️', color: '#05d9e8', base: 10, per: 3, desc: 'Survive one crash' },
     double: { name: 'Double Coins', icon: '×2', color: '#ffd23f', base: 10, per: 3, desc: 'Every coin counts twice' },
+    reveal: { name: 'Map Reveal', icon: '👁', color: '#b26bff', base: 6, per: 2, maze: true,
+      desc: 'Maze Run: shows the whole map and lights the way out' },
   };
   const POWER_COSTS = [200, 500, 1000, 2000];
 
@@ -67,7 +69,7 @@
   let playerName = store.get('neonDash.name', '');
   const owned = Object.assign({ outfits: ['classic'], trails: ['none'] }, store.get('neonDash.owned', {}));
   const look = Object.assign({ outfit: 'classic', trail: 'none', skin: 2, hair: 'short', hairColor: 0 }, store.get('neonDash.look', {}));
-  const boosts = Object.assign({ magnet: 0, shield: 0, double: 0 }, store.get('neonDash.boosts', {}));
+  const boosts = Object.assign({ magnet: 0, shield: 0, double: 0, reveal: 0 }, store.get('neonDash.boosts', {}));
   const powerTime = (id) => POWERS[id].base + POWERS[id].per * boosts[id];
 
   // ---------- Audio ----------
@@ -182,8 +184,8 @@
     deathTimer = 0;
     particles = [];
     trail = NeonLooks.createTrail();
-    power = { magnet: 0, shield: 0, double: 0 };
-    powerMax = { magnet: 1, shield: 1, double: 1 };
+    power = { magnet: 0, shield: 0, double: 0, reveal: 0 };
+    powerMax = { magnet: 1, shield: 1, double: 1, reveal: 1 };
     invuln = 0;
     continues = 0;
     contTimer = 0;
@@ -983,7 +985,7 @@
       const gap = rand(16, 26) - diff * 6;
       untilNext = used + gap;
       if (Math.random() < POWER_CHANCE) {
-        const ids = Object.keys(POWERS);
+        const ids = Object.keys(POWERS).filter((id) => !POWERS[id].maze);
         objects.push({ kind: 'power', ptype: ids[(Math.random() * ids.length) | 0],
           x: rand(-ROAD + 0.8, ROAD - 0.8), y: 1, z: SPAWN_Z + used + gap / 2, hw: 0.45, hd: 0.45, h: 0 });
       }
@@ -1389,6 +1391,7 @@
     };
     // generous: players explore wrong turns, the shortest path is only a floor
     mz.timeMax = mz.timeLeft = Math.round((maze.pathLength * CELL) / mazeSpeed(level) * 2.3 + 15);
+    mz.toExit = NeonMaze.distances(maze, maze.exit.x, maze.exit.y);
     placeMazeItems();
     speed = 0;
     runup = RUNUP;
@@ -1402,9 +1405,19 @@
 
   function placeMazeItems() {
     const m = mz.maze;
+    // Map Reveal orbs: 1 per maze, +1 every third maze, at least 2 cells from the start
+    const fromStart = NeonMaze.distances(m, 0, 0);
+    const spots = [];
+    for (let y = 0; y < m.h; y++) for (let x = 0; x < m.w; x++) if (fromStart[y][x] >= 2 && !(x === m.exit.x && y === m.exit.y)) spots.push(`${x},${y}`);
+    const reveal = new Set();
+    for (let i = 0; i < 1 + Math.floor(mz.level / 3) && spots.length; i++) reveal.add(spots.splice((Math.random() * spots.length) | 0, 1)[0]);
     for (let y = 0; y < m.h; y++) {
       for (let x = 0; x < m.w; x++) {
         if ((x === 0 && y === 0) || (x === m.exit.x && y === m.exit.y)) continue;
+        if (reveal.has(`${x},${y}`)) {
+          mz.items.push({ kind: 'power', ptype: 'reveal', wx: x * CELL, wy: y * CELL, y: 1 });
+          continue;
+        }
         const open = [0, 1, 2, 3].filter((d) => NeonMaze.isOpen(m, x, y, d));
         const straight = open.length === 2 && (open[0] + 2) % 4 === open[1];
         if (mz.level >= 2 && straight && Math.random() < Math.min(0.35, 0.1 * mz.level)) {
@@ -1517,6 +1530,7 @@
     }
     if (mz.want && time - mz.want.t > 1.4) mz.want = null; // stale swipe
     if (invuln > 0) invuln = Math.max(0, invuln - dt);
+    if (power.reveal > 0) power.reveal = Math.max(0, power.reveal - dt);
 
     const top = mazeSpeed(mz.level);
     if (mz.trip > 0) {
@@ -1550,12 +1564,18 @@
       if (it.taken || it.dead || it.hit) continue;
       const l = toLocal(it.wx, it.wy, false);
       if (Math.abs(l.z) > CELL / 2 || Math.abs(l.x) > CELL / 2) continue;
-      if (it.kind === 'coin') {
+      if (it.kind === 'coin' || it.kind === 'power') {
         if (Math.abs(l.x) < 0.8 && Math.abs(l.z) < 0.6 && Math.abs(it.y - (player.y + 0.9)) < 1.1) {
           it.taken = true;
-          coinCount++;
-          wallet++;
-          sfx.coin();
+          if (it.kind === 'coin') {
+            coinCount++;
+            wallet++;
+            sfx.coin();
+          } else {
+            power[it.ptype] = powerMax[it.ptype] = powerTime(it.ptype);
+            sfx.power();
+            mazePopup('MAP REVEALED', POWERS[it.ptype].color);
+          }
         }
       } else if (it.axis === mz.heading % 2 && Math.abs(l.z) < 0.3 + PLAYER_HD && player.y < it.h && invuln <= 0 && !fall) {
         mazeTrip(it);
@@ -1635,6 +1655,8 @@
       }
     }
 
+    if (power.reveal > 0) drawRouteArrows(zNear, far, fillPoly);
+
     // walls, items, exit beam and runner, painted far to near
     const list = [];
     for (const sg of mz.segs) {
@@ -1648,6 +1670,7 @@
       const l = toLocal(it.wx, it.wy);
       if (l.z < zNear + 0.3 || l.z > far) continue;
       if (it.kind === 'coin') list.push({ depth: l.z, draw: () => drawCoin({ x: l.x, y: it.y, z: l.z }) });
+      else if (it.kind === 'power') list.push({ depth: l.z, draw: () => drawPower({ ptype: it.ptype, x: l.x, y: it.y, z: l.z }) });
       else {
         const across = it.axis === mz.heading % 2;
         list.push({ depth: l.z, draw: () => drawBox({ kind: 'barrier', x: l.x, z: l.z, hit: it.hit, h: it.h,
@@ -1669,6 +1692,7 @@
 
     drawMinimap();
     drawMazeHints();
+    if (state === 'play' || state === 'paused') drawPowerHud();
   }
 
   function drawMazeWall(a, b, facing, zNear, fillPoly) {
@@ -1707,6 +1731,45 @@
     ctx.textAlign = 'start';
   }
 
+  // Shortest way from the runner's cell to the exit, as a list of cells.
+  function mazeRoute() {
+    const m = mz.maze, d = mz.toExit;
+    let c = cellAt();
+    const route = [c];
+    while (d[c.y][c.x] > 0 && route.length < 400) {
+      let next = null;
+      for (let k = 0; k < 4; k++) {
+        if (!NeonMaze.isOpen(m, c.x, c.y, k)) continue;
+        const nx = c.x + DIRS[k][0], ny = c.y + DIRS[k][1];
+        if (d[ny][nx] === d[c.y][c.x] - 1) { next = { x: nx, y: ny, dir: k }; break; }
+      }
+      if (!next) break;
+      c.dir = next.dir;
+      route.push(next);
+      c = next;
+    }
+    return route;
+  }
+
+  // Glowing chevrons on the floor along the route (while Map Reveal is active).
+  function drawRouteArrows(zNear, far, fillPoly) {
+    const blink = power.reveal < 2 && Math.sin(time * 20) < 0;
+    if (blink) return;
+    ctx.globalAlpha = 0.8 + 0.2 * Math.sin(time * 6);
+    for (const c of mazeRoute()) {
+      if (c.dir === undefined) continue;
+      const [dx, dy] = DIRS[c.dir], px = -dy, py = dx; // forward and sideways in world space
+      for (const off of [0, CELL / 2]) {
+        const cx = c.x * CELL + dx * off, cy = c.y * CELL + dy * off;
+        const pt = (f, sd) => toLocal(cx + dx * f + px * sd, cy + dy * f + py * sd);
+        const shape = [pt(1.1, 0), pt(-0.2, 1.1), pt(0.2, 0), pt(-0.2, -1.1)];
+        if (shape.some((p) => p.z < zNear + 0.2 || p.z > far)) continue;
+        fillPoly(shape.map((p) => project(p.x, 0.02, p.z)), C.gold);
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+
   function drawMinimap() {
     const m = mz.maze;
     const size = Math.min(120, W * 0.3), cs = size / Math.max(m.w, m.h);
@@ -1714,17 +1777,30 @@
     ctx.fillStyle = 'rgba(11,2,33,.75)';
     ctx.fillRect(x0 - 4, y0 - 4, size + 8, size + 8);
     const sx = (x) => x0 + x * cs, sy = (y) => y0 + (m.h - 1 - y) * cs;
-    for (const key of mz.visited) {
+    const revealed = power.reveal > 0;
+    const cells = revealed ? m.cells.flatMap((row, y) => row.map((_, x) => `${x},${y}`)) : mz.visited;
+    for (const key of cells) {
       const [x, y] = key.split(',').map(Number);
-      ctx.fillStyle = 'rgba(5,217,232,.25)';
+      const seen = mz.visited.has(key);
+      ctx.fillStyle = seen ? 'rgba(5,217,232,.25)' : 'rgba(178,107,255,.12)';
       ctx.fillRect(sx(x), sy(y), cs, cs);
-      ctx.strokeStyle = C.pink; ctx.lineWidth = 1.2;
+      ctx.strokeStyle = seen ? C.pink : 'rgba(178,107,255,.8)'; ctx.lineWidth = 1.2;
       const wl = m.cells[y][x].walls;
       ctx.beginPath();
       if (wl[0]) { ctx.moveTo(sx(x), sy(y)); ctx.lineTo(sx(x + 1), sy(y)); }
       if (wl[1]) { ctx.moveTo(sx(x + 1), sy(y)); ctx.lineTo(sx(x + 1), sy(y) + cs); }
       if (wl[2]) { ctx.moveTo(sx(x), sy(y) + cs); ctx.lineTo(sx(x + 1), sy(y) + cs); }
       if (wl[3]) { ctx.moveTo(sx(x), sy(y)); ctx.lineTo(sx(x), sy(y) + cs); }
+      ctx.stroke();
+    }
+    if (revealed) {
+      // the way out, in gold
+      ctx.strokeStyle = C.gold; ctx.lineWidth = Math.max(2, cs * 0.25); ctx.lineJoin = 'round'; ctx.lineCap = 'round';
+      ctx.beginPath();
+      mazeRoute().forEach((c, i) => {
+        const X = sx(c.x) + cs / 2, Y = sy(c.y) + cs / 2;
+        if (i) ctx.lineTo(X, Y); else ctx.moveTo(X, Y);
+      });
       ctx.stroke();
     }
     ctx.fillStyle = Math.sin(time * 6) > 0 ? C.gold : '#fff5c2';

@@ -27,7 +27,8 @@ The second mode (🌀 MAZE RUN on the menu). The runner jogs through a randomly 
 
 Corners with only one way turn by themselves; dead ends turn you round. At a T-junction the runner waits
 (jogging on the spot, clock ticking) until you pick a way. Find the gold exit beam before time runs out;
-the minimap fills in as you explore. Each cleared maze pays a coin bonus and the next one is bigger.
+the minimap fills in as you explore. Purple 👁 **Map Reveal** orbs (maze only, upgradeable in the shop)
+show the whole map with the route to the exit and light gold arrows on the floor for a few seconds. Each cleared maze pays a coin bonus and the next one is bigger.
 Coins, outfits and continues (+20 seconds) are shared with the endless mode. Maze code lives in
 `runner/maze.js` (generation) and the Maze Run section of `runner/game.js`.
 
