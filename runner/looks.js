@@ -74,7 +74,17 @@ window.NeonLooks = (() => {
 
     // --- pose ---
     let L, R, armL, armR;
-    if (air) {
+    const fall = pose.fall;
+    if (fall && !fall.grounded) {
+      // tumbling: knees pulled up, arms flailing
+      L = { thigh: 0.7, knee: 1.3 }; R = { thigh: -0.3, knee: 0.7 };
+      armL = { sh: 2.1 + Math.sin(fall.t * 24) * 0.6, el: 0.4 };
+      armR = { sh: 1.7 + Math.cos(fall.t * 21) * 0.6, el: 0.6 };
+    } else if (fall) {
+      // lying on the road, limp
+      L = { thigh: 0.35, knee: 0.6 }; R = { thigh: -0.1, knee: 0.25 };
+      armL = { sh: 1.5, el: 0.35 }; armR = { sh: -0.35, el: 0.7 };
+    } else if (air) {
       L = { thigh: 0.95, knee: 1.7 }; R = { thigh: -0.15, knee: 1.15 };
       armL = { sh: -0.45, el: 0.9 }; armR = { sh: 0.5, el: 1.0 };
     } else {
@@ -88,7 +98,8 @@ window.NeonLooks = (() => {
     }));
     // keep the lowest foot on the ground; this also produces the natural bounce
     let lift = 0;
-    if (!air) lift = -Math.min(legs[0].pts[2].y, legs[1].pts[2].y) + 0.02;
+    if (fall) lift = 0.12 * Math.abs(Math.sin(pose.roll || 0)); // body thickness when lying on its side
+    else if (!air) lift = -Math.min(legs[0].pts[2].y, legs[1].pts[2].y) + 0.02;
     const twist = air ? 0 : 0.05 * Math.sin(a);
     const arms = [[-1, armL, twist], [1, armR, -twist]].map(([side, p, tz]) => {
       const pts = limbChain(side * B.shoulderW, B.shoulderY, tz, p.sh, B.upper, p.sh + p.el, B.fore);
@@ -102,7 +113,7 @@ window.NeonLooks = (() => {
     ctx.save();
     if (of.holo) ctx.globalAlpha = 0.9;
     ctx.translate(x, y);
-    ctx.rotate((pose.lean || 0) * 0.16);
+    ctx.rotate(fall ? pose.roll || 0 : (pose.lean || 0) * 0.16);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 

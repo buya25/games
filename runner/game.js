@@ -91,6 +91,7 @@
     build: () => [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.16, 'square', 0.05), i * 80)),
     power: () => { tone(440, 0.25, 'triangle', 0.08, 1760); setTimeout(() => tone(880, 0.2, 'square', 0.04, 1320), 120); },
     shieldBreak: () => { tone(1200, 0.25, 'sawtooth', 0.06, 200); tone(300, 0.3, 'triangle', 0.1, 80); },
+    thud: () => { tone(110, 0.18, 'triangle', 0.18, 50); tone(70, 0.25, 'sine', 0.15, 40); },
     revive: () => [392, 523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.12, 'triangle', 0.07), i * 60)),
   };
   function updateMuteBtn() { ui.muteBtn.textContent = muted ? '🔇' : '🔊'; }
@@ -132,7 +133,7 @@
   // ---------- Game state ----------
   let state = 'menu'; // menu | play | paused | dying | over
   let speed, distance, coinCount, player, targetX, objects, untilNext, shake, deathTimer, particles, jumpBuffer, time, trail;
-  let power, powerMax, invuln, continues, contTimer;
+  let power, powerMax, invuln, continues, contTimer, fall;
 
   function reset() {
     speed = START_SPEED;
@@ -152,6 +153,7 @@
     invuln = 0;
     continues = 0;
     contTimer = 0;
+    fall = null;
     jumpBuffer = 0;
     time = 0;
   }
@@ -334,16 +336,70 @@
     ui.walletMenu.textContent = wallet;
     show(ui.paused, false); show(ui.over, false); show(ui.hud, false); show(ui.menu, true);
   }
-  function crash() {
+  // Stumble and fall: walls knock the runner back, barriers trip them forward.
+  // Either way they topple sideways (away from the obstacle) and slide to a stop.
+  function crash(o) {
     state = 'dying';
     store.set('neonDash.wallet', wallet);
-    deathTimer = 0.9;
-    shake = 0.45;
+    deathTimer = 1.7;
+    shake = 0.35;
     sfx.crash();
     try { navigator.vibrate && navigator.vibrate([60, 40, 120]); } catch { /* ignore */ }
-    const p = project(player.x, player.y + 1, 0);
-    for (let i = 0; i < 40; i++) {
-      particles.push({ x: p.x, y: p.y, vx: rand(-260, 260), vy: rand(-380, 60), life: rand(0.5, 1), c: Math.random() < 0.5 ? C.cyan : C.pink });
+    const trip = o && o.kind === 'barrier';
+    const off = o ? player.x - o.x : 0;
+    let dir = Math.abs(off) > 0.15 ? Math.sign(off) : (Math.random() < 0.5 ? -1 : 1);
+    // the body ends up ~1.8 units to the side: fall toward whichever side has room
+    if (Math.abs(player.x + dir * 1.8) > ROAD - 0.2) dir = -dir;
+    if (o) o.hit = true; // fade the obstacle so the fall stays visible
+    fall = {
+      t: 0, grounded: false, dir,
+      x: player.x, y: player.y, z: 0,
+      vx: dir * (trip ? 1.2 : 2), vy: trip ? 3.5 : 3, vz: trip ? Math.min(4, speed * 0.15) : -2.2,
+      roll: player.lean * 0.16, vroll: dir * (trip ? 5.5 : 4),
+    };
+    const p = project(player.x, player.y + 1.2, 0.4);
+    for (let i = 0; i < 16; i++) {
+      particles.push({ x: p.x, y: p.y, vx: rand(-220, 220), vy: rand(-300, 40), life: rand(0.3, 0.6), c: Math.random() < 0.5 ? '#ffffff' : C.yellow });
+    }
+  }
+
+  function updateFall(dt) {
+    if (!fall) return;
+    const f = fall;
+    f.t += dt;
+    f.x += f.vx * dt;
+    f.z += f.vz * dt;
+    // stay in view: feet and head both on the road
+    const lo = -ROAD + 0.3 + (f.dir < 0 ? 1.6 : 0), hi = ROAD - 0.3 - (f.dir > 0 ? 1.6 : 0);
+    f.x = Math.max(lo, Math.min(hi, f.x));
+    f.z = Math.max(-0.4, Math.min(2.5, f.z));
+    camX += ((f.x + f.dir * 0.9) * 0.55 - camX) * Math.min(1, dt * 3); // ease the camera onto the body
+    if (!f.grounded) {
+      f.vy -= GRAVITY * dt;
+      f.y += f.vy * dt;
+      f.roll += f.vroll * dt;
+      if (f.y <= 0 && f.vy < 0) {
+        f.y = 0;
+        f.grounded = true;
+        f.vy = 0;
+        shake = Math.max(shake, 0.25);
+        sfx.thud();
+        try { navigator.vibrate && navigator.vibrate(50); } catch { /* ignore */ }
+        const p = project(f.x, 0, f.z);
+        for (let i = 0; i < 12; i++) {
+          particles.push({ x: p.x + rand(-20, 20), y: p.y, vx: rand(-120, 120), vy: rand(-120, -20), life: rand(0.3, 0.6), c: 'rgba(200,180,255,.6)' });
+        }
+      }
+    } else {
+      // small hop after the first impact, then friction until it stops
+      const k = Math.pow(0.02, dt);
+      f.vx *= k; f.vz *= k;
+    }
+    // settle lying on the side the runner is falling toward
+    if (f.grounded || Math.abs(f.roll) > Math.PI / 2) {
+      const target = f.dir * Math.PI / 2;
+      f.roll += (target - f.roll) * Math.min(1, dt * 12);
+      f.vroll = 0;
     }
   }
   function gameOver() {
@@ -386,6 +442,9 @@
     objects = objects.filter((o) => o.kind === 'coin' || o.kind === 'power' || o.z > 30);
     invuln = 2.5;
     jumpBuffer = 0;
+    fall = null;
+    player.y = 0;
+    player.vy = 0;
     particles = [];
     state = 'play';
     show(ui.cont, false);
@@ -741,6 +800,7 @@
   function update(dt) {
     time += dt;
 
+    if (state === 'dying' || state === 'continue' || state === 'over') updateFall(dt);
     if (state === 'dying') {
       deathTimer -= dt;
       if (deathTimer <= 0) offerContinue();
@@ -846,7 +906,7 @@
             }
             continue;
           }
-          crash();
+          crash(o);
           break;
         }
       }
@@ -976,7 +1036,7 @@
     const bbl = project(x0, 0, zb), bbr = project(x1, 0, zb);
     const isWall = o.kind === 'wall';
     const edge = isWall ? (o.moving ? C.yellow : C.pink) : C.yellow;
-    const fade = Math.min(1, Math.max(0, (SPAWN_Z + 10 - o.z) / 25)); // fade in at distance
+    const fade = Math.min(1, Math.max(0, (SPAWN_Z + 10 - o.z) / 25)) * (o.hit ? 0.35 : 1); // fade in at distance
     ctx.globalAlpha = fade;
 
     if (x1 < camX) poly([fbr, ftr, btr, bbr], isWall ? '#2b0f55' : '#3a2a05');
@@ -1071,7 +1131,20 @@
     }
   }
 
+  function drawFallen() {
+    const f = fall;
+    const base = project(f.x, 0, f.z), p = project(f.x, f.y, f.z), s = p.s;
+    const flat = Math.abs(Math.sin(f.roll));
+    ctx.fillStyle = 'rgba(0,0,0,.5)';
+    ctx.beginPath();
+    ctx.ellipse(base.x + Math.sin(f.roll) * 0.8 * s * flat, base.y, (0.42 + flat * 0.6) * s, 0.14 * s, 0, 0, Math.PI * 2);
+    ctx.fill();
+    NeonLooks.drawRunner(ctx, p.x, p.y, s, { fall: f, roll: f.roll },
+      NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time, look.skin);
+  }
+
   function drawPlayer() {
+    if (fall) { drawFallen(); return; }
     const base = project(player.x, 0, 0);
     const p = project(player.x, player.y, 0);
     const s = p.s;
@@ -1080,7 +1153,6 @@
     ctx.fillStyle = 'rgba(0,0,0,.5)';
     ctx.beginPath(); ctx.ellipse(base.x, base.y, 0.42 * s * sh, 0.12 * s * sh, 0, 0, Math.PI * 2); ctx.fill();
 
-    if (state === 'dying' || state === 'over' || state === 'continue') return; // runner "explodes" into particles
 
     NeonLooks.drawTrail(ctx, project, trail, look.trail, distance, time, TRAIL_Z);
     if (invuln > 0 && Math.sin(time * 30) < 0) return; // blink while invulnerable
@@ -1104,8 +1176,9 @@
     // far to near; the player sits at z = 0
     const sorted = objects.slice().sort((a, b) => b.z - a.z);
     let playerDrawn = false;
+    const playerZ = fall ? fall.z : 0;
     for (const o of sorted) {
-      if (!playerDrawn && o.z < 0) { drawPlayer(); playerDrawn = true; }
+      if (!playerDrawn && o.z < playerZ) { drawPlayer(); playerDrawn = true; }
       if (o.kind === 'coin') drawCoin(o); else if (o.kind === 'power') drawPower(o); else drawBox(o);
     }
     if (!playerDrawn) drawPlayer();
@@ -1119,7 +1192,7 @@
     ctx.restore();
 
     if (state === 'dying') {
-      ctx.fillStyle = `rgba(255,42,109,${Math.max(0, deathTimer - 0.5) * 0.8})`;
+      ctx.fillStyle = `rgba(255,42,109,${Math.max(0, deathTimer - 1.4) * 1.2})`;
       ctx.fillRect(0, 0, W, H);
     }
     if (state === 'play' || state === 'paused') drawPowerHud();
@@ -1130,6 +1203,7 @@
     window.neonTest = {
       put: (o) => objects.push(Object.assign({ x: 0, y: 1, hw: 0.45, hd: 0.45, h: 0 }, o)),
       wall: (z, x = 0) => objects.push({ kind: 'wall', x, hw: 1, z, hd: 0.6, h: 2.4 }),
+      barrier: (z) => objects.push({ kind: 'barrier', x: 0, hw: ROAD, z, hd: 0.3, h: 0.9 }),
       peek: () => ({ state, power: { ...power }, invuln, coinCount, wallet, x: player.x }),
     };
   }
