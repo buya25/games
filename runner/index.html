@@ -10,7 +10,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="Neon Dash">
-  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="manifest" href="../manifest.webmanifest">
   <link rel="icon" href="icons/icon-192.png">
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
   <link rel="stylesheet" href="style.css">
@@ -31,6 +31,7 @@
   </div>
 
   <div id="menu" class="overlay">
+    <a href="../" class="home-link" aria-label="All games">← All games</a>
     <h1>NEON<br>DASH</h1>
     <p class="how">Drag left / right to steer<br>Tap or swipe up to jump<br><small>Grab 🧲 🛡️ ×2 power-ups on the road</small></p>
     <p class="how desktop">Keyboard: ← → to steer · Space to jump</p>
@@ -159,7 +160,7 @@
   <script src="game.js"></script>
   <script>
     if ('serviceWorker' in navigator) {
-      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+      window.addEventListener('load', () => navigator.serviceWorker.register('../sw.js').catch(() => {}));
     }
   </script>
 </body>

@@ -633,6 +633,15 @@
   // Opening a challenge link (?c=...) shows who challenged you and lets you race their ghost.
   let pendingChallenge = null;
   async function readChallengeLink() {
+    // ?play=endless|maze|race: opened from a game card in the arcade launcher
+    const play = new URLSearchParams(location.search).get('play');
+    if (play) {
+      history.replaceState(null, '', location.pathname + location.hash);
+      if (play === 'endless') start();
+      else if (play === 'maze') startMaze(1);
+      else if (play === 'race') openLobby();
+      return;
+    }
     const room = new URLSearchParams(location.search).get('room');
     if (room) {
       history.replaceState(null, '', location.pathname + location.hash);
@@ -2445,7 +2454,8 @@
   $('rsLeave').addEventListener('click', () => leaveRace());
   for (const b of ui.reactions.querySelectorAll('button')) b.addEventListener('click', () => sendReaction(b.textContent));
 
-  readChallengeLink();
+  window.addEventListener('pointerdown', initAudio, { once: true });
+  setTimeout(readChallengeLink, 0); // after the rest of the game has finished setting up
 
   // Test hook for automated checks (only when the URL ends in #test).
   if (location.hash === '#test') {

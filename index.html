@@ -2,27 +2,77 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Games</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Neon Arcade</title>
+  <meta name="description" content="Pick a game: Neon Dash, Maze Run, Race Friends and more.">
   <meta name="theme-color" content="#0b0221">
-  <style>
-    body { margin: 0; min-height: 100vh; background: #0b0221; color: #fff;
-      font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
-      display: flex; flex-direction: column; align-items: center; padding: 48px 16px; box-sizing: border-box; }
-    h1 { font-size: 40px; margin: 0 0 28px; letter-spacing: 2px; }
-    a.card { display: flex; align-items: center; gap: 16px; width: 100%; max-width: 420px; padding: 16px;
-      border: 2px solid #05d9e8; border-radius: 16px; color: #fff; text-decoration: none;
-      background: rgba(255,255,255,.04); }
-    a.card img { width: 64px; height: 64px; border-radius: 14px; }
-    a.card strong { display: block; font-size: 20px; }
-    a.card span { opacity: .7; font-size: 14px; }
-  </style>
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Neon Arcade">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="runner/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="runner/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="arcade.css">
 </head>
 <body>
-  <h1>Games</h1>
-  <a class="card" href="runner/">
-    <img src="runner/icons/icon-192.png" alt="">
-    <div><strong>Neon Dash</strong><span>Endless runner: steer, jump, dodge</span></div>
-  </a>
+  <header>
+    <canvas id="me" width="120" height="150" aria-hidden="true"></canvas>
+    <div class="hello">
+      <p class="hi" id="hi">Welcome to</p>
+      <h1>NEON<br>ARCADE</h1>
+    </div>
+    <div class="wallet" title="Coins"><span>🪙</span><b id="coins">0</b></div>
+  </header>
+
+  <main>
+    <p class="section">Pick a game</p>
+    <div class="games">
+      <a class="game dash" href="runner/?play=endless">
+        <div class="art"><span class="road"></span><span class="sun"></span><span class="emoji">🏃</span></div>
+        <div class="info">
+          <h2>Neon Dash</h2>
+          <p>Endless runner: steer, jump, dodge and grab coins. Challenge friends with your ghost.</p>
+          <div class="tags"><span>Solo</span><span>👻 Challenges</span><span class="stat" id="bestDash"></span></div>
+        </div>
+        <span class="go">PLAY</span>
+      </a>
+
+      <a class="game maze" href="runner/?play=maze">
+        <div class="art"><span class="grid"></span><span class="emoji">🌀</span></div>
+        <div class="info">
+          <h2>Maze Run</h2>
+          <p>Swipe to turn, find the exit beam before the clock runs out. Every maze is new.</p>
+          <div class="tags"><span>Solo</span><span>Puzzle</span><span class="stat" id="bestMaze"></span></div>
+        </div>
+        <span class="go">PLAY</span>
+      </a>
+
+      <a class="game race" href="runner/?play=race">
+        <div class="art"><span class="flags"></span><span class="emoji">🏁</span></div>
+        <div class="info">
+          <h2>Race Friends</h2>
+          <p>Live races for 2-4 players: Sprint, Survival or Maze race. Share a room code and go.</p>
+          <div class="tags"><span>Online</span><span>2-4 players</span><span class="stat" id="raceState"></span></div>
+        </div>
+        <span class="go">PLAY</span>
+      </a>
+
+      <div class="game soon">
+        <div class="art"><span class="emoji">✨</span></div>
+        <div class="info">
+          <h2>More games coming</h2>
+          <p>New games will show up here.</p>
+        </div>
+      </div>
+    </div>
+
+    <button id="installBtn" class="install hidden">Install Neon Arcade</button>
+    <p id="iosHint" class="hint hidden">To install: tap Share, then “Add to Home Screen”</p>
+  </main>
+
+  <script src="runner/looks.js"></script>
+  <script src="runner/firebase-config.js"></script>
+  <script src="arcade.js"></script>
 </body>
 </html>
