@@ -87,3 +87,9 @@ a.game:hover { border-color: rgba(255, 255, 255, .4); }
   color: #fff; background: transparent; border: 2px solid #05d9e8; cursor: pointer;
 }
 .hint { text-align: center; font-size: 13px; opacity: .65; margin-top: 18px; }
+
+.tycoon .art { background: radial-gradient(circle at 50% 70%, #5a3d00, #120622 70%); }
+.tycoon .coins { position: absolute; inset: 0; opacity: .5;
+  background: radial-gradient(circle, #ffd23f 0 5px, transparent 6px) 0 0 / 26px 26px; }
+.tycoon { border-color: rgba(255, 160, 0, .5); }
+.tycoon .go { background: linear-gradient(90deg, #ffd23f, #ff7a00); }

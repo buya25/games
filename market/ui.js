@@ -1,0 +1,566 @@
+'use strict';
+
+// Neon Tycoon screens: tabs, slide-up sheets, charts, saving and friend challenges.
+(() => {
+  const T = window.NeonTycoon;
+  const $ = (id) => document.getElementById(id);
+  const SAVE = 'neonTycoon.save';
+  const store = {
+    get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch { /* ignore */ } },
+    del(k) { try { localStorage.removeItem(k); } catch { /* ignore */ } },
+  };
+  const esc = (t) => String(t).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  const money = (n) => (n < 0 ? '-$' : '$') + Math.abs(Math.round(n)).toLocaleString();
+  const compact = (n) => {
+    const a = Math.abs(n), sign = n < 0 ? '-' : '';
+    if (a >= 1e6) return `${sign}$${(a / 1e6).toFixed(a >= 1e7 ? 1 : 2)}M`;
+    if (a >= 1e4) return `${sign}$${(a / 1e3).toFixed(1)}k`;
+    return money(n);
+  };
+  const price2 = (n) => (n >= 100 ? money(n) : '$' + n.toFixed(2));
+  const COLORS = { you: '#1098b5', friend: '#d8742c' };
+
+  let s = null;          // game state
+  let tab = 'market';
+  let pendingChallenge = null;
+  const playerName = () => store.get('neonDash.name', '') || 'You';
+  const youLabel = () => (playerName() === 'You' ? 'You' : `${playerName()} (you)`);
+  const playerLook = () => Object.assign({ outfit: 'classic', skin: 2, hair: 'short', hairColor: 0 }, store.get('neonDash.look', {}));
+
+  function save() { if (s) store.set(SAVE, s); }
+  function toast(msg) {
+    const t = $('toast');
+    t.textContent = msg;
+    t.classList.remove('hidden');
+    clearTimeout(toast.t);
+    toast.t = setTimeout(() => t.classList.add('hidden'), 2400);
+  }
+  const result = (r, okMsg) => { if (!r.ok) toast(r.msg); else if (okMsg) toast(okMsg); save(); render(); return r.ok; };
+
+  // ---------- charts ----------
+  function sizeCanvas(cv) {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2), w = cv.clientWidth, h = cv.clientHeight;
+    cv.width = Math.round(w * dpr); cv.height = Math.round(h * dpr);
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, w, h };
+  }
+  function spark(cv, data, color = COLORS.you) {
+    const { ctx, w, h } = sizeCanvas(cv);
+    if (data.length < 2) return;
+    const lo = Math.min(...data), hi = Math.max(...data), span = hi - lo || 1;
+    ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    data.forEach((v, i) => { const x = (i / (data.length - 1)) * (w - 4) + 2, y = h - 3 - ((v - lo) / span) * (h - 6); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke();
+  }
+  // Line chart with a crosshair + tooltip. series: [{ data, color, label }], xs: x labels per index.
+  function lineChart(cv, series, xs, fmt) {
+    const draw = (hover) => {
+      const { ctx, w, h } = sizeCanvas(cv);
+      const pad = { l: 8, r: 52, t: 12, b: 20 };
+      const all = series.flatMap((sr) => sr.data.filter((v) => v !== null));
+      if (!all.length) return;
+      let lo = Math.min(...all), hi = Math.max(...all);
+      if (lo === hi) { lo -= 1; hi += 1; }
+      const n = Math.max(...series.map((sr) => sr.data.length));
+      const X = (i) => pad.l + (n > 1 ? (i / (n - 1)) * (w - pad.l - pad.r) : 0);
+      const Y = (v) => pad.t + (1 - (v - lo) / (hi - lo)) * (h - pad.t - pad.b);
+      // recessive grid: 3 lines with values on the right
+      ctx.font = '11px system-ui, sans-serif'; ctx.textBaseline = 'middle';
+      for (let k = 0; k <= 2; k++) {
+        const v = lo + ((hi - lo) * k) / 2, y = Y(v);
+        ctx.strokeStyle = 'rgba(255,255,255,.08)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(w - pad.r, y); ctx.stroke();
+        ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.fillText(fmt(v), w - pad.r + 6, y);
+      }
+      ctx.textBaseline = 'alphabetic';
+      ctx.fillStyle = 'rgba(255,255,255,.55)';
+      ctx.fillText(xs[0], pad.l, h - 5);
+      ctx.textAlign = 'right'; ctx.fillText(xs[n - 1], w - pad.r, h - 5); ctx.textAlign = 'left';
+      for (const sr of series) {
+        ctx.strokeStyle = sr.color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+        ctx.beginPath();
+        let started = false;
+        sr.data.forEach((v, i) => { if (v === null) return; started ? ctx.lineTo(X(i), Y(v)) : ctx.moveTo(X(i), Y(v)); started = true; });
+        ctx.stroke();
+        // direct label at the line end when there is more than one series
+        if (series.length > 1) {
+          let last = sr.data.length - 1; while (last > 0 && sr.data[last] === null) last--;
+          ctx.fillStyle = '#fff'; ctx.font = '700 11px system-ui, sans-serif';
+          ctx.fillText(sr.label, Math.min(X(last) + 4, w - pad.r - 30), Y(sr.data[last]) - 6);
+        }
+      }
+      if (hover !== null) {
+        const i = hover, x = X(i);
+        ctx.strokeStyle = 'rgba(255,255,255,.4)'; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, h - pad.b); ctx.stroke();
+        const lines = [xs[i]];
+        for (const sr of series) {
+          const v = sr.data[i]; if (v === null || v === undefined) continue;
+          ctx.fillStyle = sr.color; ctx.strokeStyle = '#12052a'; ctx.lineWidth = 2;
+          ctx.beginPath(); ctx.arc(x, Y(v), 4.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+          lines.push(`${series.length > 1 ? sr.label + ': ' : ''}${fmt(v)}`);
+        }
+        ctx.font = '700 12px system-ui, sans-serif';
+        const tw = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16, th = lines.length * 16 + 8;
+        const tx = Math.min(Math.max(x - tw / 2, 2), w - tw - 2);
+        ctx.fillStyle = 'rgba(11,2,33,.92)'; ctx.strokeStyle = 'rgba(255,255,255,.3)'; ctx.lineWidth = 1;
+        ctx.fillRect(tx, 2, tw, th); ctx.strokeRect(tx, 2, tw, th);
+        ctx.fillStyle = '#fff';
+        lines.forEach((l, k) => ctx.fillText(l, tx + 8, 18 + k * 16));
+      }
+      cv._geom = { X, n, pad, w };
+    };
+    const at = (e) => {
+      const g = cv._geom; if (!g) return null;
+      const r = cv.getBoundingClientRect(), x = e.clientX - r.left;
+      return Math.max(0, Math.min(g.n - 1, Math.round(((x - g.pad.l) / (g.w - g.pad.l - g.pad.r)) * (g.n - 1))));
+    };
+    cv.onpointermove = (e) => draw(at(e));
+    cv.onpointerdown = (e) => draw(at(e));
+    cv.onpointerleave = () => draw(null);
+    draw(null);
+  }
+  const dayLabels = (count, endDay) => Array.from({ length: count }, (_, i) => `Day ${endDay - count + 1 + i}`);
+
+  // ---------- top bar & tabs ----------
+  function ghostAt(day) {
+    const c = s.challenge;
+    if (!c) return null;
+    // curve holds net worth every 10 days from day 1 (index 0); interpolate between points
+    const f = (day - 1) / 10, i = Math.floor(f);
+    if (i >= c.curve.length - 1) return c.curve[c.curve.length - 1];
+    return c.curve[i] + (c.curve[i + 1] - c.curve[i]) * (f - i);
+  }
+
+  function renderTop() {
+    const nw = T.netWorth(s);
+    $('day').textContent = `${Math.min(s.day, T.SEASON_DAYS)}/${T.SEASON_DAYS}`;
+    $('nw').textContent = compact(nw);
+    $('cash').textContent = compact(s.cash);
+    const g = ghostAt(s.day);
+    if (g === null) $('vsGhost').textContent = '';
+    else {
+      const d = nw - g;
+      $('vsGhost').innerHTML = `${d >= 0 ? '<span class="up">▲</span>' : '<span class="down">▼</span>'} ${compact(Math.abs(d))} vs ${esc(s.challenge.name)}`;
+    }
+    const D = T.D[s.district];
+    $('where').textContent = `📍 ${D.icon} ${D.name}`;
+  }
+
+  function render() {
+    if (!s) return;
+    renderTop();
+    for (const b of document.querySelectorAll('#tabs button')) b.classList.toggle('on', b.dataset.tab === tab);
+    const p = $('panel');
+    p.innerHTML = { market: marketHtml, business: businessHtml, exchange: exchangeHtml, bank: bankHtml, stats: statsHtml }[tab]();
+    // draw any sparklines / charts the tab placed
+    for (const cv of p.querySelectorAll('canvas.spark')) {
+      const [kind, id] = cv.dataset.spark.split(':');
+      const data = kind === 'g' ? s.hist.prices[s.district][id].slice(-14) : s.hist.stocks[id].slice(-14);
+      spark(cv, data);
+    }
+    if (tab === 'stats') drawNetWorthChart($('nwChart'));
+    $('endDayBtn').textContent = s.finished ? 'See results ▸' : 'End day ▸';
+  }
+
+  const change = (arr) => {
+    if (arr.length < 2) return '<small class="muted">new</small>';
+    const a = arr[arr.length - 2], b = arr[arr.length - 1], pct = ((b - a) / a) * 100;
+    if (Math.abs(pct) < 0.05) return '<small class="muted">● 0.0%</small>';
+    return pct > 0 ? `<small class="up">▲ ${pct.toFixed(1)}%</small>` : `<small class="down">▼ ${Math.abs(pct).toFixed(1)}%</small>`;
+  };
+
+  // ---------- Market ----------
+  function marketHtml() {
+    const used = T.cargoUsed(s), cap = T.cargoCap(s), V = T.VEHICLES[s.vehicle];
+    let h = `<div class="card"><h3>🎒 ${V.name} <span class="muted num" style="margin-left:auto">${used}/${cap}</span></h3>
+      <div class="bar"><i style="width:${Math.min(100, (used / cap) * 100)}%"></i></div>
+      ${T.VEHICLES[s.vehicle + 1] ? `<div class="btns"><button class="btn" data-act="vehicle">Bigger ride: ${T.VEHICLES[s.vehicle + 1].name} (${T.VEHICLES[s.vehicle + 1].cap})</button></div>` : ''}</div>
+      <p class="section-title">Prices in ${esc(T.D[s.district].name)} · tap to trade</p>`;
+    for (const g of T.GOODS) {
+      const hist = s.hist.prices[s.district][g.id], have = s.cargo[g.id] || 0;
+      h += `<button class="row" data-act="good:${g.id}"><span class="ic">${g.icon}</span>
+        <span class="nm"><b>${g.name}${have ? `<span class="badge">${have}</span>` : ''}</b><small>buy ${price2(T.buyPrice(s, s.district, g.id))} · sell ${price2(T.sellPrice(s, s.district, g.id))}</small></span>
+        <canvas class="spark" data-spark="g:${g.id}" aria-hidden="true"></canvas>
+        <span class="px"><b>${price2(T.price(s, s.district, g.id))}</b>${change(hist)}</span></button>`;
+    }
+    return h;
+  }
+
+  function qtyControl(id, max) {
+    return `<div class="qty"><button class="btn" data-q="-10">−10</button><button class="btn" data-q="-1">−1</button>
+      <input id="${id}" type="number" inputmode="numeric" min="0" value="${Math.min(max, 1)}"><button class="btn" data-q="1">+1</button><button class="btn" data-q="10">+10</button></div>`;
+  }
+  function bindQty(id, onChange) {
+    const input = $(id);
+    for (const b of input.parentElement.querySelectorAll('[data-q]')) {
+      b.addEventListener('click', () => { input.value = Math.max(0, (parseInt(input.value, 10) || 0) + parseInt(b.dataset.q, 10)); onChange(); });
+    }
+    input.addEventListener('input', onChange);
+    return () => Math.max(0, parseInt(input.value, 10) || 0);
+  }
+
+  function openGood(g) {
+    const G = T.G[g];
+    const others = T.DISTRICTS.map((d) => ({ d, p: s.hist.prices[d.id][g][s.hist.prices[d.id][g].length - (d.id === s.district ? 1 : 2)] ?? s.hist.prices[d.id][g].at(-1) }))
+      .sort((a, b) => a.p - b.p);
+    const hist = s.hist.prices[s.district][g];
+    openSheet(`<h2>${G.icon} ${G.name}<button class="close" data-close>✕</button></h2>
+      <p class="muted">In ${esc(T.D[s.district].name)}: buy ${price2(T.buyPrice(s, s.district, g))} · sell ${price2(T.sellPrice(s, s.district, g))} · you have <b>${s.cargo[g] || 0}</b></p>
+      <canvas class="chart" id="gChart" aria-label="${G.name} price, last ${hist.length} days"></canvas>
+      <p class="section-title">Yesterday's prices around the city</p>
+      <div class="places">${others.map((o) => `<div class="${o.d.id === s.district ? 'here' : ''}"><span>${o.d.icon} ${o.d.name}${o.d.id === s.district ? ' (today)' : ''}</span><b class="num">${price2(o.p)}</b></div>`).join('')}</div>
+      ${qtyControl('gQty', T.maxBuy(s, g))}
+      <div class="btns"><button class="btn" id="gMaxBuy">Max buy (${T.maxBuy(s, g)})</button><button class="btn" id="gMaxSell">Sell all (${s.cargo[g] || 0})</button></div>
+      <div class="trade"><button class="btn cyan" id="gBuy">Buy</button><button class="btn primary" id="gSell">Sell</button></div>`);
+    lineChart($('gChart'), [{ data: hist, color: COLORS.you, label: G.name }], dayLabels(hist.length, s.day), price2);
+    const update = () => {
+      const q = qty();
+      $('gBuy').textContent = `Buy ${q} · ${money(T.quote(s, g, q, 'buy'))}`;
+      $('gSell').textContent = `Sell ${Math.min(q, s.cargo[g] || 0)} · ${money(T.quote(s, g, Math.min(q, s.cargo[g] || 0), 'sell'))}`;
+    };
+    const qty = bindQty('gQty', update);
+    $('gMaxBuy').onclick = () => { $('gQty').value = T.maxBuy(s, g); update(); };
+    $('gMaxSell').onclick = () => { $('gQty').value = s.cargo[g] || 0; update(); };
+    $('gBuy').onclick = () => { const q = qty(), r = T.buy(s, g, q); if (result(r, `Bought ${q} ${G.name} for ${money(r.cost || 0)}`)) openGood(g); };
+    $('gSell').onclick = () => { const q = Math.min(qty(), s.cargo[g] || 0), r = T.sell(s, g, q); if (result(r, `Sold ${q} ${G.name} for ${money(r.got || 0)}`)) openGood(g); };
+    update();
+  }
+
+  function openVehicle() {
+    const next = T.VEHICLES[s.vehicle + 1];
+    const cost = next.cost - T.VEHICLES[s.vehicle].cost * 0.5;
+    openSheet(`<h2>🛵 Bigger ride<button class="close" data-close>✕</button></h2>
+      <p>Trade your ${T.VEHICLES[s.vehicle].name} (${T.VEHICLES[s.vehicle].cap} slots) for a <b>${next.name}</b> with <b>${next.cap}</b> slots.</p>
+      <p class="muted">Costs ${money(cost)} after trading in your old one.</p>
+      <button class="btn primary" id="vBuy">Buy for ${money(cost)}</button>`);
+    $('vBuy').onclick = () => { if (result(T.buyVehicle(s), `You now ride a ${next.name}!`)) closeSheet(); };
+  }
+
+  // ---------- Business ----------
+  function bizLine(b) {
+    const G = T.G[b.good], here = b.district === s.district;
+    const tier = (b.kind === 'stall' ? T.STALLS : T.FACTORIES)[b.tier];
+    let status;
+    if (b.kind === 'stall') {
+      status = `Stock ${b.stock} · sells about ${T.unitsPerDay(tier.cap, b.good)} a day · rent ${money(tier.rent)}/day`;
+      if (b.last) status += `<br>Yesterday: sold ${b.last.sold} for ${money(b.last.revenue)}${b.stock === 0 ? ' · <b class="down">out of stock</b>' : ''}`;
+    } else {
+      status = `Makes ${T.unitsPerDay(tier.out, b.good)} a day at ${price2(G.base * T.PRODUCE_COST)} each · upkeep ${money(tier.upkeep)}/day · storage ${b.stock}/${T.storageCap(b)}`;
+      if (b.last) status += `<br>Yesterday: made ${b.last.made} (cost ${money(b.last.cost)})`;
+    }
+    const up = T.upgradeCost(b);
+    const nextName = (b.kind === 'stall' ? T.STALLS : T.FACTORIES)[b.tier + 1]?.name;
+    return `<div class="card"><h3>${b.kind === 'stall' ? '🏪' : '🏭'} ${tier.name} · ${G.icon} ${G.name}<span class="muted" style="margin-left:auto;font-size:12px">${T.D[b.district].icon} ${T.D[b.district].name}</span></h3>
+      <p>${status}</p>
+      <div class="btns">
+        ${here && b.kind === 'stall' ? `<button class="btn cyan" data-act="restock:${b.id}">Restock from cargo (${s.cargo[b.good] || 0})</button>` : ''}
+        ${here && b.stock > 0 ? `<button class="btn" data-act="collect:${b.id}">Load into cargo</button>` : ''}
+        ${up ? `<button class="btn primary" data-act="upgrade:${b.id}">Upgrade to ${nextName} · ${money(up)}</button>` : ''}
+        <button class="btn" data-act="product:${b.id}">Change product</button>
+        <button class="btn danger" data-act="sellbiz:${b.id}">Sell</button>
+      </div>
+      ${!here && b.kind === 'stall' && b.stock === 0 && !s.businesses.some((f) => f.kind === 'factory' && f.district === b.district && f.good === b.good) ? `<p class="warn">Travel to ${T.D[b.district].name} to restock it, or build a workshop there making ${G.name}.</p>` : ''}
+    </div>`;
+  }
+
+  function businessHtml() {
+    const here = s.businesses.filter((b) => b.district === s.district), away = s.businesses.filter((b) => b.district !== s.district);
+    let h = `<div class="card"><h3>➕ Open a business in ${esc(T.D[s.district].name)}</h3>
+      <p>A <b>stall</b> sells goods to shoppers every day at a markup. A <b>workshop</b> makes goods for 40% of their usual price. Pair them on the same product in one district and the workshop keeps the stall stocked.</p>
+      <div class="btns"><button class="btn primary" data-act="open:stall">🏪 Stall · ${money(T.STALLS[0].cost)}</button><button class="btn primary" data-act="open:factory">🏭 Workshop · ${money(T.FACTORIES[0].cost)}</button></div>
+      <p class="warn">Workshops pay for what they make every day: keep cash on hand or they stop.</p></div>`;
+    if (here.length) h += `<p class="section-title">Here in ${esc(T.D[s.district].name)}</p>` + here.map(bizLine).join('');
+    if (away.length) h += `<p class="section-title">Elsewhere</p>` + away.map(bizLine).join('');
+    if (!s.businesses.length) h += '<p class="muted" style="text-align:center;padding:10px">You don\'t own any businesses yet.</p>';
+    return h;
+  }
+
+  function openProductPicker(title, onPick, kind) {
+    const tier = kind === 'stall' ? T.STALLS[0] : T.FACTORIES[0];
+    openSheet(`<h2>${title}<button class="close" data-close>✕</button></h2>
+      <div class="pick">${T.GOODS.map((g) => {
+        const units = T.unitsPerDay(kind === 'stall' ? tier.cap : tier.out, g.id);
+        const info = kind === 'stall' ? `sells about ${units}/day here at ~${price2(T.price(s, s.district, g.id) * T.RETAIL)}`
+          : `makes ${units}/day at ${price2(g.base * T.PRODUCE_COST)} each (sells here for ~${price2(T.price(s, s.district, g.id))})`;
+        return `<button class="row" data-pick="${g.id}"><span class="ic">${g.icon}</span><span class="nm"><b>${g.name}</b><small>${info}</small></span></button>`;
+      }).join('')}</div>`);
+    for (const b of document.querySelectorAll('[data-pick]')) b.onclick = () => onPick(b.dataset.pick);
+  }
+
+  function bizAction(act, id) {
+    const b = s.businesses.find((x) => x.id === id);
+    if (act === 'restock') result(T.restock(s, id, s.cargo[b.good] || 0), `Stocked the ${(T.STALLS[b.tier]).name.toLowerCase()}`);
+    else if (act === 'collect') result(T.collect(s, id, b.stock), 'Loaded into your cargo');
+    else if (act === 'upgrade') result(T.upgradeBusiness(s, id), 'Upgraded!');
+    else if (act === 'product') openProductPicker('Change product', (g) => { if (result(T.setProduct(s, id, g), `Now ${b.kind === 'stall' ? 'selling' : 'making'} ${T.G[g].name}`)) closeSheet(); }, b.kind);
+    else if (act === 'sellbiz') {
+      openSheet(`<h2>Sell this business?<button class="close" data-close>✕</button></h2>
+        <p>You get back ${Math.round(T.RESALE * 100)}% of what you put in, plus its stock: about <b>${money(b.invested * T.RESALE + b.stock * T.G[b.good].base * T.PRODUCE_COST)}</b>.</p>
+        <button class="btn danger" id="confirmSell">Sell it</button>`);
+      $('confirmSell').onclick = () => { if (result(T.sellBusiness(s, id), 'Sold')) closeSheet(); };
+    }
+  }
+
+  // ---------- Exchange ----------
+  function exchangeHtml() {
+    let total = 0;
+    for (const k of T.STOCKS) total += s.shares[k.id] * s.stocks[k.id];
+    let h = `<div class="card"><h3>📈 Neon Exchange</h3><p>Shares in Neon City companies. They drift on their own and jump on the news: food news moves Pixel Foods, chip news moves ChipWorks. 1% fee per trade.</p>
+      <p style="margin-top:6px">Your shares are worth <b>${money(total)}</b>.</p></div>`;
+    for (const k of T.STOCKS) {
+      const own = s.shares[k.id];
+      h += `<button class="row" data-act="stock:${k.id}"><span class="ic">${k.icon}</span>
+        <span class="nm"><b>${k.name}${own ? `<span class="badge">${own}</span>` : ''}</b><small>${k.id}${own ? ` · yours ${money(own * s.stocks[k.id])}` : ''}</small></span>
+        <canvas class="spark" data-spark="k:${k.id}" aria-hidden="true"></canvas>
+        <span class="px"><b>${price2(s.stocks[k.id])}</b>${change(s.hist.stocks[k.id])}</span></button>`;
+    }
+    return h;
+  }
+
+  function openStock(sym) {
+    const k = T.STOCKS.find((x) => x.id === sym), hist = s.hist.stocks[sym];
+    openSheet(`<h2>${k.icon} ${k.name}<button class="close" data-close>✕</button></h2>
+      <p class="muted">${sym} · ${price2(s.stocks[sym])} a share · you own <b>${s.shares[sym]}</b> (${money(s.shares[sym] * s.stocks[sym])})</p>
+      <canvas class="chart" id="kChart" aria-label="${k.name} share price, last ${hist.length} days"></canvas>
+      ${qtyControl('kQty', T.maxShares(s, sym))}
+      <div class="btns"><button class="btn" id="kMax">Max buy (${T.maxShares(s, sym)})</button><button class="btn" id="kAll">Sell all (${s.shares[sym]})</button></div>
+      <div class="trade"><button class="btn cyan" id="kBuy">Buy</button><button class="btn primary" id="kSell">Sell</button></div>`);
+    lineChart($('kChart'), [{ data: hist, color: COLORS.you, label: k.name }], dayLabels(hist.length, s.day), price2);
+    const update = () => {
+      const q = qty();
+      $('kBuy').textContent = `Buy ${q} · ${money(q * s.stocks[sym] * 1.01)}`;
+      $('kSell').textContent = `Sell ${Math.min(q, s.shares[sym])} · ${money(Math.min(q, s.shares[sym]) * s.stocks[sym] * 0.99)}`;
+    };
+    const qty = bindQty('kQty', update);
+    $('kMax').onclick = () => { $('kQty').value = T.maxShares(s, sym); update(); };
+    $('kAll').onclick = () => { $('kQty').value = s.shares[sym]; update(); };
+    $('kBuy').onclick = () => { const q = qty(); if (result(T.trade(s, sym, q), `Bought ${q} ${sym}`)) openStock(sym); };
+    $('kSell').onclick = () => { const q = Math.min(qty(), s.shares[sym]); if (result(T.trade(s, sym, -q), `Sold ${q} ${sym}`)) openStock(sym); };
+    update();
+  }
+
+  // ---------- Bank ----------
+  function bankHtml() {
+    const room = Math.max(0, T.maxDebt(s) - s.debt);
+    const amounts = (kind) => [100, 1000, 10000].map((a) => `<button class="btn" data-act="bank:${kind}:${a}">${compact(a)}</button>`).join('') + `<button class="btn" data-act="bank:${kind}:all">All</button>`;
+    return `<div class="card"><h3>💵 Cash on hand <span class="num" style="margin-left:auto">${money(s.cash)}</span></h3>
+        <p>Pickpockets sometimes take a cut of big cash piles. The bank is safe.</p></div>
+      <div class="card"><h3>🏦 Savings <span class="num" style="margin-left:auto">${money(s.bank)}</span></h3>
+        <p>Earns ${(T.DEPOSIT_RATE * 100).toFixed(1)}% a day.</p>
+        <p class="section-title">Deposit</p><div class="btns">${amounts('deposit')}</div>
+        <p class="section-title">Withdraw</p><div class="btns">${amounts('withdraw')}</div></div>
+      <div class="card"><h3>📄 Loan <span class="num down" style="margin-left:auto">${money(s.debt)}</span></h3>
+        <p>Costs ${(T.LOAN_RATE * 100).toFixed(1)}% a day (${money(s.debt * T.LOAN_RATE)} today). You can borrow ${money(room)} more.</p>
+        <p class="section-title">Repay</p><div class="btns">${amounts('repay')}</div>
+        <p class="section-title">Borrow</p><div class="btns">${amounts('borrow')}</div></div>`;
+  }
+  function bankAction(kind, amt) {
+    const all = { deposit: s.cash, withdraw: s.bank, repay: Math.min(s.debt, s.cash), borrow: Math.max(0, T.maxDebt(s) - s.debt) }[kind];
+    const n = amt === 'all' ? all : Math.min(parseInt(amt, 10), all || parseInt(amt, 10));
+    result(T.bankMove(s, kind, n), { deposit: 'Deposited', withdraw: 'Withdrawn', repay: 'Repaid', borrow: 'Borrowed' }[kind] + ' ' + money(n));
+  }
+
+  // ---------- Stats ----------
+  function breakdown() {
+    let cargo = 0, biz = 0, shares = 0;
+    for (const [g, q] of Object.entries(s.cargo)) cargo += q * T.DISTRICTS.reduce((a, d) => a + T.price(s, d.id, g), 0) / T.DISTRICTS.length * 0.9;
+    for (const b of s.businesses) biz += b.invested * T.RESALE + b.stock * T.G[b.good].base * (b.kind === 'stall' ? 0.9 : T.PRODUCE_COST);
+    for (const k of T.STOCKS) shares += s.shares[k.id] * s.stocks[k.id];
+    return [['Cash', s.cash], ['Savings', s.bank], ['Cargo', cargo], ['Businesses', biz], ['Shares', shares], ['Ride', T.VEHICLES[s.vehicle].cost * 0.5], ['Loan', -s.debt]];
+  }
+  function statsHtml() {
+    const nw = T.netWorth(s), rank = T.rankFor(nw);
+    const next = T.RANKS.find(([min]) => min > nw);
+    const legend = s.challenge ? `<div class="legend"><span><i style="background:${COLORS.you}"></i>${esc(youLabel())}</span><span><i style="background:${COLORS.friend}"></i>${esc(s.challenge.name)}</span></div>` : '';
+    return `<div class="card"><h3>🏆 ${rank}</h3>
+        <p>Net worth <b>${money(nw)}</b>${next ? ` · ${money(next[0] - nw)} to <b>${next[1]}</b>` : ' · top rank!'}</p>
+        ${next ? `<div class="bar"><i style="width:${Math.max(2, Math.min(100, (nw / next[0]) * 100))}%;background:var(--gold)"></i></div>` : ''}</div>
+      <div class="card"><h3>Net worth this season</h3>${legend}<canvas class="chart" id="nwChart" aria-label="Net worth by day"></canvas></div>
+      <div class="card"><h3>Where your money is</h3><div class="kv">${breakdown().map(([k, v]) => `<span>${k}</span><span class="${v < 0 ? 'down' : ''}">${money(v)}</span>`).join('')}</div></div>`;
+  }
+  function drawNetWorthChart(cv, days = s.hist.nw.length) {
+    const mine = s.hist.nw.slice(0, days);
+    const series = [{ data: mine, color: COLORS.you, label: 'You' }];
+    if (s.challenge) {
+      const n = Math.max(mine.length, Math.min(T.SEASON_DAYS, (s.challenge.curve.length - 1) * 10 + 1));
+      series.push({ data: Array.from({ length: n }, (_, i) => ghostAt(i + 1)), color: COLORS.friend, label: s.challenge.name });
+    }
+    // point i is the start of day i+1; the point after day 120 is the end of the season
+    lineChart(cv, series, Array.from({ length: Math.max(...series.map((x) => x.data.length)) }, (_, i) => (i >= T.SEASON_DAYS ? 'End' : `Day ${i + 1}`)), compact);
+  }
+
+  // ---------- sheets ----------
+  function openSheet(html) {
+    $('sheetBody').innerHTML = html;
+    $('sheet').classList.remove('hidden');
+    for (const b of $('sheetBody').querySelectorAll('[data-close]')) b.onclick = closeSheet;
+  }
+  function closeSheet() { $('sheet').classList.add('hidden'); }
+  $('sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') closeSheet(); });
+
+  // ---------- days & travel ----------
+  function openTravel() {
+    openSheet(`<h2>🗺️ Where to?<button class="close" data-close>✕</button></h2>
+      <p class="muted">Travelling takes the rest of the day.</p>
+      ${T.DISTRICTS.map((d) => {
+        const wants = T.GOODS.filter((g) => d.mods[g.id] >= 1.2).map((g) => g.icon).join(' ');
+        const cheap = T.GOODS.filter((g) => d.mods[g.id] <= 0.8).map((g) => g.icon).join(' ');
+        const mine = s.businesses.filter((b) => b.district === d.id).length;
+        return `<button class="district${d.id === s.district ? ' here' : ''}" data-go="${d.id}"><span class="ic">${d.icon}</span>
+          <span><b>${d.name}${d.id === s.district ? ' (you are here)' : ''}</b><small>${d.blurb}</small>
+          <small>${cheap ? `Cheap: ${cheap}` : ''}${cheap && wants ? ' · ' : ''}${wants ? `Pays well: ${wants}` : ''}${mine ? ` · 🏪 ${mine} yours` : ''}</small></span></button>`;
+      }).join('')}`);
+    for (const b of document.querySelectorAll('[data-go]')) b.onclick = () => (b.dataset.go === s.district ? endDay(null) : endDay(b.dataset.go));
+  }
+
+  function endDay(dest) {
+    if (s.finished) { showSeasonEnd(); return; }
+    const rep = T.endDay(s, dest);
+    save();
+    render();
+    const d = rep.nw - rep.nw0;
+    const lines = rep.lines.length ? `<p class="section-title">Your businesses</p><div class="news">${rep.lines.map((l) => `<div><span>${l.icon}</span><span>${esc(l.text)}</span></div>`).join('')}</div>` : '';
+    const news = s.news.length ? `<p class="section-title">News</p><div class="news">${s.news.map((n) => `<div><span>${n.icon}</span><span>${esc(n.text)}</span></div>`).join('')}</div>` : '<p class="muted">A quiet day in Neon City.</p>';
+    openSheet(`<h2>☀️ Day ${Math.min(s.day, T.SEASON_DAYS)}${dest ? ` · ${T.D[s.district].icon} ${T.D[s.district].name}` : ''}</h2>
+      <div><span class="big-num">${compact(rep.nw)}</span> <b class="${d >= 0 ? 'up' : 'down'}">${d >= 0 ? '▲' : '▼'} ${money(Math.abs(d))}</b></div>
+      ${news}${lines}
+      <div class="kv">${rep.sales ? `<span>Stall sales</span><span class="up">+${money(rep.sales)}</span>` : ''}${rep.production ? `<span>Production</span><span class="down">-${money(rep.production)}</span>` : ''}
+        ${rep.upkeep ? `<span>Rent & upkeep</span><span class="down">-${money(rep.upkeep)}</span>` : ''}<span>Living costs</span><span class="down">-${money(rep.living)}</span>
+        ${rep.interest ? `<span>Loan interest</span><span class="down">-${money(rep.interest)}</span>` : ''}${rep.earned ? `<span>Savings interest</span><span class="up">+${money(rep.earned)}</span>` : ''}</div>
+      <button class="btn primary" data-close>${s.finished ? 'See final results' : 'Continue'}</button>`);
+    if (s.finished) for (const b of $('sheetBody').querySelectorAll('[data-close]')) b.onclick = showSeasonEnd;
+  }
+
+  // ---------- season end, coins, challenges ----------
+  function encodeChallenge() {
+    const nw = s.hist.nw;
+    const curve = [];
+    for (let i = 0; i < nw.length; i += 10) curve.push(Math.round(nw[i]));
+    if ((nw.length - 1) % 10) curve.push(Math.round(nw[nw.length - 1]));
+    const lk = playerLook();
+    const data = { v: 1, s: s.seed, n: playerName().slice(0, 12), l: [lk.outfit, lk.skin, lk.hair, lk.hairColor], w: T.netWorth(s), c: curve };
+    return btoa(unescape(encodeURIComponent(JSON.stringify(data)))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function decodeChallenge(code) {
+    const d = JSON.parse(decodeURIComponent(escape(atob(code.replace(/-/g, '+').replace(/_/g, '/')))));
+    if (d.v !== 1 || !Number.isFinite(d.s) || !Array.isArray(d.c) || !d.c.every(Number.isFinite)) throw new Error('bad');
+    return { seed: d.s >>> 0, name: String(d.n || 'A friend').slice(0, 12), look: { outfit: d.l?.[0], skin: d.l?.[1], hair: d.l?.[2], hairColor: d.l?.[3] }, nw: d.w, curve: d.c };
+  }
+
+  function showSeasonEnd() {
+    const nw = T.netWorth(s), coins = T.coinsFor(nw);
+    if (!s.rewarded) {
+      s.rewarded = true;
+      store.set('neonDash.wallet', store.get('neonDash.wallet', 0) + coins);
+      save();
+    }
+    const vs = s.challenge ? (nw >= s.challenge.nw
+      ? `<p class="up"><b>🏆 You beat ${esc(s.challenge.name)} by ${money(nw - s.challenge.nw)}!</b></p>`
+      : `<p class="down"><b>${esc(s.challenge.name)} wins by ${money(s.challenge.nw - nw)}.</b></p>`) : '';
+    openSheet(`<h2>🏁 Season over</h2>
+      <p class="muted">Final net worth</p><div class="big-num">${money(nw)}</div>
+      <p>Rank: <b>${T.rankFor(nw)}</b></p>${vs}
+      ${s.challenge ? `<div class="legend"><span><i style="background:${COLORS.you}"></i>You</span><span><i style="background:${COLORS.friend}"></i>${esc(s.challenge.name)}</span></div>` : ''}
+      <canvas class="chart" id="endChart" aria-label="Net worth by day"></canvas>
+      <p>+${coins} 🪙 added to your arcade wallet (now ${store.get('neonDash.wallet', 0).toLocaleString()}).</p>
+      <button class="btn primary" id="shareBtn">👻 Challenge a friend with this market</button>
+      <button class="btn" id="againBtn">New season</button>
+      <a class="btn" href="../" style="text-align:center;text-decoration:none">Back to all games</a>`);
+    drawNetWorthChart($('endChart'));
+    $('shareBtn').onclick = shareChallenge;
+    $('againBtn').onclick = () => { closeSheet(); store.del(SAVE); s = null; showTitle(); };
+  }
+
+  async function shareChallenge() {
+    const url = `${location.origin}${location.pathname}?c=${encodeChallenge()}`;
+    const text = `💰 I made ${money(T.netWorth(s))} in Neon Tycoon. Same market, same news: can you beat me?`;
+    if (navigator.share) { try { await navigator.share({ title: 'Neon Tycoon challenge', text, url }); return; } catch (e) { if (e && e.name === 'AbortError') return; } }
+    try { await navigator.clipboard.writeText(`${text} ${url}`); toast('Challenge link copied!'); } catch { window.prompt('Copy this link for your friend:', url); }
+  }
+
+  // ---------- title ----------
+  function showTitle() {
+    $('game').classList.add('hidden');
+    $('title').classList.remove('hidden');
+    const saved = store.get(SAVE, null);
+    s = null;
+    $('continueBtn').classList.toggle('hidden', !(saved && !saved.finished && saved.v === 1));
+    if (saved) $('contDay').textContent = saved.day;
+    const box = $('challengeBox');
+    box.classList.toggle('hidden', !pendingChallenge);
+    if (pendingChallenge) {
+      box.innerHTML = `👻 <b>${esc(pendingChallenge.name)}</b> finished a season with <b>${money(pendingChallenge.nw)}</b>. Same market, same news: can you beat it?`;
+      $('newBtn').textContent = `ACCEPT ${pendingChallenge.name.toUpperCase()}'S CHALLENGE`;
+    } else $('newBtn').textContent = 'NEW SEASON';
+  }
+  function startGame(state) {
+    s = state;
+    tab = 'market';
+    $('title').classList.add('hidden');
+    $('game').classList.remove('hidden');
+    save();
+    render();
+    if (s.day === 1 && !s.report) openSheet(`<h2>👋 Welcome, ${esc(playerName())}</h2><div class="news">${s.news.map((n) => `<div><span>${n.icon}</span><span>${esc(n.text)}</span></div>`).join('')}</div>
+      <p>Tip: check <b>🗺️ Travel</b> to see which districts sell cheap and which pay well.</p><button class="btn primary" data-close>Let's go</button>`);
+  }
+  $('continueBtn').onclick = () => startGame(store.get(SAVE, null));
+  $('newBtn').onclick = () => {
+    const saved = store.get(SAVE, null);
+    const go = () => {
+      const ch = pendingChallenge;
+      pendingChallenge = null;
+      startGame(T.newGame(ch ? ch.seed : T.newSeed(), { name: playerName(), challenge: ch }));
+    };
+    if (saved && !saved.finished) {
+      openSheet(`<h2>Start over?<button class="close" data-close>✕</button></h2><p>Your current season (day ${saved.day}) will be lost.</p><button class="btn danger" id="yesNew">Start a new season</button>`);
+      $('yesNew').onclick = () => { closeSheet(); go(); };
+    } else go();
+  };
+
+  // ---------- events ----------
+  for (const b of document.querySelectorAll('#tabs button')) b.addEventListener('click', () => { tab = b.dataset.tab; render(); window.scrollTo(0, 0); });
+  $('travelBtn').onclick = () => (s.finished ? showSeasonEnd() : openTravel());
+  $('endDayBtn').onclick = () => endDay(null);
+  $('panel').addEventListener('click', (e) => {
+    const el = e.target.closest('[data-act]');
+    if (!el) return;
+    const [act, a, b] = el.dataset.act.split(':');
+    if (act === 'good') openGood(a);
+    else if (act === 'vehicle') openVehicle();
+    else if (act === 'stock') openStock(a);
+    else if (act === 'bank') bankAction(a, b);
+    else if (act === 'open' && s.cash < (a === 'stall' ? T.STALLS : T.FACTORIES)[0].cost) toast(`You need ${money((a === 'stall' ? T.STALLS : T.FACTORIES)[0].cost)} cash. Try a loan in the 🏦 Bank tab.`);
+    else if (act === 'open') openProductPicker(a === 'stall' ? '🏪 What will the stall sell?' : '🏭 What will the workshop make?', (g) => { if (result(T.openBusiness(s, a, g), 'Open for business!')) { closeSheet(); } }, a);
+    else bizAction(act, parseInt(a, 10));
+  });
+  window.addEventListener('resize', () => { if (s && tab === 'stats') render(); });
+
+  // avatar on the title
+  (() => {
+    const cv = $('tAvatar'), ctx = cv.getContext('2d'), dpr = Math.min(window.devicePixelRatio || 1, 2);
+    cv.width = 72 * dpr; cv.height = 90 * dpr;
+    const lk = playerLook(), of = window.NeonLooks && NeonLooks.byId(NeonLooks.OUTFITS, lk.outfit);
+    const t0 = performance.now();
+    const frame = (now) => {
+      if (!$('title').classList.contains('hidden') && of) {
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, 72, 90);
+        NeonLooks.drawRunner(ctx, 36, 87, 40, { phase: (now - t0) / 140, stride: 0.35 }, of, (now - t0) / 1000, lk);
+      }
+      requestAnimationFrame(frame);
+    };
+    requestAnimationFrame(frame);
+  })();
+
+  // a challenge link (?c=...)
+  const code = new URLSearchParams(location.search).get('c');
+  if (code) {
+    history.replaceState(null, '', location.pathname);
+    try { pendingChallenge = decodeChallenge(code); } catch { toast('That challenge link looks broken.'); }
+  }
+  showTitle();
+
+  if (location.hash === '#test') window.tycoonTest = { state: () => s, T, endDay, encodeChallenge };
+})();

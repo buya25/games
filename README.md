@@ -10,6 +10,22 @@ own runner, your coins and your best scores. Each card opens a game straight int
 (`sw.js`) caches the launcher and every game for offline play. To add a game, put it in its own folder,
 add a card to `index.html`, and add its files to `FILES` in `sw.js`.
 
+## Neon Tycoon (`market/`)
+
+A market and business sim over a 120-day season, saved on the phone so you can play it over many
+sessions. Trade goods across five districts (prices react to your own big trades), build stalls,
+shops and megastores that sell for you every day, and workshops, factories and plants that make goods
+at 40% of their price (pair one with a stall on the same product in the same district and it keeps the
+stall stocked). Play the Neon Exchange, manage savings and a loan, and react to daily news. Your final
+net worth sets your rank and pays arcade coins into the shared wallet.
+
+Challenges: after a season, share a link; your friend plays the same seed (same prices, news and share
+moves) and sees your net worth next to theirs all season.
+
+- `market/engine.js`: the rules (no screen code). Each day's market dice come from the seed and the day,
+  so a challenge is fair whatever each player does.
+- `market/ui.js`, `market/index.html`, `market/style.css`: the screens.
+
 ## Neon Dash (`runner/`)
 
 An endless runner on a neon highway. The game runs forward on its own; you steer and jump.
