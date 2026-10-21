@@ -19,6 +19,13 @@ at 40% of their price (pair one with a stall on the same product in the same dis
 stall stocked). Play the Neon Exchange, manage savings and a loan, and react to daily news. Your final
 net worth sets your rank and pays arcade coins into the shared wallet.
 
+Run your shop: when you're in the same district as one of your stalls, tap **Open shop** to serve that
+day yourself (`market/shop.js`). Shoppers walk in, check your shelf price against what they're willing
+to pay, queue at the counter and leave if you're too slow. Tap SERVE (or the shop floor) to serve the
+customer at the front, change the price as you go, and restock from your cargo or a workshop in the
+same district. Bigger shops come with helpers who serve on their own. Shelf prices you set also drive the
+automatic sales on the other days: a higher price earns more per sale, but fewer shoppers buy.
+
 Challenges: after a season, share a link; your friend plays the same seed (same prices, news and share
 moves) and sees your net worth next to theirs all season.
 

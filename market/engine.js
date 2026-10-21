@@ -60,7 +60,11 @@
   ];
   const PRODUCE_COST = 0.4;   // making a unit costs 40% of its base price
   const RESALE = 0.7;         // a business is worth (and sells for) 70% of what you put in
-  const RETAIL = 1.15;        // stalls sell to shoppers at a markup over the wholesale price
+  const RETAIL = 1.15;        // default shelf price: a markup over the wholesale price
+  // Each shopper will pay up to a personal multiple of the wholesale price, spread around
+  // WILLING (lognormal). The same rule drives automatic sales and the hands-on shop.
+  const WILLING = 1.3, WILLING_SPREAD = 0.2;
+  const PRICE_MIN = 0.7, PRICE_MAX = 2;
   const VEHICLES = [
     { name: 'Backpack', cap: 60, cost: 0 },
     { name: 'Scooter', cap: 120, cost: 2000 },
@@ -168,6 +172,64 @@
     if (!s.cargo[g]) delete s.cargo[g];
     s.impact[s.district][g] -= (IMPACT * q) / G[g].depth;
     return { ok: true, got };
+  }
+
+  // ---------- shoppers & prices ----------
+  function normCdf(x) { // Abramowitz-Stegun approximation
+    const t = 1 / (1 + 0.2316419 * Math.abs(x));
+    const d = 0.3989423 * Math.exp((-x * x) / 2);
+    const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.781478 + t * (-1.821256 + t * 1.330274))));
+    return x > 0 ? 1 - p : p;
+  }
+  // share of shoppers happy to pay `mult` x the wholesale price
+  const willingShare = (mult) => normCdf(Math.log(WILLING / mult) / WILLING_SPREAD);
+  // demand relative to the default shelf price (1 at RETAIL)
+  const priceDemand = (mult) => willingShare(mult) / willingShare(RETAIL);
+  // a random shopper's limit, for the hands-on shop
+  const shopperLimit = (r = Math.random) => WILLING * Math.exp(WILLING_SPREAD * gauss(r));
+  const shelfPrice = (s, b) => round2(price(s, b.district, b.good) * (b.mult || RETAIL));
+
+  function setShelfPrice(s, id, mult) {
+    const b = s.businesses.find((x) => x.id === id);
+    if (!b || b.kind !== 'stall') return { ok: false, msg: 'Not found.' };
+    b.mult = Math.round(Math.max(PRICE_MIN, Math.min(PRICE_MAX, mult)) * 100) / 100;
+    return { ok: true };
+  }
+
+  // A day you run the shop yourself: sales happen live, and the automatic sales are skipped.
+  function shopDayAvailable(s, b) { return b && b.kind === 'stall' && b.district === s.district && b.servedDay !== s.day && !s.finished; }
+  function startShopDay(s, id) {
+    const b = s.businesses.find((x) => x.id === id);
+    if (!shopDayAvailable(s, b)) return { ok: false, msg: b && b.servedDay === s.day ? 'You already ran this shop today.' : 'You need to be at this shop.' };
+    b.servedDay = s.day;
+    b.last = { sold: 0, revenue: 0, demand: 0, live: true };
+    return { ok: true, b };
+  }
+  // one sale at the counter during a hands-on day
+  function shopSale(s, id, qty) {
+    const b = s.businesses.find((x) => x.id === id);
+    if (!b) return { ok: false };
+    qty = Math.min(qty, b.stock);
+    if (qty <= 0) return { ok: false, msg: 'Out of stock' };
+    const revenue = round2(qty * shelfPrice(s, b));
+    b.stock -= qty;
+    s.cash = round2(s.cash + revenue);
+    b.last.sold += qty; b.last.revenue = round2(b.last.revenue + revenue);
+    return { ok: true, qty, revenue };
+  }
+  // top up the shelves from your cargo and any workshop in this district making the same good
+  function shelfRoom(b) { return Math.max(0, unitsPerDay(STALLS[b.tier].cap, b.good) * 3 - b.stock); }
+  function refillShelves(s, id) {
+    const b = s.businesses.find((x) => x.id === id);
+    if (!b) return { ok: false, msg: 'Not found.' };
+    let moved = 0;
+    for (const f of s.businesses) {
+      if (f.kind !== 'factory' || f.district !== b.district || f.good !== b.good) continue;
+      const m = Math.min(f.stock, shelfRoom(b)); f.stock -= m; b.stock += m; moved += m;
+    }
+    const fromCargo = Math.min(s.cargo[b.good] || 0, shelfRoom(b));
+    if (fromCargo) { s.cargo[b.good] -= fromCargo; if (!s.cargo[b.good]) delete s.cargo[b.good]; b.stock += fromCargo; moved += fromCargo; }
+    return moved ? { ok: true, moved } : { ok: false, msg: `No ${G[b.good].name} in your cargo or workshop.` };
   }
 
   // ---------- businesses ----------
@@ -374,9 +436,18 @@
     }
     for (const b of s.businesses.filter((x) => x.kind === 'stall')) {
       const t = STALLS[b.tier];
-      const demand = Math.floor(unitsPerDay(t.cap, b.good) * (0.55 + 0.6 * rb()) * effectMod(s, b.district, b.good));
+      const luck = rb(); // always drawn, so the business dice stay in step
+      if (b.servedDay === s.day) {
+        // you ran it yourself today: sales already happened at the counter
+        s.cash = round2(s.cash - t.rent);
+        rep.sales += b.last.revenue; rep.upkeep += t.rent;
+        rep.lines.push({ icon: G[b.good].icon, text: `You ran the ${t.name.toLowerCase()} at ${D[b.district].name} yourself: ${b.last.sold} sold for $${Math.round(b.last.revenue).toLocaleString()}.` });
+        continue;
+      }
+      const mult = b.mult || RETAIL;
+      const demand = Math.floor(unitsPerDay(t.cap, b.good) * (0.55 + 0.6 * luck) * effectMod(s, b.district, b.good) * priceDemand(mult));
       const sold = Math.min(b.stock, demand);
-      const revenue = round2(sold * price(s, b.district, b.good) * RETAIL);
+      const revenue = round2(sold * price(s, b.district, b.good) * mult);
       b.stock -= sold;
       s.cash = round2(s.cash + revenue - t.rent);
       rep.sales += revenue; rep.upkeep += t.rent;
@@ -407,7 +478,8 @@
   }
 
   const api = {
-    SEASON_DAYS, GOODS, DISTRICTS, STOCKS, STALLS, FACTORIES, VEHICLES, RANKS, PRODUCE_COST, RETAIL, RESALE, LOAN_RATE, DEPOSIT_RATE,
+    SEASON_DAYS, GOODS, DISTRICTS, STOCKS, STALLS, FACTORIES, VEHICLES, RANKS, PRODUCE_COST, RETAIL, RESALE, PRICE_MIN, PRICE_MAX,
+    willingShare, priceDemand, shopperLimit, shelfPrice, setShelfPrice, shopDayAvailable, startShopDay, shopSale, shelfRoom, refillShelves, effectMod, LOAN_RATE, DEPOSIT_RATE,
     G, D, seeded, newSeed, newGame, price, buyPrice, sellPrice, quote, maxBuy, buy, sell, cargoUsed, cargoCap,
     openBusiness, upgradeBusiness, upgradeCost, sellBusiness, setProduct, restock, collect, unitsPerDay, storageCap,
     buyVehicle, bankMove, maxDebt, trade, maxShares, netWorth, rankFor, coinsFor, endDay,

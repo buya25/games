@@ -189,6 +189,23 @@ window.NeonLooks = (() => {
     }
   }
 
+  // Eyes, brows and mouth for the front view. mood: 'happy' | 'meh' | 'sad' | 'angry' | undefined.
+  function drawFace(ctx, hy, s, mood) {
+    const ink = '#1b1035';
+    ctx.fillStyle = ink;
+    for (const ex of [-0.042, 0.042]) { ctx.beginPath(); ctx.arc(ex * s, hy + 0.005 * s, Math.max(0.8, 0.014 * s), 0, Math.PI * 2); ctx.fill(); }
+    ctx.strokeStyle = ink; ctx.lineWidth = Math.max(1, 0.012 * s); ctx.lineCap = 'round';
+    if (mood === 'angry') {
+      for (const sd of [-1, 1]) { ctx.beginPath(); ctx.moveTo(sd * 0.065 * s, hy - 0.04 * s); ctx.lineTo(sd * 0.02 * s, hy - 0.022 * s); ctx.stroke(); }
+    }
+    const my = hy + 0.062 * s, mw = 0.035 * s;
+    ctx.beginPath();
+    if (mood === 'happy') ctx.arc(0, my - 0.02 * s, mw, 0.15 * Math.PI, 0.85 * Math.PI);
+    else if (mood === 'sad' || mood === 'angry') ctx.arc(0, my + 0.025 * s, mw, 1.2 * Math.PI, 1.8 * Math.PI);
+    else { ctx.moveTo(-mw * 0.8, my); ctx.lineTo(mw * 0.8, my); }
+    ctx.stroke();
+  }
+
   // lk = the player's look: { skin, hair, hairColor } (a number is treated as a skin index)
   function drawRunner(ctx, x, y, s, pose, outfit, t, lk = {}) {
     if (typeof lk === 'number') lk = { skin: lk };
@@ -259,7 +276,10 @@ window.NeonLooks = (() => {
     // the body shifts a little over whichever foot is on the ground
     const sway = k * Math.cos(a);
 
-    const P = (px, py, pz) => ({ x: px * s, y: -(py + lift + pz * DEPTH) * s });
+    // pose.front: seen from the front (facing the camera), e.g. shoppers walking up to you.
+    // Mirror left/right and flip depth so the near side is drawn last.
+    const front = !!pose.front, zs = front ? -1 : 1;
+    const P = (px, py, pz) => ({ x: (front ? -px : px) * s, y: -(py + lift + zs * pz * DEPTH) * s });
 
     ctx.save();
     if (of.holo) ctx.globalAlpha *= 0.9; // multiply, so ghosts stay see-through
@@ -375,7 +395,7 @@ window.NeonLooks = (() => {
       ctx.beginPath(); ctx.moveTo(0, top.y + 0.04 * s); ctx.lineTo(0, w0.y); ctx.stroke();
       // shoulder blades shift with the arm swing
       ctx.strokeStyle = 'rgba(0,0,0,.07)'; ctx.lineWidth = 0.012 * s;
-      for (const sd of [-1, 1]) {
+      for (const sd of front ? [] : [-1, 1]) {
         const bx = sd * 0.1 * s, by = q(0, 1.36).y + (running ? sd * Math.sin(a) * 0.012 * k * s : 0);
         ctx.beginPath(); ctx.arc(bx, by, 0.07 * s, sd < 0 ? -0.3 : Math.PI - 1.1, sd < 0 ? 1.1 : Math.PI + 0.3); ctx.stroke();
       }
@@ -393,9 +413,22 @@ window.NeonLooks = (() => {
       ctx.fillStyle = shade(skin, -0.1);
       ctx.beginPath(); ctx.ellipse(-0.115 * s, hc.y + 0.01 * s, 0.028 * s, 0.042 * s, 0, 0, Math.PI * 2); ctx.fill();
       ctx.beginPath(); ctx.ellipse(0.115 * s, hc.y + 0.01 * s, 0.028 * s, 0.042 * s, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = roundShade(ctx, -0.11 * s, 0, 0.11 * s, 0, skin);
-      ctx.beginPath(); ctx.ellipse(0, hc.y, 0.11 * s, 0.135 * s, 0, 0, Math.PI * 2); ctx.fill();
-      drawHair(ctx, lk.hair || 'short', hairColor, hc, s, t, running ? k * Math.sin(a) : 0);
+      const style = lk.hair || 'short', sw = running ? k * Math.sin(a) : 0;
+      if (front) {
+        // hair behind the head (a ponytail hides behind it), then the face, then the fringe
+        drawHair(ctx, style === 'ponytail' ? 'short' : style, hairColor, hc, s, t, sw);
+        ctx.fillStyle = roundShade(ctx, -0.11 * s, 0, 0.11 * s, 0, skin);
+        ctx.beginPath(); ctx.ellipse(0, hc.y + 0.005 * s, 0.105 * s, 0.13 * s, 0, 0, Math.PI * 2); ctx.fill();
+        ctx.save();
+        ctx.beginPath(); ctx.rect(-0.4 * s, hc.y - 0.5 * s, 0.8 * s, 0.45 * s); ctx.clip();
+        drawHair(ctx, style === 'ponytail' || style === 'locs' || style === 'long' ? 'short' : style, hairColor, hc, s, t, 0);
+        ctx.restore();
+        drawFace(ctx, hc.y, s, pose.mood);
+      } else {
+        ctx.fillStyle = roundShade(ctx, -0.11 * s, 0, 0.11 * s, 0, skin);
+        ctx.beginPath(); ctx.ellipse(0, hc.y, 0.11 * s, 0.135 * s, 0, 0, Math.PI * 2); ctx.fill();
+        drawHair(ctx, style, hairColor, hc, s, t, sw);
+      }
       drawAccessory(ctx, of, s, hc.y, 0.13 * s, t);
     };
 
@@ -405,7 +438,7 @@ window.NeonLooks = (() => {
       ...arms.map((r) => ({ z: (r.pts[1].z + r.pts[2].z) / 2, draw: () => drawArm(r) })),
       { z: 0, draw: drawBody },
     ];
-    parts.sort((p, q) => q.z - p.z).forEach((p) => p.draw());
+    parts.sort((p, q) => (q.z - p.z) * zs).forEach((p) => p.draw());
     ctx.restore();
   }
   function drawAccessory(ctx, of, s, hy, hr, t) {
