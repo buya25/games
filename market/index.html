@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Neon Tycoon</title>
+  <meta name="description" content="Trade, build stalls and factories, and invest your way to the top of Neon City.">
+  <meta name="theme-color" content="#0b0221">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="manifest" href="../manifest.webmanifest">
+  <link rel="icon" href="../runner/icons/icon-192.png">
+  <link rel="apple-touch-icon" href="../runner/icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <section id="title" class="screen">
+    <a href="../" class="home">← All games</a>
+    <canvas id="tAvatar" width="120" height="150" aria-hidden="true"></canvas>
+    <h1>NEON<br>TYCOON</h1>
+    <p class="tag">Trade across the city, build stalls and factories, play the stock market. 120 days to make your fortune.</p>
+    <div id="challengeBox" class="challenge hidden"></div>
+    <button id="continueBtn" class="big hidden">CONTINUE · DAY <span id="contDay"></span></button>
+    <button id="newBtn" class="big alt">NEW SEASON</button>
+    <details class="how">
+      <summary>How to play</summary>
+      <ul>
+        <li><b>Market:</b> buy goods where they're cheap, travel, and sell where they're dear. Big trades move the price.</li>
+        <li><b>Travel</b> or <b>End day</b> moves time on. Prices, news and your businesses update overnight.</li>
+        <li><b>Business:</b> stalls sell goods for you every day; workshops make goods for 40% of their price. Put a workshop and a stall selling the same thing in one district and the workshop keeps the stall stocked.</li>
+        <li><b>Factories pay for production every day</b>: keep some cash on hand or they stop.</li>
+        <li><b>Exchange:</b> buy shares in Neon City companies; news moves them.</li>
+        <li><b>Bank:</b> the loan costs 0.5% a day; savings earn 0.1% and are safe from pickpockets.</li>
+        <li>After 120 days your net worth sets your rank and pays arcade coins into your wallet.</li>
+      </ul>
+    </details>
+  </section>
+
+  <section id="game" class="screen hidden">
+    <header class="top">
+      <a href="../" class="home small" aria-label="All games">←</a>
+      <div class="stat"><small>Day</small><b id="day"></b></div>
+      <div class="stat grow"><small>Net worth</small><b id="nw"></b><span id="vsGhost" class="vs"></span></div>
+      <div class="stat"><small>Cash</small><b id="cash"></b></div>
+    </header>
+    <div class="where">
+      <span id="where"></span>
+      <button id="travelBtn" class="chip">🗺️ Travel</button>
+    </div>
+    <main id="panel"></main>
+    <div class="actions">
+      <button id="endDayBtn" class="end">End day ▸</button>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-tab="market" class="on">🛒<span>Market</span></button>
+      <button data-tab="business">🏪<span>Business</span></button>
+      <button data-tab="exchange">📈<span>Exchange</span></button>
+      <button data-tab="bank">🏦<span>Bank</span></button>
+      <button data-tab="stats">🏆<span>Stats</span></button>
+    </nav>
+  </section>
+
+  <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true">
+    <div class="sheet-body" id="sheetBody"></div>
+  </div>
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="../runner/looks.js"></script>
+  <script src="engine.js"></script>
+  <script src="ui.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('../sw.js').catch(() => {}));
+  </script>
+</body>
+</html>

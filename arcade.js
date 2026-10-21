@@ -14,6 +14,8 @@
   if (best) $('bestDash').textContent = `Best ${best}`;
   if (bestMaze) $('bestMaze').textContent = `Best: maze ${bestMaze}`;
   if (!(window.NEON_FIREBASE && window.NEON_FIREBASE.apiKey)) $('raceState').textContent = 'Setup needed';
+  const ty = get('neonTycoon.save', null);
+  if (ty && !ty.finished) $('tycoonState').textContent = `Day ${ty.day} of 120`;
 
   // your own runner, in your outfit, jogging on the spot
   const cv = $('me'), ctx = cv.getContext('2d');
