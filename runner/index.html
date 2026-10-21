@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Neon Dash</title>
+  <meta name="description" content="Endless neon runner. Steer, jump, dodge.">
+  <meta name="theme-color" content="#0b0221">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Neon Dash">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud" class="hidden">
+    <div class="stat"><span id="score">0</span><small id="scoreLabel">SCORE</small></div>
+    <div class="stat coins"><span id="coins">0</span><small>COINS</small></div>
+    <div class="buttons">
+      <button id="muteBtn" aria-label="Toggle sound">🔊</button>
+      <button id="pauseBtn" aria-label="Pause">❚❚</button>
+    </div>
+  </div>
+
+  <div id="menu" class="overlay">
+    <h1>NEON<br>DASH</h1>
+    <p class="how">Drag left / right to steer<br>Tap or swipe up to jump<br><small>Grab 🧲 🛡️ ×2 power-ups on the road</small></p>
+    <p class="how desktop">Keyboard: ← → to steer · Space to jump</p>
+    <button id="playBtn" class="big">ENDLESS RUN</button>
+    <button id="mazeBtn" class="big alt">🌀 MAZE RUN</button>
+    <p class="how small-how">Maze: swipe ◀ ▶ to turn at junctions, swipe ▼ to turn back. Find the exit beam before time runs out!</p>
+    <button id="cityBtn" class="city-btn">🛍️ CITY &amp; SHOP <span class="wallet">🪙 <span id="walletMenu">0</span></span></button>
+    <p class="best">Best: <span id="bestMenu">0</span> · Best maze: <span id="bestMazeMenu">0</span></p>
+    <button id="installBtn" class="small hidden">Install app</button>
+    <p id="iosHint" class="hint hidden">To install: tap Share, then “Add to Home Screen”</p>
+  </div>
+
+  <div id="paused" class="overlay hidden">
+    <h2>PAUSED</h2>
+    <button id="resumeBtn" class="big">RESUME</button>
+    <button id="quitBtn" class="small">Main menu</button>
+  </div>
+
+  <div id="cont" class="overlay hidden">
+    <h2>CONTINUE?</h2>
+    <div class="ring" id="contRing"><span id="contTime">5</span></div>
+    <button id="contBtn" class="big">KEEP RUNNING 🪙<span id="contCost">25</span></button>
+    <p class="detail" id="contNote"></p>
+    <p class="detail">Wallet: 🪙 <span id="contWallet">0</span></p>
+    <button id="contSkip" class="small">No thanks</button>
+  </div>
+
+  <div id="over" class="overlay hidden">
+    <h2 id="overTitle">CRASHED!</h2>
+    <p class="final"><span id="finalLabel">Score</span> <span id="finalScore">0</span></p>
+    <p class="detail" id="finalDetail"></p>
+    <p class="best" id="newBest">Best: <span id="bestOver">0</span></p>
+    <p class="earned">+<span id="earned">0</span> 🪙 → wallet: <span id="walletOver">0</span></p>
+    <p class="goal" id="goal"></p>
+    <button id="againBtn" class="big">PLAY AGAIN</button>
+    <div class="row">
+      <button id="cityBtn2" class="small">🛍️ Shop</button>
+      <button id="menuBtn" class="small">Main menu</button>
+    </div>
+  </div>
+
+  <div id="cleared" class="overlay hidden">
+    <h2 class="win">MAZE <span id="clrLevel">1</span> CLEARED!</h2>
+    <p class="detail"><span id="clrTime">0</span>s left · <span id="clrCoins">0</span> coins this run</p>
+    <p class="earned">Bonus +<span id="clrBonus">0</span> 🪙 → wallet: <span id="clrWallet">0</span></p>
+    <button id="nextBtn" class="big">NEXT MAZE</button>
+    <div class="row">
+      <button id="clrShop" class="small">🛍️ Shop</button>
+      <button id="clrMenu" class="small">Main menu</button>
+    </div>
+  </div>
+
+  <div id="city" class="hidden">
+    <header>
+      <button id="cityBack" class="back" aria-label="Back">←</button>
+      <h3 id="cityTitle">NEON CITY</h3>
+      <span class="wallet big-wallet">🪙 <span id="walletCity">0</span></span>
+    </header>
+    <div class="tabs" id="tabs">
+      <button data-tab="city" class="active">🏙️ City</button>
+      <button data-tab="outfits">🧥 Outfits</button>
+      <button data-tab="trails">✨ Trails</button>
+      <button data-tab="boosts">⚡ Power</button>
+    </div>
+    <canvas id="cityCanvas"></canvas>
+    <p class="city-tip" id="cityTip">Your city glows on the horizon while you run.</p>
+    <div id="shop"></div>
+  </div>
+
+  <script src="city.js"></script>
+  <script src="looks.js"></script>
+  <script src="maze.js"></script>
+  <script src="game.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+    }
+  </script>
+</body>
+</html>
