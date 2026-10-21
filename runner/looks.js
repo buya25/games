@@ -262,7 +262,7 @@ window.NeonLooks = (() => {
     const P = (px, py, pz) => ({ x: px * s, y: -(py + lift + pz * DEPTH) * s });
 
     ctx.save();
-    if (of.holo) ctx.globalAlpha = 0.9;
+    if (of.holo) ctx.globalAlpha *= 0.9; // multiply, so ghosts stay see-through
     ctx.translate(x + sway * 0.035 * s, y);
     ctx.rotate(fall ? pose.roll || 0 : (pose.lean || 0) * 0.16 + sway * 0.025);
     ctx.lineCap = 'round';

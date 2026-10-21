@@ -62,7 +62,9 @@
     <p class="best" id="newBest">Best: <span id="bestOver">0</span></p>
     <p class="earned">+<span id="earned">0</span> 🪙 → wallet: <span id="walletOver">0</span></p>
     <p class="goal" id="goal"></p>
+    <p class="race" id="raceResult"></p>
     <button id="againBtn" class="big">PLAY AGAIN</button>
+    <button id="shareBtn" class="big alt share">👻 CHALLENGE A FRIEND</button>
     <div class="row">
       <button id="cityBtn2" class="small">🛍️ Shop</button>
       <button id="menuBtn" class="small">Main menu</button>
@@ -79,6 +81,17 @@
       <button id="clrMenu" class="small">Main menu</button>
     </div>
   </div>
+
+  <div id="challenge" class="overlay hidden">
+    <h2 class="ghost-title">👻 CHALLENGE!</h2>
+    <canvas id="chCanvas" width="240" height="300"></canvas>
+    <p class="final"><span id="chName">A friend</span> ran <span id="chDist">0</span> m</p>
+    <p class="detail">Same track, same obstacles. Can you beat their ghost?</p>
+    <button id="chAccept" class="big">RACE THEIR GHOST</button>
+    <button id="chSkip" class="small">Not now</button>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
 
   <div id="city" class="hidden">
     <header>
@@ -100,6 +113,7 @@
   <script src="city.js"></script>
   <script src="looks.js"></script>
   <script src="maze.js"></script>
+  <script src="ghost.js"></script>
   <script src="game.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

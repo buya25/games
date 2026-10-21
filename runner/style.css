@@ -164,3 +164,13 @@ button.big.alt { background: transparent; color: #fff; border: 2px solid #ff2a6d
 .stat.warn span { color: #ff3b3b; text-shadow: 0 0 10px #ff3b3b; animation: pulse .5s infinite alternate; }
 @keyframes pulse { to { opacity: .55; } }
 h2.win { color: #ffd23f; text-shadow: 0 0 16px #ffb000; text-align: center; }
+
+.race { font-size: 18px; font-weight: 800; color: #e2c7ff; min-height: 1em; }
+h2.ghost-title { color: #b26bff; text-shadow: 0 0 16px #b26bff; }
+#chCanvas { width: 120px; height: 150px; }
+.toast {
+  position: fixed; left: 50%; bottom: calc(env(safe-area-inset-bottom) + 24px); transform: translateX(-50%);
+  max-width: calc(100% - 32px); padding: 12px 18px; border-radius: 14px; z-index: 50;
+  background: rgba(11,2,33,.92); border: 1px solid #b26bff; color: #fff; font-weight: 700; text-align: center;
+}
+button.big.share { font-size: 17px; letter-spacing: 1px; padding: 14px 22px; }

@@ -52,6 +52,8 @@
     scoreLabel: $('scoreLabel'), cleared: $('cleared'), clrLevel: $('clrLevel'), clrTime: $('clrTime'),
     clrCoins: $('clrCoins'), clrBonus: $('clrBonus'), clrWallet: $('clrWallet'), overTitle: $('overTitle'),
     finalLabel: $('finalLabel'), finalDetail: $('finalDetail'), contNote: $('contNote'), bestMazeMenu: $('bestMazeMenu'),
+    raceResult: $('raceResult'), shareBtn: $('shareBtn'), againBtn: $('againBtn'), challenge: $('challenge'),
+    chName: $('chName'), chDist: $('chDist'), chCanvas: $('chCanvas'), toast: $('toast'),
     cont: $('cont'), contTime: $('contTime'), contCost: $('contCost'), contWallet: $('contWallet'), contRing: $('contRing'),
     walletMenu: $('walletMenu'), walletOver: $('walletOver'), walletCity: $('walletCity'),
     earned: $('earned'), goal: $('goal'), city: $('city'), shop: $('shop'), cityCanvas: $('cityCanvas'),
@@ -170,6 +172,10 @@
   let state = 'menu'; // menu | play | paused | dying | over
   let speed, distance, coinCount, player, targetX, objects, untilNext, shake, deathTimer, particles, jumpBuffer, time, trail;
   let power, powerMax, invuln, continues, contTimer, fall, runup, land;
+  let playSteps = 0;     // fixed steps of play this run (the clock ghosts are replayed against)
+  let recorder = null;   // this run, for "challenge a friend"
+  let ghost = null;      // { run, x, y, d, done, phase, beaten } when racing a friend's ghost
+  let banner = null;     // { text, color, t } big message over the road
 
   function reset() {
     speed = START_SPEED;
@@ -221,10 +227,14 @@
   }
 
   // Each pattern spawns at z and returns how much road it occupies.
+  // Track randomness is seeded per run, so a challenge replays the exact same track.
+  let rng = Math.random;
+  const grand = (a, b) => a + rng() * (b - a);
+
   function spawnPattern() {
     const z = SPAWN_Z;
     const diff = Math.min(1, distance / 3000); // 0 -> 1 over ~3 km
-    const roll = Math.random();
+    const roll = rng();
     const options = [];
     options.push(['single', 3], ['gate', 3], ['jump', 2], ['half', 2]);
     if (diff > 0.1) options.push(['slalom', 2 + diff * 2]);
@@ -236,16 +246,16 @@
 
     switch (type) {
       case 'single': {
-        const w = rand(1.2, 2.2 + diff);
-        const x = rand(-ROAD + w / 2, ROAD - w / 2);
+        const w = grand(1.2, 2.2 + diff);
+        const x = grand(-ROAD + w / 2, ROAD - w / 2);
         wall(x - w / 2, x + w / 2, z);
         const free = x > 0 ? (-ROAD + (x - w / 2)) / 2 : (ROAD + (x + w / 2)) / 2;
-        if (Math.random() < 0.6) coinLine(free, z - 6, 4);
+        if (rng() < 0.6) coinLine(free, z - 6, 4);
         return 6;
       }
       case 'gate': {
-        const gap = rand(2.6, 3.2) - diff * 1.0;
-        const gx = rand(-ROAD + gap / 2, ROAD - gap / 2);
+        const gap = grand(2.6, 3.2) - diff * 1.0;
+        const gx = grand(-ROAD + gap / 2, ROAD - gap / 2);
         wall(-ROAD, gx - gap / 2, z);
         wall(gx + gap / 2, ROAD, z);
         coinLine(gx, z - 7.5, 4);
@@ -254,12 +264,12 @@
       case 'jump': {
         barrier(-ROAD, ROAD, z);
         // arc of coins following the jump
-        const cx = rand(-ROAD + 0.6, ROAD - 0.6);
+        const cx = grand(-ROAD + 0.6, ROAD - 0.6);
         for (let i = -2; i <= 2; i++) coin(cx, z + i * 1.6, 0.9 + (1.4 - i * i * 0.25));
         return 8;
       }
       case 'half': {
-        const left = Math.random() < 0.5;
+        const left = rng() < 0.5;
         if (left) { barrier(-ROAD, 0, z); wall(0, ROAD, z); } else { wall(-ROAD, 0, z); barrier(0, ROAD, z); }
         coin(left ? -ROAD / 2 : ROAD / 2, z, 2.2);
         return 8;
@@ -267,7 +277,7 @@
       case 'slalom': {
         const n = 3 + Math.floor(diff * 2);
         const spacing = Math.max(12, speed * 0.6);
-        let side = Math.random() < 0.5 ? -1 : 1;
+        let side = rng() < 0.5 ? -1 : 1;
         const cover = 0.55 + diff * 0.1;
         for (let i = 0; i < n; i++) {
           const zz = z + i * spacing;
@@ -279,10 +289,10 @@
         return (n - 1) * spacing + 8;
       }
       case 'mover': {
-        const hw = rand(0.7, 1.0);
+        const hw = grand(0.7, 1.0);
         objects.push({
           kind: 'wall', moving: true, x: 0, hw, z, hd: 0.6, h: 2.4,
-          amp: ROAD - hw, freq: rand(1.2, 1.8 + diff), phase: rand(0, Math.PI * 2),
+          amp: ROAD - hw, freq: grand(1.2, 1.8 + diff), phase: grand(0, Math.PI * 2),
         });
         return 10;
       }
@@ -290,7 +300,7 @@
         // jump barrier then quickly a gate
         barrier(-ROAD, ROAD, z);
         const gap = 2.4 - diff * 0.6;
-        const gx = rand(-ROAD + gap / 2, ROAD - gap / 2);
+        const gx = grand(-ROAD + gap / 2, ROAD - gap / 2);
         const z2 = z + Math.max(10, speed * 0.55);
         wall(-ROAD, gx - gap / 2, z2);
         wall(gx + gap / 2, ROAD, z2);
@@ -343,7 +353,7 @@
 
   window.addEventListener('keydown', (e) => {
     const k = e.key;
-    if (e.target instanceof HTMLInputElement || !ui.city.classList.contains('hidden')) return;
+    if (e.target instanceof HTMLInputElement || !ui.city.classList.contains('hidden') || !ui.challenge.classList.contains('hidden')) return;
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' ', 'a', 'd', 'w', 's'].includes(k)) e.preventDefault();
     if (k === ' ' || k === 'ArrowUp' || k === 'w') {
       if (state === 'play') requestJump();
@@ -364,9 +374,20 @@
 
   // ---------- Flow ----------
   function show(el, on) { el.classList.toggle('hidden', !on); }
-  function start() {
+  const lookIds = () => ({
+    outfits: NeonLooks.OUTFITS.map((o) => o.id), trails: NeonLooks.TRAILS.map((t) => t.id), hairs: NeonLooks.HAIRS.map((h) => h.id),
+  });
+
+  // challengeRun: a friend's decoded run to race (same seed = same track), or null
+  function start(challengeRun = null) {
     initAudio();
     reset();
+    const seed = challengeRun ? challengeRun.seed : NeonGhost.newSeed();
+    rng = NeonGhost.seeded(seed);
+    playSteps = 0;
+    recorder = NeonGhost.createRecorder(seed, look, playerName || 'Runner');
+    ghost = challengeRun ? { run: challengeRun, x: 0, y: 0, d: 0, done: false, phase: 1.5, beaten: false } : null;
+    banner = challengeRun ? { text: `RACE ${challengeRun.name.toUpperCase()}!`, color: '#b26bff', t: 0 } : null;
     mode = 'endless';
     mz = null;
     skyShift = 0;
@@ -393,6 +414,8 @@
   }
   function toMenu() {
     reset();
+    ghost = null;
+    banner = null;
     mode = 'endless';
     mz = null;
     skyShift = 0;
@@ -402,7 +425,7 @@
     ui.walletMenu.textContent = wallet;
     show(ui.paused, false); show(ui.over, false); show(ui.cleared, false); show(ui.hud, false); show(ui.menu, true);
   }
-  const playAgain = () => (mode === 'maze' ? startMaze(1) : start());
+  const playAgain = () => (mode === 'maze' ? startMaze(1) : start(ghost ? ghost.run : null));
   function landed() {
     land = LAND_TIME;
     tone(150, 0.08, 'triangle', 0.08, 70); // soft footfall
@@ -484,9 +507,25 @@
       f.vroll = 0;
     }
   }
+  let shareCode = null;
   function gameOver() {
     state = 'over';
     let record;
+    const racing = mode === 'endless' && ghost;
+    ui.raceResult.textContent = '';
+    if (racing) {
+      const diff = Math.round(distance - NeonGhost.finalDistance(ghost.run));
+      ui.raceResult.textContent = diff >= 0 ? `🏆 You beat ${ghost.run.name} by ${diff} m!` : `👻 ${ghost.run.name} wins by ${-diff} m`;
+    }
+    ui.againBtn.textContent = racing ? 'RACE AGAIN' : 'PLAY AGAIN';
+    ui.shareBtn.textContent = racing ? '👻 CHALLENGE BACK' : '👻 CHALLENGE A FRIEND';
+    show(ui.shareBtn, mode === 'endless' && recorder && recorder.samples.length > 0);
+    shareCode = null;
+    if (mode === 'endless' && recorder) {
+      recorder.crashed = true;
+      recorder.name = playerName || 'Runner';
+      NeonGhost.encode(recorder, lookIds()).then((c) => { shareCode = c; }).catch(() => {});
+    }
     if (mode === 'maze') {
       const cleared = mz.level - 1;
       record = false; // best maze is saved when a maze is cleared
@@ -558,6 +597,56 @@
     show(ui.cont, false);
     gameOver();
   }
+
+  function toast(msg) {
+    ui.toast.textContent = msg;
+    show(ui.toast, true);
+    clearTimeout(toast.t);
+    toast.t = setTimeout(() => show(ui.toast, false), 2600);
+  }
+
+  async function shareRun() {
+    if (!recorder || !recorder.samples.length) return;
+    if (!playerName) {
+      const n = (window.prompt('Your name for the challenge?', '') || '').trim().slice(0, 12);
+      if (n) { playerName = n; store.set('neonDash.name', n); }
+    }
+    if (!shareCode || recorder.name !== (playerName || 'Runner')) {
+      recorder.name = playerName || 'Runner';
+      shareCode = await NeonGhost.encode(recorder, lookIds());
+    }
+    const url = `${location.origin}${location.pathname}?c=${shareCode}`;
+    const text = `👻 I ran ${Math.floor(NeonGhost.finalDistance(recorder))} m in Neon Dash. Can you beat my ghost?`;
+    if (navigator.share) {
+      try { await navigator.share({ title: 'Neon Dash challenge', text, url }); return; } catch (e) { if (e && e.name === 'AbortError') return; }
+    }
+    try { await navigator.clipboard.writeText(`${text} ${url}`); toast('Challenge link copied! Send it to a friend.'); }
+    catch { window.prompt('Copy this challenge link:', url); }
+  }
+
+  // Opening a challenge link (?c=...) shows who challenged you and lets you race their ghost.
+  let pendingChallenge = null;
+  async function readChallengeLink() {
+    const code = new URLSearchParams(location.search).get('c');
+    if (!code) return;
+    history.replaceState(null, '', location.pathname + location.hash);
+    try {
+      const run = await NeonGhost.decode(code, lookIds());
+      pendingChallenge = run;
+      ui.chName.textContent = run.name;
+      ui.chDist.textContent = Math.floor(NeonGhost.finalDistance(run));
+      const c2 = ui.chCanvas.getContext('2d');
+      c2.clearRect(0, 0, 240, 300);
+      NeonLooks.drawRunner(c2, 120, 285, 130, { phase: 0.6, stride: 1 }, NeonLooks.byId(NeonLooks.OUTFITS, run.look.outfit), 0, run.look);
+      show(ui.menu, false);
+      show(ui.challenge, true);
+    } catch {
+      toast('That challenge link looks broken.');
+    }
+  }
+  $('shareBtn').addEventListener('click', () => { shareRun(); });
+  $('chAccept').addEventListener('click', () => { show(ui.challenge, false); start(pendingChallenge); });
+  $('chSkip').addEventListener('click', () => { show(ui.challenge, false); show(ui.menu, true); });
 
   // ---------- Neon City shop ----------
   const ICONS = { apartment: '🏢', house: '🏠', garage: '🚗', club: '🪩', tower: '🏙️', billboard: '📺' };
@@ -888,7 +977,7 @@
     tb.addEventListener('click', () => { shopTab = tb.dataset.tab; renderShop(); ui.shop.scrollTop = 0; });
   }
 
-  $('playBtn').addEventListener('click', start);
+  $('playBtn').addEventListener('click', () => start());
   $('againBtn').addEventListener('click', () => playAgain());
   $('mazeBtn').addEventListener('click', () => startMaze(1));
   $('nextBtn').addEventListener('click', () => startMaze(mz.level + 1));
@@ -982,12 +1071,12 @@
     if (untilNext <= 0) {
       const used = spawnPattern();
       const diff = Math.min(1, distance / 3000);
-      const gap = rand(16, 26) - diff * 6;
+      const gap = grand(16, 26) - diff * 6;
       untilNext = used + gap;
-      if (Math.random() < POWER_CHANCE) {
+      if (rng() < POWER_CHANCE) {
         const ids = Object.keys(POWERS).filter((id) => !POWERS[id].maze);
-        objects.push({ kind: 'power', ptype: ids[(Math.random() * ids.length) | 0],
-          x: rand(-ROAD + 0.8, ROAD - 0.8), y: 1, z: SPAWN_Z + used + gap / 2, hw: 0.45, hd: 0.45, h: 0 });
+        objects.push({ kind: 'power', ptype: ids[(rng() * ids.length) | 0],
+          x: grand(-ROAD + 0.8, ROAD - 0.8), y: 1, z: SPAWN_Z + used + gap / 2, hw: 0.45, hd: 0.45, h: 0 });
       }
     }
 
@@ -1037,6 +1126,21 @@
     }
     objects = objects.filter((o) => o.z > -CAM_D + 0.6 && !o.taken && !o.dead);
     NeonLooks.updateTrail(trail, look.trail, player, distance, speed, dt, TRAIL_Z);
+
+    playSteps++;
+    if (recorder && playSteps % NeonGhost.SAMPLE_STEPS === 0) NeonGhost.record(recorder, distance, player.x, player.y);
+    if (ghost) {
+      const g = NeonGhost.sampleAt(ghost.run, playSteps);
+      const v = Math.max(0, (g.d - ghost.d) / dt);
+      if (!g.done) ghost.phase += dt * cadence(v);
+      Object.assign(ghost, { x: g.x, y: g.y, d: g.d, done: g.done });
+      if (!ghost.beaten && g.done && distance > g.d) {
+        ghost.beaten = true;
+        banner = { text: `YOU BEAT ${ghost.run.name.toUpperCase()}! 🏆`, color: C.gold, t: 0 };
+        sfx.build();
+      }
+    }
+    if (banner) { banner.t += dt; if (banner.t > 2.2) banner = null; }
 
     ui.score.textContent = score();
     ui.coins.textContent = coinCount;
@@ -1286,6 +1390,60 @@
       NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time, look);
   }
 
+  // A friend's ghost: see-through runner in their look, name tag above.
+  function drawGhost(z) {
+    if (z < -CAM_D + 0.8 || z > SPAWN_Z) return;
+    const run = ghost.run, lk = run.look;
+    const p = project(ghost.x, ghost.y, z), s = p.s;
+    const lying = ghost.done && run.crashed;
+    ctx.save();
+    ctx.globalAlpha = 0.5;
+    const pose = lying ? { fall: { grounded: true, t: 1 }, roll: Math.PI / 2 }
+      : { phase: ghost.phase, air: ghost.y > 0.01, stride: 1 };
+    NeonLooks.drawRunner(ctx, p.x, p.y, s, pose, NeonLooks.byId(NeonLooks.OUTFITS, lk.outfit), time, lk);
+    ctx.restore();
+    // name tag
+    const tag = project(ghost.x, (lying ? 0.6 : ghost.y + 2.15), z);
+    const label = `👻 ${run.name}${lying ? ' 💥' : ''}`;
+    ctx.font = `800 ${Math.max(10, Math.min(16, tag.s * 0.28))}px system-ui, sans-serif`;
+    const tw = ctx.measureText(label).width;
+    ctx.fillStyle = 'rgba(11,2,33,.7)';
+    ctx.fillRect(tag.x - tw / 2 - 6, tag.y - 13, tw + 12, 18);
+    ctx.fillStyle = '#e2c7ff';
+    ctx.textAlign = 'center';
+    ctx.fillText(label, tag.x, tag.y);
+    ctx.textAlign = 'start';
+  }
+
+  // Gap to the ghost, top centre.
+  function drawGhostHud() {
+    const gap = Math.round(ghost.d - distance);
+    const ahead = gap < 0;
+    const text = ghost.beaten ? `🏆 Beat ${ghost.run.name}` : gap === 0 ? `Neck and neck with ${ghost.run.name}`
+      : ahead ? `You +${-gap} m` : `👻 ${ghost.run.name} +${gap} m`;
+    ctx.font = '800 15px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    const tw = ctx.measureText(text).width;
+    ctx.fillStyle = 'rgba(11,2,33,.7)';
+    ctx.fillRect(W / 2 - tw / 2 - 10, 62, tw + 20, 26);
+    ctx.fillStyle = ghost.beaten || ahead ? C.gold : '#e2c7ff';
+    ctx.fillText(text, W / 2, 80);
+    ctx.textAlign = 'start';
+  }
+
+  function drawBanner() {
+    ctx.globalAlpha = Math.max(0, Math.min(1, (2.2 - banner.t) * 2));
+    ctx.font = `900 italic ${Math.min(W, H) * 0.075}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 6; ctx.strokeStyle = '#0b0221';
+    ctx.strokeText(banner.text, W / 2, H * 0.3);
+    ctx.fillStyle = banner.color;
+    ctx.fillText(banner.text, W / 2, H * 0.3);
+    ctx.textAlign = 'start';
+    ctx.globalAlpha = 1;
+  }
+
   function drawPlayer() {
     if (fall) { drawFallen(); return; }
     const base = project(player.x, 0, 0);
@@ -1318,12 +1476,15 @@
     drawGround();
 
     // far to near; the player sits at z = 0
-    const sorted = objects.slice().sort((a, b) => b.z - a.z);
+    const items = objects.slice();
+    if (ghost && state !== 'menu') items.push({ kind: 'ghost', z: ghost.d - distance });
+    const sorted = items.sort((a, b) => b.z - a.z);
     let playerDrawn = false;
     const playerZ = fall ? fall.z : 0;
     for (const o of sorted) {
       if (!playerDrawn && o.z < playerZ) { drawPlayer(); playerDrawn = true; }
-      if (o.kind === 'coin') drawCoin(o); else if (o.kind === 'power') drawPower(o); else drawBox(o);
+      if (o.kind === 'ghost') drawGhost(o.z);
+      else if (o.kind === 'coin') drawCoin(o); else if (o.kind === 'power') drawPower(o); else drawBox(o);
     }
     if (!playerDrawn) drawPlayer();
 
@@ -1340,6 +1501,8 @@
       ctx.fillRect(0, 0, W, H);
     }
     if (state === 'play' || state === 'paused') drawPowerHud();
+    if (ghost && (state === 'play' || state === 'paused')) drawGhostHud();
+    if (banner) drawBanner();
     if (state === 'play' && runup > RUNUP - 1) {
       const k = (RUNUP - runup); // 0 -> 1 over the first second
       ctx.globalAlpha = Math.max(0, 1 - k);
@@ -1380,6 +1543,9 @@
     initAudio();
     const keepCoins = state === 'cleared' ? coinCount : 0;
     reset();
+    ghost = null;
+    banner = null;
+    recorder = null;
     mode = 'maze';
     coinCount = keepCoins;
     const n = Math.min(13, 4 + level);
@@ -1845,6 +2011,8 @@
     ctx.textAlign = 'start';
   }
 
+  readChallengeLink();
+
   // Test hook for automated checks (only when the URL ends in #test).
   if (location.hash === '#test') {
     window.neonTest = {
@@ -1852,6 +2020,8 @@
       wall: (z, x = 0) => objects.push({ kind: 'wall', x, hw: 1, z, hd: 0.6, h: 2.4 }),
       barrier: (z) => objects.push({ kind: 'barrier', x: 0, hw: ROAD, z, hd: 0.3, h: 0.9 }),
       peek: () => ({ state, power: { ...power }, invuln, coinCount, wallet, x: player.x }),
+      god: (on) => { invuln = on ? 1e9 : 0; },
+      run: () => ({ distance, playSteps, recorder, ghost, shareCode, objects: objects.map((o) => ({ kind: o.kind, x: +o.x.toFixed(3), z: +(o.z + distance).toFixed(2) })) }),
       maze: () => mz,
       steer: (d) => mazeSteer(d),
       jump: () => requestJump(),
@@ -1860,6 +2030,8 @@
 
   // ---------- Loop ----------
   let last = performance.now();
+  const STEP = 1 / 60;
+  let stepAcc = 0;
   function frame(now) {
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
@@ -1868,7 +2040,11 @@
       time += dt;
       camX = Math.sin(time * 0.5) * 0.6;
     } else if (state !== 'paused') {
-      update(dt);
+      // fixed 1/60 s steps: the same seed and the same moves give the same run on every phone
+      stepAcc += dt;
+      let n = 0;
+      while (stepAcc >= STEP && n < 6) { update(STEP); stepAcc -= STEP; n++; }
+      if (n === 6) stepAcc = 0;
     }
     if (mode === 'maze' && mz) renderMaze(); else render();
     if (!ui.city.classList.contains('hidden')) renderShopPreview(dt);
