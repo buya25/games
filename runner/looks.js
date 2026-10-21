@@ -48,10 +48,11 @@ window.NeonLooks = (() => {
   }
 
   // One leg: thigh swings with the gait; the knee bends most mid-recovery (heel kick).
-  function legPose(a) {
-    const thigh = 0.55 * Math.sin(a);
+  // k = stride intensity: 0 standing still, 1 full running stride.
+  function legPose(a, k = 1) {
+    const thigh = 0.55 * k * Math.sin(a);
     const rec = Math.max(0, Math.cos(a));
-    return { thigh, knee: 0.15 + 1.45 * rec * rec };
+    return { thigh, knee: k * (0.15 + 1.45 * rec * rec) };
   }
 
   function limbChain(x0, y0, z0, ang1, len1, ang2, len2) {
@@ -88,10 +89,18 @@ window.NeonLooks = (() => {
       L = { thigh: 0.95, knee: 1.7 }; R = { thigh: -0.15, knee: 1.15 };
       armL = { sh: -0.45, el: 0.9 }; armR = { sh: 0.5, el: 1.0 };
     } else {
-      L = legPose(a); R = legPose(a + Math.PI);
-      // arms swing opposite to the leg on the same side, elbows bent ~90°
-      armL = { sh: 0.6 * Math.sin(a + Math.PI), el: 1.45 + 0.3 * Math.sin(a + Math.PI) };
-      armR = { sh: 0.6 * Math.sin(a), el: 1.45 + 0.3 * Math.sin(a) };
+      const k = pose.stride === undefined ? 1 : pose.stride;
+      L = legPose(a, k); R = legPose(a + Math.PI, k);
+      // arms swing opposite to the leg on the same side, elbows bent ~90° when running
+      const idle = (1 - k) * 0.04 * Math.sin(t * 2); // slight breathing sway when standing
+      armL = { sh: 0.6 * k * Math.sin(a + Math.PI) + idle, el: 0.25 + k * (1.2 + 0.3 * Math.sin(a + Math.PI)) };
+      armR = { sh: 0.6 * k * Math.sin(a) - idle, el: 0.25 + k * (1.2 + 0.3 * Math.sin(a)) };
+      // landing squash: knees bend and the hips drop (the feet stay planted)
+      const q = pose.squash || 0;
+      if (q > 0) {
+        for (const leg of [L, R]) { leg.thigh += 0.45 * q; leg.knee += 0.95 * q; }
+        armL.sh -= 0.25 * q; armR.sh -= 0.25 * q;
+      }
     }
     const legs = [[-1, L], [1, R]].map(([side, p]) => ({
       side, kind: 'leg', pts: limbChain(side * B.hipW, B.hip, 0, p.thigh, B.thigh, p.thigh - p.knee, B.shin), kick: p.knee,

@@ -12,6 +12,8 @@
   const START_SPEED = 15;
   const MAX_SPEED = 36;
   const ACCEL = 0.28;        // speed gained per second
+  const RUNUP = 1.6;         // seconds to accelerate from standing to START_SPEED
+  const LAND_TIME = 0.24;    // length of the landing squash
   const KEY_STEER = 11;      // units/second when steering with the keyboard
   const DRAG_SENS = 1.5;     // finger drag -> world movement multiplier
   const TRAIL_Z = -2.4;      // how far behind the runner trails reach (toward the camera)
@@ -133,7 +135,7 @@
   // ---------- Game state ----------
   let state = 'menu'; // menu | play | paused | dying | over
   let speed, distance, coinCount, player, targetX, objects, untilNext, shake, deathTimer, particles, jumpBuffer, time, trail;
-  let power, powerMax, invuln, continues, contTimer, fall;
+  let power, powerMax, invuln, continues, contTimer, fall, runup, land;
 
   function reset() {
     speed = START_SPEED;
@@ -154,13 +156,17 @@
     continues = 0;
     contTimer = 0;
     fall = null;
+    runup = 0;
+    land = 0;
     jumpBuffer = 0;
     time = 0;
   }
   reset();
 
   const score = () => Math.floor(distance) + coinCount * 10;
-  const cadence = (v) => Math.PI * 2 * (1.3 + v * 0.025); // stride phase per second
+  // stride phase per second; slower steps when barely moving
+  const cadence = (v) => Math.PI * 2 * (1.3 + v * 0.025) * Math.min(1, 0.35 + v / 8);
+  const strideOf = (v) => Math.min(1, v / START_SPEED);
 
   // ---------- Spawning ----------
   const clampX = (x, hw) => Math.max(-ROAD + hw, Math.min(ROAD - hw, x));
@@ -312,6 +318,8 @@
   function start() {
     initAudio();
     reset();
+    speed = 0;
+    runup = RUNUP;
     state = 'play';
     show(ui.menu, false); show(ui.over, false); show(ui.paused, false); show(ui.hud, true);
     last = performance.now();
@@ -336,6 +344,16 @@
     ui.walletMenu.textContent = wallet;
     show(ui.paused, false); show(ui.over, false); show(ui.hud, false); show(ui.menu, true);
   }
+  function landed() {
+    land = LAND_TIME;
+    tone(150, 0.08, 'triangle', 0.08, 70); // soft footfall
+    const p = project(player.x, 0, 0);
+    for (let i = 0; i < 10; i++) {
+      const side = i % 2 ? 1 : -1;
+      particles.push({ x: p.x + side * rand(4, 18), y: p.y - 2, vx: side * rand(60, 160), vy: rand(-140, -40), life: rand(0.25, 0.45), c: 'rgba(210,190,255,.55)' });
+    }
+  }
+
   // Stumble and fall: walls knock the runner back, barriers trip them forward.
   // Either way they topple sideways (away from the obstacle) and slide to a stop.
   function crash(o) {
@@ -817,7 +835,14 @@
 
     if (state !== 'play') return;
 
-    speed = Math.min(MAX_SPEED, speed + ACCEL * dt);
+    if (runup > 0) {
+      // run-up: ease from standing to START_SPEED
+      runup = Math.max(0, runup - dt);
+      const k = 1 - runup / RUNUP;
+      speed = START_SPEED * k * (2 - k);
+    } else {
+      speed = Math.min(MAX_SPEED, speed + ACCEL * dt);
+    }
 
     // steering
     if (keys.has('ArrowLeft') || keys.has('a')) targetX -= KEY_STEER * dt;
@@ -837,8 +862,9 @@
     if (player.y > 0 || player.vy > 0) {
       player.vy -= GRAVITY * dt;
       player.y = Math.max(0, player.y + player.vy * dt);
-      if (player.y === 0) player.vy = 0;
+      if (player.y === 0) { player.vy = 0; landed(); }
     }
+    if (land > 0) land = Math.max(0, land - dt);
     player.phase += dt * cadence(speed);
 
     // power-up timers
@@ -1156,7 +1182,8 @@
 
     NeonLooks.drawTrail(ctx, project, trail, look.trail, distance, time, TRAIL_Z);
     if (invuln > 0 && Math.sin(time * 30) < 0) return; // blink while invulnerable
-    NeonLooks.drawRunner(ctx, p.x, p.y, s, { lean: player.lean, phase: player.phase, air: player.y > 0.01 },
+    NeonLooks.drawRunner(ctx, p.x, p.y, s, { lean: player.lean, phase: player.phase, air: player.y > 0.01,
+        stride: state === 'menu' ? 0 : strideOf(speed), squash: land > 0 ? Math.sin(Math.PI * (1 - land / LAND_TIME)) : 0 },
       NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time, look.skin);
     if (power.shield > 0 && !(power.shield < 2 && Math.sin(time * 20) < 0)) {
       ctx.globalAlpha = 0.5 + Math.sin(time * 5) * 0.15;
@@ -1196,6 +1223,23 @@
       ctx.fillRect(0, 0, W, H);
     }
     if (state === 'play' || state === 'paused') drawPowerHud();
+    if (state === 'play' && runup > RUNUP - 1) {
+      const k = (RUNUP - runup); // 0 -> 1 over the first second
+      ctx.globalAlpha = Math.max(0, 1 - k);
+      ctx.fillStyle = C.yellow;
+      ctx.font = `900 italic ${Math.min(W, H) * (0.18 + k * 0.08)}px system-ui, sans-serif`;
+      ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = Math.min(W, H) * 0.025;
+      ctx.strokeStyle = C.pink;
+      ctx.strokeText('GO!', W / 2, H * 0.3);
+      ctx.lineWidth = Math.min(W, H) * 0.012;
+      ctx.strokeStyle = '#0b0221';
+      ctx.strokeText('GO!', W / 2, H * 0.3);
+      ctx.fillText('GO!', W / 2, H * 0.3);
+      ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+      ctx.globalAlpha = 1;
+    }
   }
 
   // Test hook for automated checks (only when the URL ends in #test).
@@ -1214,8 +1258,7 @@
     const dt = Math.min(0.05, (now - last) / 1000);
     last = now;
     if (state === 'menu') {
-      // gentle attract-mode scroll behind the menu
-      distance += 8 * dt;
+      // the runner waits at the start line; the camera sways gently
       time += dt;
       camX = Math.sin(time * 0.5) * 0.6;
     } else if (state !== 'paused') {
