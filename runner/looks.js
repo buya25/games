@@ -35,6 +35,12 @@ window.NeonLooks = (() => {
   // ---------- Runner ----------
   // A simple skeleton animated in side view (y up, z forward), then projected as
   // seen from behind and slightly above: things further forward appear higher.
+  const HAIRS = [
+    { id: 'short', name: 'Short' }, { id: 'buzz', name: 'Buzz' }, { id: 'long', name: 'Long' },
+    { id: 'ponytail', name: 'Ponytail' }, { id: 'bun', name: 'Bun' }, { id: 'afro', name: 'Afro' },
+    { id: 'locs', name: 'Locs' },
+  ];
+  const HAIR_COLORS = ['#1a1418', '#4a2c1a', '#c99a4b', '#a3412a', '#ff2a6d', '#05d9e8'];
   const SKINS = ['#f3cfb3', '#e0a986', '#c08058', '#8d5a3b', '#5a3825'];
   const DEPTH = 0.18;
   const B = { hip: 0.93, hipW: 0.1, thigh: 0.45, shin: 0.46, shoulderY: 1.42, shoulderW: 0.235, upper: 0.29, fore: 0.27 };
@@ -47,12 +53,31 @@ window.NeonLooks = (() => {
     return `rgb(${f(n >> 16)}, ${f((n >> 8) & 255)}, ${f(n & 255)})`;
   }
 
-  // One leg: thigh swings with the gait; the knee bends most mid-recovery (heel kick).
+  // Running gait for one leg at stride phase a (the other leg is half a cycle apart).
   // k = stride intensity: 0 standing still, 1 full running stride.
+  // The thigh drives well forward (knee lift) and extends less far back; the knee
+  // flexes a little through stance to cushion the landing and a lot during the
+  // recovery swing (heel kick). Stance is centred on a = π, recovery on a = 0.
   function legPose(a, k = 1) {
-    const thigh = 0.55 * k * Math.sin(a);
+    const sa = Math.sin(a);
+    const thigh = k * (sa > 0 ? 0.85 : 0.45) * sa;
     const rec = Math.max(0, Math.cos(a));
-    return { thigh, knee: k * (0.15 + 1.45 * rec * rec) };
+    const stance = Math.max(0, -Math.cos(a));
+    return { thigh, knee: k * (0.12 + 0.3 * stance + 1.6 * rec * rec) };
+  }
+
+  const footY = (p) => B.hip - Math.cos(p.thigh) * B.thigh - Math.cos(p.thigh - p.knee) * B.shin;
+  const BOUNCE = 0.09;  // height of the flight arc between footfalls
+  const CONTACT = 0.45; // share of each step with a foot planted
+
+  // Running is not walking: each step has a contact part (stance foot planted on the
+  // road) and a flight part where the body arcs up and both feet are in the air.
+  // Footfalls happen once per half cycle, centred on a = 0 and a = π.
+  function gaitLift(a, k) {
+    const planted = -Math.min(footY(legPose(a, k)), footY(legPose(a + Math.PI, k))) + 0.01;
+    const u = ((((a + (CONTACT * Math.PI) / 2) % Math.PI) + Math.PI) % Math.PI) / Math.PI; // 0..1 within a step
+    const flight = u < CONTACT ? 0 : Math.sin((Math.PI * (u - CONTACT)) / (1 - CONTACT));
+    return planted + k * BOUNCE * flight;
   }
 
   function limbChain(x0, y0, z0, ang1, len1, ang2, len2) {
@@ -61,9 +86,65 @@ window.NeonLooks = (() => {
     return [{ x: x0, y: y0, z: z0 }, { x: x1, y: y1, z: z1 }, { x: x1, y: y2, z: z2 }];
   }
 
-  function drawRunner(ctx, x, y, s, pose, outfit, t, skinIdx = 2) {
+  // Hair seen from behind. hc = screen centre of the head; sw = stride swing (-1..1).
+  function drawHair(ctx, style, color, hc, s, t, sw) {
+    const cap = (ry, dy) => { ctx.beginPath(); ctx.ellipse(0, hc.y - dy * s, 0.115 * s, ry * s, 0, 0, Math.PI * 2); ctx.fill(); };
+    const strand = (x0, y0, x1, y1, w) => {
+      ctx.lineWidth = w * s;
+      ctx.beginPath(); ctx.moveTo(x0 * s, hc.y + y0 * s);
+      ctx.quadraticCurveTo(x0 * s, hc.y + ((y0 + y1) / 2) * s, x1 * s, hc.y + y1 * s); ctx.stroke();
+    };
+    ctx.fillStyle = color; ctx.strokeStyle = color; ctx.lineCap = 'round';
+    const swing = sw * 0.06 + Math.sin(t * 9) * 0.01; // hair lags the stride
+    switch (style) {
+      case 'buzz':
+        ctx.globalAlpha *= 0.85; cap(0.11, 0.035); ctx.globalAlpha /= 0.85;
+        break;
+      case 'long':
+        cap(0.125, 0.022);
+        ctx.beginPath();
+        ctx.moveTo(-0.118 * s, hc.y - 0.01 * s);
+        ctx.quadraticCurveTo(-0.14 * s, hc.y + 0.14 * s, (-0.12 + swing) * s, hc.y + 0.27 * s);
+        ctx.quadraticCurveTo(swing * s, hc.y + 0.31 * s, (0.12 + swing) * s, hc.y + 0.27 * s);
+        ctx.quadraticCurveTo(0.14 * s, hc.y + 0.14 * s, 0.118 * s, hc.y - 0.01 * s);
+        ctx.closePath(); ctx.fill();
+        break;
+      case 'ponytail':
+        cap(0.125, 0.022);
+        strand(0, 0.02, swing * 1.6, 0.3, 0.075);
+        strand(swing * 1.6, 0.3, swing * 2.2, 0.38, 0.05);
+        ctx.fillStyle = '#ff2a6d';
+        ctx.beginPath(); ctx.arc(0, hc.y + 0.03 * s, 0.03 * s, 0, Math.PI * 2); ctx.fill();
+        break;
+      case 'bun':
+        cap(0.125, 0.022);
+        ctx.beginPath(); ctx.arc(0, hc.y - 0.1 * s, 0.065 * s, 0, Math.PI * 2); ctx.fill();
+        break;
+      case 'afro':
+        ctx.beginPath(); ctx.arc(0, hc.y - 0.035 * s, 0.17 * s, 0, Math.PI * 2); ctx.fill();
+        for (let i = 0; i < 12; i++) {
+          const ang = (i / 12) * Math.PI * 2;
+          ctx.beginPath(); ctx.arc(Math.cos(ang) * 0.16 * s, hc.y - 0.035 * s + Math.sin(ang) * 0.16 * s, 0.035 * s, 0, Math.PI * 2); ctx.fill();
+        }
+        break;
+      case 'locs':
+        cap(0.125, 0.022);
+        for (let i = 0; i < 7; i++) {
+          const x0 = -0.1 + i * 0.033;
+          strand(x0, 0.02, x0 * 1.2 + swing * (0.8 + (i % 3) * 0.2), 0.26 + (i % 2) * 0.03, 0.032);
+        }
+        break;
+      default: // short
+        cap(0.125, 0.022);
+    }
+  }
+
+  // lk = the player's look: { skin, hair, hairColor } (a number is treated as a skin index)
+  function drawRunner(ctx, x, y, s, pose, outfit, t, lk = {}) {
+    if (typeof lk === 'number') lk = { skin: lk };
     const of = outfit;
-    const skin = SKINS[skinIdx] || SKINS[2];
+    const skin = SKINS[lk.skin === undefined ? 2 : lk.skin] || SKINS[2];
+    const hairColor = HAIR_COLORS[lk.hairColor || 0] || HAIR_COLORS[0];
     let jacket = of.jacket, sleeve = of.arms;
     if (of.holo) {
       const h = (t * 90) % 360;
@@ -91,10 +172,12 @@ window.NeonLooks = (() => {
     } else {
       const k = pose.stride === undefined ? 1 : pose.stride;
       L = legPose(a, k); R = legPose(a + Math.PI, k);
-      // arms swing opposite to the leg on the same side, elbows bent ~90° when running
+      // arms pump opposite to the leg on the same side; the elbow stays near 90° and
+      // closes a little as the hand drives forward and up toward the chest
       const idle = (1 - k) * 0.04 * Math.sin(t * 2); // slight breathing sway when standing
-      armL = { sh: 0.6 * k * Math.sin(a + Math.PI) + idle, el: 0.25 + k * (1.2 + 0.3 * Math.sin(a + Math.PI)) };
-      armR = { sh: 0.6 * k * Math.sin(a) - idle, el: 0.25 + k * (1.2 + 0.3 * Math.sin(a)) };
+      const sw = Math.sin(a);
+      armL = { sh: -0.85 * k * sw + idle, el: 0.25 + k * (1.35 - 0.4 * sw) };
+      armR = { sh: 0.85 * k * sw - idle, el: 0.25 + k * (1.35 + 0.4 * sw) };
       // landing squash: knees bend and the hips drop (the feet stay planted)
       const q = pose.squash || 0;
       if (q > 0) {
@@ -105,24 +188,33 @@ window.NeonLooks = (() => {
     const legs = [[-1, L], [1, R]].map(([side, p]) => ({
       side, kind: 'leg', pts: limbChain(side * B.hipW, B.hip, 0, p.thigh, B.thigh, p.thigh - p.knee, B.shin), kick: p.knee,
     }));
-    // keep the lowest foot on the ground; this also produces the natural bounce
+    const running = !fall && !air;
+    const k = running ? (pose.stride === undefined ? 1 : pose.stride) : 0;
     let lift = 0;
     if (fall) lift = 0.12 * Math.abs(Math.sin(pose.roll || 0)); // body thickness when lying on its side
-    else if (!air) lift = -Math.min(legs[0].pts[2].y, legs[1].pts[2].y) + 0.02;
-    const twist = air ? 0 : 0.05 * Math.sin(a);
+    else if (running) {
+      lift = gaitLift(a, k);
+      // landing squash keeps the feet planted while the knees bend
+      const q = Math.min(1, (pose.squash || 0) * 4);
+      if (q > 0) lift += (-Math.min(legs[0].pts[2].y, legs[1].pts[2].y) + 0.02 - lift) * q;
+    }
+    const twist = running ? 0.07 * k * Math.sin(a) : 0; // shoulders counter-rotate against the hips
     const arms = [[-1, armL, twist], [1, armR, -twist]].map(([side, p, tz]) => {
       const pts = limbChain(side * B.shoulderW, B.shoulderY, tz, p.sh, B.upper, p.sh + p.el, B.fore);
-      pts[1].x = side * B.shoulderW * 1.08;
-      pts[2].x = side * B.shoulderW * 0.85; // hands come in toward the body
+      const fwd = Math.max(-1, Math.min(1, p.sh / 0.85)); // +1 arm forward, -1 arm back
+      pts[1].x = side * B.shoulderW * (1.05 + 0.15 * Math.max(0, -fwd)); // elbow flares out when back
+      pts[2].x = side * B.shoulderW * (0.85 - 0.35 * Math.max(0, fwd)); // hand comes across when forward
       return { side, kind: 'arm', pts };
     });
+    // the body shifts a little over whichever foot is on the ground
+    const sway = k * Math.cos(a);
 
     const P = (px, py, pz) => ({ x: px * s, y: -(py + lift + pz * DEPTH) * s });
 
     ctx.save();
     if (of.holo) ctx.globalAlpha = 0.9;
-    ctx.translate(x, y);
-    ctx.rotate(fall ? pose.roll || 0 : (pose.lean || 0) * 0.16);
+    ctx.translate(x + sway * 0.035 * s, y);
+    ctx.rotate(fall ? pose.roll || 0 : (pose.lean || 0) * 0.16 + sway * 0.025);
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
 
@@ -201,8 +293,7 @@ window.NeonLooks = (() => {
       ctx.beginPath(); ctx.ellipse(0.115 * s, hc.y + 0.01 * s, 0.028 * s, 0.042 * s, 0, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = skin;
       ctx.beginPath(); ctx.ellipse(0, hc.y, 0.11 * s, 0.135 * s, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = of.head;
-      ctx.beginPath(); ctx.ellipse(0, hc.y - 0.022 * s, 0.115 * s, 0.125 * s, 0, 0, Math.PI * 2); ctx.fill();
+      drawHair(ctx, lk.hair || 'short', hairColor, hc, s, t, running ? k * Math.sin(a) : 0);
       drawAccessory(ctx, of, s, hc.y, 0.13 * s, t);
     };
 
@@ -369,5 +460,5 @@ window.NeonLooks = (() => {
     ctx.restore();
   }
 
-  return { OUTFITS, TRAILS, SKINS, byId, drawRunner, createTrail, updateTrail, drawTrail };
+  return { OUTFITS, TRAILS, SKINS, HAIRS, HAIR_COLORS, byId, drawRunner, createTrail, updateTrail, drawTrail };
 })();

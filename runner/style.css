@@ -149,3 +149,12 @@ button.small {
   border: 2px solid rgba(255,255,255,.25);
 }
 .card .swatch.on { border: 3px solid #05d9e8; box-shadow: 0 0 10px #05d9e8; }
+
+.card .name.sub { margin-top: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
+.card .chip {
+  min-width: 0; padding: 7px 11px; border-radius: 16px; font-size: 13px; font-weight: 700;
+  color: #fff; background: rgba(255,255,255,.08); border: 1px solid rgba(255,255,255,.2);
+}
+.card .chip.on { background: rgba(5,217,232,.2); border-color: #05d9e8; color: #05d9e8; }
+.card .swatch.small { width: 30px; height: 30px; }

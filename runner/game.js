@@ -12,6 +12,7 @@
   const START_SPEED = 15;
   const MAX_SPEED = 36;
   const ACCEL = 0.28;        // speed gained per second
+  const FOOTFALL = 0.71;     // stride phase offset where a foot lands (matches the gait in looks.js)
   const RUNUP = 1.6;         // seconds to accelerate from standing to START_SPEED
   const LAND_TIME = 0.24;    // length of the landing squash
   const KEY_STEER = 11;      // units/second when steering with the keyboard
@@ -62,7 +63,7 @@
   let city = store.get('neonDash.city', {});      // { buildingId: level }
   let playerName = store.get('neonDash.name', '');
   const owned = Object.assign({ outfits: ['classic'], trails: ['none'] }, store.get('neonDash.owned', {}));
-  const look = Object.assign({ outfit: 'classic', trail: 'none', skin: 2 }, store.get('neonDash.look', {}));
+  const look = Object.assign({ outfit: 'classic', trail: 'none', skin: 2, hair: 'short', hairColor: 0 }, store.get('neonDash.look', {}));
   const boosts = Object.assign({ magnet: 0, shield: 0, double: 0 }, store.get('neonDash.boosts', {}));
   const powerTime = (id) => POWERS[id].base + POWERS[id].per * boosts[id];
 
@@ -86,7 +87,32 @@
     o.start(t);
     o.stop(t + dur);
   }
+  // Short filtered noise burst: a shoe hitting the road.
+  let noiseBuf = null;
+  function footstep(v) {
+    if (!actx || muted) return;
+    if (!noiseBuf) {
+      noiseBuf = actx.createBuffer(1, actx.sampleRate * 0.1, actx.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / d.length);
+    }
+    const t = actx.currentTime;
+    const src = actx.createBufferSource();
+    src.buffer = noiseBuf;
+    src.playbackRate.value = rand(0.85, 1.15);
+    const f = actx.createBiquadFilter();
+    f.type = 'lowpass';
+    f.frequency.value = rand(450, 700) + v * 8;
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.22, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.07);
+    src.connect(f).connect(g).connect(actx.destination);
+    src.start(t);
+    src.stop(t + 0.09);
+  }
+
   const sfx = {
+    step: footstep,
     jump: () => tone(320, 0.18, 'square', 0.06, 640),
     coin: () => { tone(988, 0.07, 'square', 0.05); setTimeout(() => tone(1319, 0.12, 'square', 0.05), 60); },
     crash: () => { tone(200, 0.5, 'sawtooth', 0.12, 40); tone(90, 0.6, 'triangle', 0.15, 30); },
@@ -531,22 +557,41 @@
     c.style.width = '44px'; c.style.height = '56px';
     const x = c.getContext('2d');
     x.setTransform(dpr, 0, 0, dpr, 0, 0);
-    NeonLooks.drawRunner(x, 22, 54, 26, { phase: 0.5 }, o, 0, look.skin);
+    NeonLooks.drawRunner(x, 22, 54, 26, { phase: 0.5 }, o, 0, look);
     return c;
   }
 
+  // Free customisation: skin tone, hair style and hair colour.
   function renderSkinPicker() {
     const card = document.createElement('div');
     card.className = 'card skin-card';
-    card.innerHTML = '<div class="info"><div class="name">Skin tone</div><div class="swatches"></div></div>';
-    const row = card.querySelector('.swatches');
+    card.innerHTML = `<div class="info">
+      <div class="name">Skin tone</div><div class="swatches" data-row="skin"></div>
+      <div class="name sub">Hair</div><div class="chips" data-row="hair"></div>
+      <div class="swatches" data-row="hairColor"></div></div>`;
+    const pick = (key, val) => { look[key] = val; store.set('neonDash.look', look); renderShop(); };
     NeonLooks.SKINS.forEach((c, i) => {
       const b = document.createElement('button');
       b.className = 'swatch' + (look.skin === i ? ' on' : '');
       b.style.background = c;
       b.setAttribute('aria-label', `Skin tone ${i + 1}`);
-      b.addEventListener('click', () => { look.skin = i; store.set('neonDash.look', look); renderShop(); });
-      row.appendChild(b);
+      b.addEventListener('click', () => pick('skin', i));
+      card.querySelector('[data-row="skin"]').appendChild(b);
+    });
+    for (const h of NeonLooks.HAIRS) {
+      const b = document.createElement('button');
+      b.className = 'chip' + (look.hair === h.id ? ' on' : '');
+      b.textContent = h.name;
+      b.addEventListener('click', () => pick('hair', h.id));
+      card.querySelector('[data-row="hair"]').appendChild(b);
+    }
+    NeonLooks.HAIR_COLORS.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.className = 'swatch small' + (look.hairColor === i ? ' on' : '');
+      b.style.background = c;
+      b.setAttribute('aria-label', `Hair colour ${i + 1}`);
+      b.addEventListener('click', () => pick('hairColor', i));
+      card.querySelector('[data-row="hairColor"]').appendChild(b);
     });
     ui.shop.appendChild(card);
   }
@@ -754,7 +799,7 @@
     cctx.beginPath(); cctx.ellipse(base.x, base.y, 0.42 * p.s * sh, 0.12 * p.s * sh, 0, 0, Math.PI * 2); cctx.fill();
     NeonLooks.drawTrail(cctx, proj, pv.trail, look.trail, pv.d, time, TRAIL_Z);
     NeonLooks.drawRunner(cctx, p.x, p.y, p.s, { lean: pv.lean, phase: pv.phase, air: pv.y > 0.01 },
-      NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time, look.skin);
+      NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time, look);
   }
 
   function renderCityPreview() {
@@ -865,7 +910,9 @@
       if (player.y === 0) { player.vy = 0; landed(); }
     }
     if (land > 0) land = Math.max(0, land - dt);
+    const step0 = Math.floor((player.phase + FOOTFALL) / Math.PI);
     player.phase += dt * cadence(speed);
+    if (player.y === 0 && speed > 1 && Math.floor((player.phase + FOOTFALL) / Math.PI) !== step0) sfx.step(speed);
 
     // power-up timers
     for (const id in power) if (power[id] > 0) power[id] = Math.max(0, power[id] - dt);
@@ -1166,7 +1213,7 @@
     ctx.ellipse(base.x + Math.sin(f.roll) * 0.8 * s * flat, base.y, (0.42 + flat * 0.6) * s, 0.14 * s, 0, 0, Math.PI * 2);
     ctx.fill();
     NeonLooks.drawRunner(ctx, p.x, p.y, s, { fall: f, roll: f.roll },
-      NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time, look.skin);
+      NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time, look);
   }
 
   function drawPlayer() {
@@ -1184,7 +1231,7 @@
     if (invuln > 0 && Math.sin(time * 30) < 0) return; // blink while invulnerable
     NeonLooks.drawRunner(ctx, p.x, p.y, s, { lean: player.lean, phase: player.phase, air: player.y > 0.01,
         stride: state === 'menu' ? 0 : strideOf(speed), squash: land > 0 ? Math.sin(Math.PI * (1 - land / LAND_TIME)) : 0 },
-      NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time, look.skin);
+      NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time, look);
     if (power.shield > 0 && !(power.shield < 2 && Math.sin(time * 20) < 0)) {
       ctx.globalAlpha = 0.5 + Math.sin(time * 5) * 0.15;
       ctx.strokeStyle = C.cyan; ctx.lineWidth = Math.max(2, s * 0.05);

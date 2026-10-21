@@ -1,5 +1,5 @@
 // Bump VERSION whenever game files change so phones pick up the update.
-const VERSION = 'neon-dash-v7';
+const VERSION = 'neon-dash-v8';
 const FILES = [
   './',
   'index.html',
