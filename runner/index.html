@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Neon Dash</title>
+  <meta name="description" content="Endless neon runner. Steer, jump, dodge.">
+  <meta name="theme-color" content="#0b0221">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Neon Dash">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon-192.png">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div id="hud" class="hidden">
+    <div class="stat"><span id="score">0</span><small>SCORE</small></div>
+    <div class="stat coins"><span id="coins">0</span><small>COINS</small></div>
+    <div class="buttons">
+      <button id="muteBtn" aria-label="Toggle sound">🔊</button>
+      <button id="pauseBtn" aria-label="Pause">❚❚</button>
+    </div>
+  </div>
+
+  <div id="menu" class="overlay">
+    <h1>NEON<br>DASH</h1>
+    <p class="how">Drag left / right to steer<br>Tap or swipe up to jump</p>
+    <p class="how desktop">Keyboard: ← → to steer · Space to jump</p>
+    <button id="playBtn" class="big">PLAY</button>
+    <p class="best">Best: <span id="bestMenu">0</span></p>
+    <button id="installBtn" class="small hidden">Install app</button>
+    <p id="iosHint" class="hint hidden">To install: tap Share, then “Add to Home Screen”</p>
+  </div>
+
+  <div id="paused" class="overlay hidden">
+    <h2>PAUSED</h2>
+    <button id="resumeBtn" class="big">RESUME</button>
+    <button id="quitBtn" class="small">Main menu</button>
+  </div>
+
+  <div id="over" class="overlay hidden">
+    <h2>CRASHED!</h2>
+    <p class="final">Score <span id="finalScore">0</span></p>
+    <p class="detail"><span id="finalDist">0</span> m · <span id="finalCoins">0</span> coins</p>
+    <p class="best" id="newBest">Best: <span id="bestOver">0</span></p>
+    <button id="againBtn" class="big">PLAY AGAIN</button>
+    <button id="menuBtn" class="small">Main menu</button>
+  </div>
+
+  <script src="game.js"></script>
+  <script>
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => navigator.serviceWorker.register('sw.js').catch(() => {}));
+    }
+  </script>
+</body>
+</html>
