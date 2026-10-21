@@ -1,5 +1,5 @@
 // Bump VERSION whenever game files change so phones pick up the update.
-const VERSION = 'neon-dash-v12';
+const VERSION = 'neon-dash-v13';
 const FILES = [
   './',
   'index.html',
@@ -8,6 +8,8 @@ const FILES = [
   'looks.js',
   'maze.js',
   'ghost.js',
+  'net.js',
+  'firebase-config.js',
   'game.js',
   'manifest.webmanifest',
   'icons/icon-192.png',

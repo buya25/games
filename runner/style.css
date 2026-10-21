@@ -174,3 +174,51 @@ h2.ghost-title { color: #b26bff; text-shadow: 0 0 16px #b26bff; }
   background: rgba(11,2,33,.92); border: 1px solid #b26bff; color: #fff; font-weight: 700; text-align: center;
 }
 button.big.share { font-size: 17px; letter-spacing: 1px; padding: 14px 22px; }
+
+/* ---- Race Friends ---- */
+button.big.race-btn { border-color: #f9c80e; box-shadow: 0 0 18px rgba(249,200,14,.35); }
+h2.race-title, #rsTitle { color: #f9c80e; text-shadow: 0 0 16px #f9a80e; text-align: center; }
+#lobby { justify-content: flex-start; overflow-y: auto; padding-top: calc(env(safe-area-inset-top) + 28px); }
+.lobby-col { display: flex; flex-direction: column; align-items: center; gap: 12px; width: 100%; max-width: 360px; }
+.lobby-col input {
+  width: 100%; padding: 12px 14px; border-radius: 12px; font: inherit; font-size: 17px; font-weight: 700;
+  color: #fff; background: #12052a; border: 1px solid rgba(255,255,255,.3); text-align: center;
+}
+.lobby-col .row { width: 100%; }
+.lobby-col .row input { flex: 1; }
+input.code-in { text-transform: uppercase; letter-spacing: 6px; }
+.sub { font-size: 13px; opacity: .7; letter-spacing: 1px; text-transform: uppercase; margin-top: 6px; }
+.formats { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.formats .fmt {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 10px 14px; border-radius: 12px;
+  color: #fff; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.18); text-align: left;
+}
+.formats .fmt small { opacity: .7; font-size: 12px; }
+.formats .fmt.on { border-color: #f9c80e; background: rgba(249,200,14,.12); }
+.err { min-height: 1.2em; color: #ff6b8b; font-size: 14px; font-weight: 700; text-align: center; }
+.err.ok { color: #05d9e8; }
+.room-code { font-size: 52px; font-weight: 900; letter-spacing: 10px; color: #f9c80e; text-shadow: 0 0 14px #f9a80e; }
+.players { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.player {
+  display: flex; align-items: center; gap: 12px; padding: 6px 12px; border-radius: 12px; min-height: 60px;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14); font-weight: 800;
+}
+.player small { margin-left: auto; color: #f9c80e; font-size: 11px; letter-spacing: 1px; }
+.player.empty { justify-content: center; opacity: .45; font-weight: 600; border-style: dashed; }
+.standings { list-style: none; width: 100%; max-width: 360px; display: flex; flex-direction: column; gap: 8px; }
+.standings li {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-radius: 12px;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.14);
+}
+.standings li.me { border-color: #f9c80e; background: rgba(249,200,14,.12); }
+.standings .medal { font-size: 22px; }
+.standings .nm { font-weight: 800; }
+.standings .st { margin-left: auto; opacity: .85; font-variant-numeric: tabular-nums; }
+.reactions {
+  position: fixed; right: 12px; bottom: calc(env(safe-area-inset-bottom) + 16px); display: flex; gap: 8px; z-index: 5;
+}
+.reactions button {
+  width: 48px; height: 48px; border-radius: 50%; font-size: 24px;
+  background: rgba(11,2,33,.65); border: 1px solid rgba(255,255,255,.3);
+}
+.reactions button:active { transform: scale(.9); }

@@ -1,0 +1,39 @@
+{
+  "rules": {
+    "rooms": {
+      "$code": {
+        ".read": "auth != null && $code.matches(/^[A-Z0-9]{4}$/)",
+        "meta": {
+          ".write": "auth != null && (!data.exists() || data.child('host').val() === auth.uid)",
+          ".validate": "newData.hasChildren(['host', 'format', 'status', 'round'])",
+          "host": { ".validate": "newData.val() === auth.uid" },
+          "format": { ".validate": "newData.isString() && newData.val().matches(/^(sprint|survival|maze)$/)" },
+          "status": { ".validate": "newData.isString() && newData.val().matches(/^(lobby|countdown)$/)" },
+          "round": { ".validate": "newData.isNumber()" },
+          "seed": { ".validate": "newData.isNumber()" },
+          "startAt": { ".validate": "newData.isNumber()" },
+          "createdAt": { ".validate": "newData.isNumber()" },
+          "$other": { ".validate": false }
+        },
+        "players": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid && (!newData.exists() || root.child('rooms').child($code).child('meta').exists())",
+            ".validate": "newData.hasChildren(['name', 'look'])",
+            "name": { ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 12" },
+            "look": {
+              "$k": { ".validate": "(newData.isString() && newData.val().length <= 16) || newData.isNumber()" }
+            },
+            "joinedAt": { ".validate": "newData.isNumber()" },
+            "$other": { ".validate": false }
+          }
+        },
+        "state": {
+          "$uid": {
+            ".write": "auth != null && auth.uid === $uid",
+            "$k": { ".validate": "newData.isNumber() || newData.isBoolean() || (newData.isString() && newData.val().length <= 8)" }
+          }
+        }
+      }
+    }
+  }
+}
