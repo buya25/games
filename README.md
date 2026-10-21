@@ -20,7 +20,15 @@ further in, yellow **moving walls**. Coins are worth 10 points each, and speed k
 Coins from every run are saved in your wallet. Spend them in **Neon City** (menu button) to build and
 upgrade an apartment, house, garage, night club, skyscraper and a billboard with your name. Everything
 you build appears in the skyline behind the road while you run. Buildings and costs live in
-`runner/city.js`. Progress is stored on the device (`localStorage`).
+`runner/city.js`.
+
+### Outfits & trails
+
+The shop also sells runner **outfits** (Hot Pink, Sunset Punk, DJ, Cyber Ninja, Golden King, Hologram)
+and **trails** (Neon Streak, Fire Feet, Rainbow, Stardust, Lightning), with a live preview of your
+runner. Definitions and drawing live in `runner/looks.js`.
+
+Progress (wallet, city, owned items) is stored on the device (`localStorage`).
 
 ### Play locally
 

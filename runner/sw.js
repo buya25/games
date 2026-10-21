@@ -1,10 +1,11 @@
 // Bump VERSION whenever game files change so phones pick up the update.
-const VERSION = 'neon-dash-v2';
+const VERSION = 'neon-dash-v3';
 const FILES = [
   './',
   'index.html',
   'style.css',
   'city.js',
+  'looks.js',
   'game.js',
   'manifest.webmanifest',
   'icons/icon-192.png',

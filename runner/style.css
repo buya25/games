@@ -115,3 +115,12 @@ button.small {
 .card button.max { background: transparent; color: #05d9e8; border: 1px solid #05d9e8; }
 .card.bought { animation: pop .5s ease; }
 @keyframes pop { 40% { transform: scale(1.04); border-color: #ffd23f; } }
+
+.tabs { display: flex; gap: 8px; padding: 0 16px 10px; }
+.tabs button {
+  flex: 1; padding: 9px 4px; border-radius: 12px; font-size: 14px; font-weight: 800; color: #fff;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.15);
+}
+.tabs button.active { background: rgba(5,217,232,.18); border-color: #05d9e8; color: #05d9e8; }
+.card .icon canvas { display: block; margin: 0 auto; }
+.card button.equip { background: transparent; color: #fff; border: 1px solid #fff; }

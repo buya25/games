@@ -14,6 +14,7 @@
   const ACCEL = 0.28;        // speed gained per second
   const KEY_STEER = 11;      // units/second when steering with the keyboard
   const DRAG_SENS = 1.5;     // finger drag -> world movement multiplier
+  const TRAIL_Z = -2.4;      // how far behind the runner trails reach (toward the camera)
 
   const C = {
     skyTop: '#0b0221', skyMid: '#2a0845', skyLow: '#6a0f5c',
@@ -46,6 +47,8 @@
   let wallet = store.get('neonDash.wallet', 0);
   let city = store.get('neonDash.city', {});      // { buildingId: level }
   let playerName = store.get('neonDash.name', '');
+  const owned = Object.assign({ outfits: ['classic'], trails: ['none'] }, store.get('neonDash.owned', {}));
+  const look = Object.assign({ outfit: 'classic', trail: 'none' }, store.get('neonDash.look', {}));
 
   // ---------- Audio ----------
   let actx = null;
@@ -111,7 +114,7 @@
 
   // ---------- Game state ----------
   let state = 'menu'; // menu | play | paused | dying | over
-  let speed, distance, coinCount, player, targetX, objects, untilNext, shake, deathTimer, particles, jumpBuffer, time;
+  let speed, distance, coinCount, player, targetX, objects, untilNext, shake, deathTimer, particles, jumpBuffer, time, trail;
 
   function reset() {
     speed = START_SPEED;
@@ -125,6 +128,7 @@
     shake = 0;
     deathTimer = 0;
     particles = [];
+    trail = NeonLooks.createTrail();
     jumpBuffer = 0;
     time = 0;
   }
@@ -340,21 +344,106 @@
   const ICONS = { apartment: '🏢', house: '🏠', garage: '🚗', club: '🪩', tower: '🏙️', billboard: '📺' };
   const nextCost = (b) => b.costs[city[b.id] || 0]; // undefined when maxed
 
-  function goalText() {
-    const open = NeonCity.BUILDINGS.filter((b) => nextCost(b) !== undefined);
-    if (!open.length) return 'Your city is complete. Legend! 🏆';
-    const affordable = open.filter((b) => nextCost(b) <= wallet);
-    if (affordable.length) {
-      const b = affordable.reduce((a, c) => (nextCost(c) > nextCost(a) ? c : a));
-      return `You can ${city[b.id] ? 'upgrade' : 'build'} <b>${b.name}</b> now! Visit Neon City 🏙️`;
+  // Everything still for sale, so the game-over screen can always dangle the next goal.
+  function shopGoals() {
+    const goals = [];
+    for (const b of NeonCity.BUILDINGS) {
+      const c = nextCost(b);
+      if (c !== undefined) goals.push({ name: b.name, cost: c, verb: city[b.id] ? 'upgrade' : 'build' });
     }
-    const b = open.reduce((a, c) => (nextCost(c) < nextCost(a) ? c : a));
-    return `Next: <b>${b.name}</b>, ${nextCost(b) - wallet} more coins`;
+    for (const o of NeonLooks.OUTFITS) if (!owned.outfits.includes(o.id)) goals.push({ name: `${o.name} outfit`, cost: o.cost, verb: 'buy' });
+    for (const t of NeonLooks.TRAILS) if (!owned.trails.includes(t.id)) goals.push({ name: `${t.name} trail`, cost: t.cost, verb: 'buy' });
+    return goals;
   }
+
+  function goalText() {
+    const open = shopGoals();
+    if (!open.length) return 'You own everything. Legend! 🏆';
+    const affordable = open.filter((g) => g.cost <= wallet);
+    if (affordable.length) {
+      const g = affordable.reduce((a, c) => (c.cost > a.cost ? c : a));
+      return `You can ${g.verb} <b>${g.name}</b> now! Visit the Shop 🛍️`;
+    }
+    const g = open.reduce((a, c) => (c.cost < a.cost ? c : a));
+    return `Next: <b>${g.name}</b>, ${g.cost - wallet} more coins`;
+  }
+
+  let shopTab = 'city';
+  const TAB_INFO = {
+    city: ['NEON CITY', 'Your city glows on the horizon while you run.'],
+    outfits: ['OUTFITS', 'Tap Equip to wear an outfit you own.'],
+    trails: ['TRAILS', 'Your trail streams behind you while you run.'],
+  };
 
   function renderShop() {
     ui.walletCity.textContent = wallet;
     ui.shop.innerHTML = '';
+    $('cityTitle').textContent = TAB_INFO[shopTab][0];
+    $('cityTip').textContent = TAB_INFO[shopTab][1];
+    for (const tb of document.querySelectorAll('#tabs button')) tb.classList.toggle('active', tb.dataset.tab === shopTab);
+    if (shopTab === 'city') renderCityCards();
+    else renderLookCards(shopTab);
+  }
+
+  function makeOutfitIcon(o) {
+    const c = document.createElement('canvas');
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    c.width = 44 * dpr; c.height = 56 * dpr;
+    c.style.width = '44px'; c.style.height = '56px';
+    const x = c.getContext('2d');
+    x.setTransform(dpr, 0, 0, dpr, 0, 0);
+    NeonLooks.drawRunner(x, 22, 53, 23, { phase: 0 }, o, 0);
+    return c;
+  }
+
+  function renderLookCards(kind) {
+    const list = kind === 'outfits' ? NeonLooks.OUTFITS : NeonLooks.TRAILS;
+    const key = kind === 'outfits' ? 'outfit' : 'trail';
+    for (const item of list) {
+      const have = owned[kind].includes(item.id), equipped = look[key] === item.id;
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.id = item.id;
+      card.innerHTML = `
+        <div class="icon"></div>
+        <div class="info">
+          <div class="name">${item.name}${equipped ? '<span class="lvl">WEARING</span>' : ''}</div>
+          <div class="desc">${item.desc}</div>
+        </div>`;
+      const icon = card.querySelector('.icon');
+      if (kind === 'outfits') icon.appendChild(makeOutfitIcon(item)); else icon.textContent = item.icon;
+      const btn = document.createElement('button');
+      if (equipped) { btn.textContent = 'Equipped ✓'; btn.className = 'max'; btn.disabled = true; }
+      else if (have) {
+        btn.textContent = 'Equip';
+        btn.className = 'equip';
+        btn.addEventListener('click', () => { look[key] = item.id; store.set('neonDash.look', look); renderShop(); });
+      } else {
+        btn.textContent = `Buy 🪙${item.cost}`;
+        btn.disabled = item.cost > wallet;
+        btn.addEventListener('click', () => buyLook(kind, key, item));
+      }
+      card.appendChild(btn);
+      ui.shop.appendChild(card);
+    }
+  }
+
+  function buyLook(kind, key, item) {
+    if (owned[kind].includes(item.id) || item.cost > wallet) return;
+    initAudio();
+    wallet -= item.cost;
+    owned[kind].push(item.id);
+    look[key] = item.id; // wear it straight away
+    store.set('neonDash.wallet', wallet);
+    store.set('neonDash.owned', owned);
+    store.set('neonDash.look', look);
+    sfx.build();
+    try { navigator.vibrate && navigator.vibrate(40); } catch { /* ignore */ }
+    renderShop();
+    ui.shop.querySelector(`[data-id="${item.id}"]`).classList.add('bought');
+  }
+
+  function renderCityCards() {
     for (const b of NeonCity.BUILDINGS) {
       const lv = city[b.id] || 0, max = b.costs.length, cost = nextCost(b);
       const card = document.createElement('div');
@@ -424,6 +513,60 @@
   }
   window.addEventListener('resize', () => { if (!ui.city.classList.contains('hidden')) sizeCityCanvas(); });
 
+  function renderShopPreview(dt) {
+    if (shopTab === 'city') renderCityPreview(); else renderRunnerPreview(dt);
+  }
+
+  // A little runner jogging on its own road, wearing the current outfit and trail.
+  const pv = { x: 0, y: 0, vy: 0, lean: 0, phase: 0, d: 0, jumpIn: 1.2, trail: NeonLooks.createTrail() };
+  function renderRunnerPreview(dt) {
+    const sp = 15;
+    pv.d += sp * dt;
+    pv.phase += dt * sp * 0.55;
+    const target = Math.sin(time * 1.1) * 1.4;
+    const px = pv.x;
+    pv.x += (target - pv.x) * Math.min(1, dt * 6);
+    pv.lean += (Math.max(-1, Math.min(1, (pv.x - px) / Math.max(dt, 1e-4) / 12)) - pv.lean) * Math.min(1, dt * 10);
+    pv.jumpIn -= dt;
+    if (pv.jumpIn <= 0 && pv.y === 0) { pv.vy = JUMP_V; pv.jumpIn = 2.2; }
+    if (pv.y > 0 || pv.vy > 0) { pv.vy -= GRAVITY * dt; pv.y = Math.max(0, pv.y + pv.vy * dt); if (pv.y === 0) pv.vy = 0; }
+    NeonLooks.updateTrail(pv.trail, look.trail, pv, pv.d, sp, dt, TRAIL_Z);
+
+    const hz = CH * 0.22, feet = CH * 0.8;
+    const sc = Math.min(CH * 0.2, (CW * 0.42) / ROAD), ch = (feet - hz) / sc, cx = pv.x * 0.5;
+    const proj = (x, y, z) => {
+      const s = (sc * CAM_D) / Math.max(z + CAM_D, 0.05);
+      return { x: CW / 2 + (x - cx) * s, y: hz + (ch - y) * s, s };
+    };
+    const g = cctx.createLinearGradient(0, 0, 0, hz);
+    g.addColorStop(0, C.skyTop); g.addColorStop(1, C.skyLow);
+    cctx.fillStyle = g; cctx.fillRect(0, 0, CW, hz);
+    cctx.fillStyle = '#1a0533'; cctx.fillRect(0, hz, CW, CH - hz);
+    const zN = -CAM_D + 0.3, zF = 150;
+    const quad = (z0, z1, color) => {
+      const a = proj(-ROAD, 0, z0), b = proj(ROAD, 0, z0), c = proj(ROAD, 0, z1), d = proj(-ROAD, 0, z1);
+      cctx.beginPath(); cctx.moveTo(a.x, a.y); cctx.lineTo(b.x, b.y); cctx.lineTo(c.x, c.y); cctx.lineTo(d.x, d.y);
+      cctx.fillStyle = color; cctx.fill();
+    };
+    quad(zN, zF, C.road);
+    const so = pv.d % 8;
+    for (let z = -so; z < zF; z += 8) if (z + 4 > zN) quad(Math.max(z, zN), z + 4, C.roadStripe);
+    for (const ex of [-ROAD, ROAD]) {
+      const a = proj(ex, 0, zN), b = proj(ex, 0, zF);
+      cctx.beginPath(); cctx.moveTo(a.x, a.y); cctx.lineTo(b.x, b.y);
+      cctx.strokeStyle = C.cyan; cctx.lineWidth = 3; cctx.stroke();
+    }
+    cctx.fillStyle = C.pink; cctx.fillRect(0, hz - 1, CW, 2);
+
+    const base = proj(pv.x, 0, 0), p = proj(pv.x, pv.y, 0);
+    const sh = Math.max(0.3, 1 - pv.y * 0.25);
+    cctx.fillStyle = 'rgba(0,0,0,.5)';
+    cctx.beginPath(); cctx.ellipse(base.x, base.y, 0.42 * p.s * sh, 0.12 * p.s * sh, 0, 0, Math.PI * 2); cctx.fill();
+    NeonLooks.drawTrail(cctx, proj, pv.trail, look.trail, pv.d, time, TRAIL_Z);
+    NeonLooks.drawRunner(cctx, p.x, p.y, p.s, { lean: pv.lean, phase: pv.phase, air: pv.y > 0.01 },
+      NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time);
+  }
+
   function renderCityPreview() {
     const base = CH * 0.86;
     const g = cctx.createLinearGradient(0, 0, 0, base);
@@ -446,6 +589,9 @@
   $('cityBtn').addEventListener('click', () => openCity('menu'));
   $('cityBtn2').addEventListener('click', () => openCity('over'));
   $('cityBack').addEventListener('click', closeCity);
+  for (const tb of document.querySelectorAll('#tabs button')) {
+    tb.addEventListener('click', () => { shopTab = tb.dataset.tab; renderShop(); ui.shop.scrollTop = 0; });
+  }
 
   $('playBtn').addEventListener('click', start);
   $('againBtn').addEventListener('click', start);
@@ -545,6 +691,7 @@
       }
     }
     objects = objects.filter((o) => o.z > -CAM_D + 0.6 && !(o.kind === 'coin' && o.taken));
+    NeonLooks.updateTrail(trail, look.trail, player, distance, speed, dt, TRAIL_Z);
 
     ui.score.textContent = score();
     ui.coins.textContent = coinCount;
@@ -731,45 +878,9 @@
 
     if (state === 'dying' || state === 'over') return; // runner "explodes" into particles
 
-    ctx.save();
-    ctx.translate(p.x, p.y);
-    ctx.rotate(player.lean * 0.18);
-    ctx.lineCap = 'round';
-    const air = player.y > 0.01;
-    const run = air ? 0 : Math.sin(player.phase);
-    const hipY = -0.85 * s;
-
-    // legs (from behind: the leg pushing off is down, the swinging one is lifted)
-    const legs = [[-0.13, air ? 0.25 : Math.max(0, run) * 0.32], [0.13, air ? 0.12 : Math.max(0, -run) * 0.32]];
-    for (const [lx, lift] of legs) {
-      const fx = lx * s, fy = -lift * s;
-      line({ x: lx * s * 0.8, y: hipY }, { x: fx, y: fy - 0.06 * s }, '#1b1035', 0.17 * s);
-      ctx.fillStyle = C.yellow;
-      ctx.fillRect(fx - 0.09 * s, fy - 0.1 * s, 0.18 * s, 0.1 * s);
-    }
-    // arms
-    const swing = air ? -0.25 : run * 0.18;
-    line({ x: -0.3 * s, y: -1.38 * s }, { x: -0.36 * s, y: (-0.95 + swing) * s }, '#04a8b4', 0.13 * s);
-    line({ x: 0.3 * s, y: -1.38 * s }, { x: 0.36 * s, y: (-0.95 - swing) * s }, '#04a8b4', 0.13 * s);
-    // torso
-    ctx.fillStyle = C.cyan;
-    roundRect(-0.3 * s, -1.48 * s, 0.6 * s, 0.68 * s, 0.12 * s);
-    ctx.fill();
-    ctx.fillStyle = C.pink;
-    ctx.fillRect(-0.3 * s, -1.2 * s, 0.6 * s, 0.07 * s);
-    // head
-    ctx.fillStyle = '#1b1035';
-    ctx.beginPath(); ctx.arc(0, -1.66 * s, 0.17 * s, 0, Math.PI * 2); ctx.fill();
-    ctx.restore();
-  }
-  function roundRect(x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r);
-    ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r);
-    ctx.arcTo(x, y, x + w, y, r);
-    ctx.closePath();
+    NeonLooks.drawTrail(ctx, project, trail, look.trail, distance, time, TRAIL_Z);
+    NeonLooks.drawRunner(ctx, p.x, p.y, s, { lean: player.lean, phase: player.phase, air: player.y > 0.01 },
+      NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time);
   }
 
   function render() {
@@ -815,7 +926,7 @@
       update(dt);
     }
     render();
-    if (!ui.city.classList.contains('hidden')) renderCityPreview();
+    if (!ui.city.classList.contains('hidden')) renderShopPreview(dt);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
