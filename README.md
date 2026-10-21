@@ -32,6 +32,14 @@ show the whole map with the route to the exit and light gold arrows on the floor
 Coins, outfits and continues (+20 seconds) are shared with the endless mode. Maze code lives in
 `runner/maze.js` (generation) and the Maze Run section of `runner/game.js`.
 
+### Ghost challenges
+
+After a run, tap **👻 Challenge a friend** to share a link (phone share sheet, or the link is copied).
+The link carries the track seed and your run; your friend races your see-through ghost on exactly the
+same obstacles, sees the gap at the top of the screen, and can **challenge back**. No account or server
+needed: everything is in the link (`runner/ghost.js`). The game runs on a fixed 1/60 s step so the same
+seed always builds the same track.
+
 ### Neon City
 
 Coins from every run are saved in your wallet. Spend them in **Neon City** (menu button) to build and
