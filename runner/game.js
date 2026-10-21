@@ -32,6 +32,8 @@
     bestMenu: $('bestMenu'), bestOver: $('bestOver'), newBest: $('newBest'),
     finalScore: $('finalScore'), finalDist: $('finalDist'), finalCoins: $('finalCoins'),
     muteBtn: $('muteBtn'), installBtn: $('installBtn'), iosHint: $('iosHint'),
+    walletMenu: $('walletMenu'), walletOver: $('walletOver'), walletCity: $('walletCity'),
+    earned: $('earned'), goal: $('goal'), city: $('city'), shop: $('shop'), cityCanvas: $('cityCanvas'),
   };
 
   // ---------- Storage (may be unavailable in private mode) ----------
@@ -41,6 +43,9 @@
   };
   let best = store.get('neonDash.best', 0);
   let muted = store.get('neonDash.muted', false);
+  let wallet = store.get('neonDash.wallet', 0);
+  let city = store.get('neonDash.city', {});      // { buildingId: level }
+  let playerName = store.get('neonDash.name', '');
 
   // ---------- Audio ----------
   let actx = null;
@@ -66,6 +71,7 @@
     jump: () => tone(320, 0.18, 'square', 0.06, 640),
     coin: () => { tone(988, 0.07, 'square', 0.05); setTimeout(() => tone(1319, 0.12, 'square', 0.05), 60); },
     crash: () => { tone(200, 0.5, 'sawtooth', 0.12, 40); tone(90, 0.6, 'triangle', 0.15, 30); },
+    build: () => [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => tone(f, 0.16, 'square', 0.05), i * 80)),
   };
   function updateMuteBtn() { ui.muteBtn.textContent = muted ? '🔇' : '🔊'; }
   updateMuteBtn();
@@ -259,6 +265,7 @@
 
   window.addEventListener('keydown', (e) => {
     const k = e.key;
+    if (e.target instanceof HTMLInputElement || !ui.city.classList.contains('hidden')) return;
     if (['ArrowLeft', 'ArrowRight', 'ArrowUp', ' ', 'a', 'd', 'w'].includes(k)) e.preventDefault();
     if (k === ' ' || k === 'ArrowUp' || k === 'w') {
       if (state === 'play') requestJump();
@@ -295,6 +302,7 @@
     reset();
     state = 'menu';
     ui.bestMenu.textContent = best;
+    ui.walletMenu.textContent = wallet;
     show(ui.paused, false); show(ui.over, false); show(ui.hud, false); show(ui.menu, true);
   }
   function crash() {
@@ -319,9 +327,125 @@
     ui.bestOver.textContent = best;
     ui.newBest.firstChild.textContent = record ? 'NEW BEST! ' : 'Best: ';
     ui.newBest.classList.toggle('record', record);
+    wallet += coinCount;
+    store.set('neonDash.wallet', wallet);
+    ui.earned.textContent = coinCount;
+    ui.walletOver.textContent = wallet;
+    ui.goal.innerHTML = goalText();
     show(ui.hud, false);
     show(ui.over, true);
   }
+
+  // ---------- Neon City shop ----------
+  const ICONS = { apartment: '🏢', house: '🏠', garage: '🚗', club: '🪩', tower: '🏙️', billboard: '📺' };
+  const nextCost = (b) => b.costs[city[b.id] || 0]; // undefined when maxed
+
+  function goalText() {
+    const open = NeonCity.BUILDINGS.filter((b) => nextCost(b) !== undefined);
+    if (!open.length) return 'Your city is complete. Legend! 🏆';
+    const affordable = open.filter((b) => nextCost(b) <= wallet);
+    if (affordable.length) {
+      const b = affordable.reduce((a, c) => (nextCost(c) > nextCost(a) ? c : a));
+      return `You can ${city[b.id] ? 'upgrade' : 'build'} <b>${b.name}</b> now! Visit Neon City 🏙️`;
+    }
+    const b = open.reduce((a, c) => (nextCost(c) < nextCost(a) ? c : a));
+    return `Next: <b>${b.name}</b>, ${nextCost(b) - wallet} more coins`;
+  }
+
+  function renderShop() {
+    ui.walletCity.textContent = wallet;
+    ui.shop.innerHTML = '';
+    for (const b of NeonCity.BUILDINGS) {
+      const lv = city[b.id] || 0, max = b.costs.length, cost = nextCost(b);
+      const card = document.createElement('div');
+      card.className = 'card';
+      card.dataset.id = b.id;
+      const desc = cost === undefined ? b.levels[max - 1] : b.levels[lv];
+      card.innerHTML = `
+        <div class="icon">${ICONS[b.id]}</div>
+        <div class="info">
+          <div class="name">${b.name}<span class="lvl">${lv ? `LV ${lv}/${max}` : 'NOT BUILT'}</span></div>
+          <div class="desc">${cost === undefined ? 'Fully upgraded ✓' : (lv ? 'Next: ' : '') + desc}</div>
+        </div>`;
+      if (b.id === 'billboard') {
+        const input = document.createElement('input');
+        input.maxLength = 12;
+        input.placeholder = 'Your name';
+        input.value = playerName;
+        input.addEventListener('input', () => { playerName = input.value.trim(); store.set('neonDash.name', playerName); });
+        card.querySelector('.info').appendChild(input);
+      }
+      const btn = document.createElement('button');
+      if (cost === undefined) { btn.textContent = 'MAX'; btn.className = 'max'; btn.disabled = true; }
+      else {
+        btn.textContent = `${lv ? 'Upgrade' : 'Build'} 🪙${cost}`;
+        btn.disabled = cost > wallet;
+        btn.addEventListener('click', () => buy(b));
+      }
+      card.appendChild(btn);
+      ui.shop.appendChild(card);
+    }
+  }
+
+  function buy(b) {
+    const cost = nextCost(b);
+    if (cost === undefined || cost > wallet) return;
+    initAudio();
+    wallet -= cost;
+    city[b.id] = (city[b.id] || 0) + 1;
+    store.set('neonDash.wallet', wallet);
+    store.set('neonDash.city', city);
+    sfx.build();
+    try { navigator.vibrate && navigator.vibrate(40); } catch { /* ignore */ }
+    renderShop();
+    ui.shop.querySelector(`[data-id="${b.id}"]`).classList.add('bought');
+  }
+
+  let cityFrom = 'menu';
+  function openCity(from) {
+    cityFrom = from;
+    renderShop();
+    show(ui.menu, false); show(ui.over, false); show(ui.city, true);
+    sizeCityCanvas();
+  }
+  function closeCity() {
+    show(ui.city, false);
+    if (cityFrom === 'over') { ui.walletOver.textContent = wallet; ui.goal.innerHTML = goalText(); show(ui.over, true); }
+    else toMenu();
+  }
+
+  const cctx = ui.cityCanvas.getContext('2d');
+  let CW = 0, CH = 0;
+  function sizeCityCanvas() {
+    const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    CW = ui.cityCanvas.clientWidth; CH = ui.cityCanvas.clientHeight;
+    ui.cityCanvas.width = Math.round(CW * dpr); ui.cityCanvas.height = Math.round(CH * dpr);
+    cctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', () => { if (!ui.city.classList.contains('hidden')) sizeCityCanvas(); });
+
+  function renderCityPreview() {
+    const base = CH * 0.86;
+    const g = cctx.createLinearGradient(0, 0, 0, base);
+    g.addColorStop(0, C.skyTop); g.addColorStop(0.65, C.skyMid); g.addColorStop(1, C.skyLow);
+    cctx.fillStyle = g; cctx.fillRect(0, 0, CW, base);
+    for (const s of stars) { cctx.globalAlpha = 0.3 + 0.3 * Math.sin(time * 2 + s.tw); cctx.fillStyle = '#fff'; cctx.fillRect(s.x * CW, s.y * base * 0.7, s.r, s.r); }
+    cctx.globalAlpha = 1;
+    const r = Math.min(CW, CH) * 0.3;
+    const sg = cctx.createLinearGradient(0, base - r, 0, base);
+    sg.addColorStop(0, C.sun1); sg.addColorStop(1, C.sun2);
+    cctx.save(); cctx.beginPath(); cctx.rect(0, 0, CW, base); cctx.clip();
+    cctx.fillStyle = sg; cctx.beginPath(); cctx.arc(CW / 2, base, r, 0, Math.PI * 2); cctx.fill();
+    cctx.restore();
+    cctx.fillStyle = '#2a0845'; cctx.fillRect(0, base, CW, CH - base);
+    cctx.fillStyle = C.pink; cctx.fillRect(0, base - 1, CW, 2);
+    const u = Math.min(CW / 108, (base - 8) / 70);
+    NeonCity.drawCity(cctx, city, CW / 2, base, u, time, { ghosts: true, name: playerName });
+  }
+
+  $('cityBtn').addEventListener('click', () => openCity('menu'));
+  $('cityBtn2').addEventListener('click', () => openCity('over'));
+  $('cityBack').addEventListener('click', closeCity);
 
   $('playBtn').addEventListener('click', start);
   $('againBtn').addEventListener('click', start);
@@ -332,6 +456,7 @@
   ui.muteBtn.addEventListener('click', () => { muted = !muted; store.set('neonDash.muted', muted); updateMuteBtn(); });
   document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
   ui.bestMenu.textContent = best;
+  ui.walletMenu.textContent = wallet;
 
   // Install prompt (Android/Chrome) and iOS hint
   let deferredPrompt = null;
@@ -475,8 +600,12 @@
       if (x + w < 0 || x > W) continue;
       ctx.fillStyle = '#16052e';
       ctx.fillRect(x, base - h, w, h);
-      if (b.lit) { ctx.fillStyle = 'rgba(5,217,232,.35)'; ctx.fillRect(x + w * 0.3, base - h + 3, w * 0.12, h - 6); }
+      if (b.lit) { ctx.fillStyle = 'rgba(5,217,232,.2)'; ctx.fillRect(x + w * 0.3, base - h + 3, w * 0.12, h - 6); }
     }
+
+    // the player's own Neon City, a little closer (more parallax)
+    const u = Math.min(W, H * 0.6) / 110;
+    NeonCity.drawCity(ctx, city, W / 2 - camX * 22, base, u, time, { name: playerName });
   }
 
   function drawGround() {
@@ -686,6 +815,7 @@
       update(dt);
     }
     render();
+    if (!ui.city.classList.contains('hidden')) renderCityPreview();
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

@@ -32,6 +32,7 @@
     <p class="how">Drag left / right to steer<br>Tap or swipe up to jump</p>
     <p class="how desktop">Keyboard: ← → to steer · Space to jump</p>
     <button id="playBtn" class="big">PLAY</button>
+    <button id="cityBtn" class="city-btn">🏙️ NEON CITY <span class="wallet">🪙 <span id="walletMenu">0</span></span></button>
     <p class="best">Best: <span id="bestMenu">0</span></p>
     <button id="installBtn" class="small hidden">Install app</button>
     <p id="iosHint" class="hint hidden">To install: tap Share, then “Add to Home Screen”</p>
@@ -48,10 +49,27 @@
     <p class="final">Score <span id="finalScore">0</span></p>
     <p class="detail"><span id="finalDist">0</span> m · <span id="finalCoins">0</span> coins</p>
     <p class="best" id="newBest">Best: <span id="bestOver">0</span></p>
+    <p class="earned">+<span id="earned">0</span> 🪙 → wallet: <span id="walletOver">0</span></p>
+    <p class="goal" id="goal"></p>
     <button id="againBtn" class="big">PLAY AGAIN</button>
-    <button id="menuBtn" class="small">Main menu</button>
+    <div class="row">
+      <button id="cityBtn2" class="small">🏙️ Neon City</button>
+      <button id="menuBtn" class="small">Main menu</button>
+    </div>
   </div>
 
+  <div id="city" class="hidden">
+    <header>
+      <button id="cityBack" class="back" aria-label="Back">←</button>
+      <h3>NEON CITY</h3>
+      <span class="wallet big-wallet">🪙 <span id="walletCity">0</span></span>
+    </header>
+    <canvas id="cityCanvas"></canvas>
+    <p class="city-tip">Your city glows on the horizon while you run.</p>
+    <div id="shop"></div>
+  </div>
+
+  <script src="city.js"></script>
   <script src="game.js"></script>
   <script>
     if ('serviceWorker' in navigator) {

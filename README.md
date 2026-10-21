@@ -15,6 +15,13 @@ An endless runner on a neon highway. The game runs forward on its own; you steer
 Obstacles: pink **walls** (steer around them), yellow **barriers** (jump over them), gates, slaloms and,
 further in, yellow **moving walls**. Coins are worth 10 points each, and speed keeps rising.
 
+### Neon City
+
+Coins from every run are saved in your wallet. Spend them in **Neon City** (menu button) to build and
+upgrade an apartment, house, garage, night club, skyscraper and a billboard with your name. Everything
+you build appears in the skyline behind the road while you run. Buildings and costs live in
+`runner/city.js`. Progress is stored on the device (`localStorage`).
+
 ### Play locally
 
 ```sh
