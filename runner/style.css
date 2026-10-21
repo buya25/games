@@ -222,3 +222,9 @@ input.code-in { text-transform: uppercase; letter-spacing: 6px; }
   background: rgba(11,2,33,.65); border: 1px solid rgba(255,255,255,.3);
 }
 .reactions button:active { transform: scale(.9); }
+
+.home-link {
+  position: absolute; top: calc(env(safe-area-inset-top) + 14px); left: 14px;
+  padding: 8px 14px; border-radius: 18px; font-size: 14px; font-weight: 800; color: #fff; text-decoration: none;
+  background: rgba(11, 2, 33, .6); border: 1px solid rgba(255, 255, 255, .3);
+}

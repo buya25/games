@@ -1,0 +1,17 @@
+{
+  "name": "Neon Arcade",
+  "short_name": "Neon Arcade",
+  "description": "Neon Dash, Maze Run, Race Friends and more.",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "fullscreen",
+  "orientation": "portrait",
+  "background_color": "#0b0221",
+  "theme_color": "#0b0221",
+  "icons": [
+    { "src": "runner/icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "runner/icons/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "runner/icons/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

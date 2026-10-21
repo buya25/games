@@ -1,6 +1,14 @@
 # Games
 
-Small browser games you can install on your phone as apps (PWAs).
+Small browser games you can install on your phone as one app, **Neon Arcade** (a PWA).
+
+## Neon Arcade (launcher)
+
+The first page (`index.html`, `arcade.css`, `arcade.js`) lists the games as cards and greets you with your
+own runner, your coins and your best scores. Each card opens a game straight into its mode
+(`runner/?play=endless|maze|race`). The installed app opens on this launcher; one service worker
+(`sw.js`) caches the launcher and every game for offline play. To add a game, put it in its own folder,
+add a card to `index.html`, and add its files to `FILES` in `sw.js`.
 
 ## Neon Dash (`runner/`)
 
@@ -93,7 +101,7 @@ python3 -m http.server 8000
 
 ### Install on your phone
 
-1. Open the GitHub Pages URL (`https://buya25.github.io/games/runner/`) on your phone.
+1. Open the GitHub Pages URL (`https://buya25.github.io/games/`) on your phone.
 2. **Android (Chrome):** tap *Install app* in the menu (or ⋮ → *Install app*).
    **iPhone (Safari):** tap Share → *Add to Home Screen*.
 3. The game then opens full-screen from your home screen and works offline.
@@ -103,5 +111,5 @@ python3 -m http.server 8000
 `.github/workflows/pages.yml` publishes the repo to GitHub Pages on every push.
 One-time setup: repo **Settings → Pages → Source: GitHub Actions**.
 
-When you change game files, bump `VERSION` in `runner/sw.js` so installed copies refresh.
+When you change game files, bump `VERSION` in `sw.js` (at the top level) so installed copies refresh.
 Icons are generated with `python3 runner/make_icons.py`.
