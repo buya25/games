@@ -15,6 +15,22 @@ An endless runner on a neon highway. The game runs forward on its own; you steer
 Obstacles: pink **walls** (steer around them), yellow **barriers** (jump over them), gates, slaloms and,
 further in, yellow **moving walls**. Coins are worth 10 points each, and speed keeps rising.
 
+### Maze Run
+
+The second mode (🌀 MAZE RUN on the menu). The runner jogs through a randomly generated neon maze:
+
+| Action | Phone | Keyboard |
+|---|---|---|
+| Turn at the next junction | Swipe left / right | ← → |
+| Turn back | Swipe down | ↓ |
+| Jump (barriers from maze 2) | Tap / swipe up | Space |
+
+Corners with only one way turn by themselves; dead ends turn you round. At a T-junction the runner waits
+(jogging on the spot, clock ticking) until you pick a way. Find the gold exit beam before time runs out;
+the minimap fills in as you explore. Each cleared maze pays a coin bonus and the next one is bigger.
+Coins, outfits and continues (+20 seconds) are shared with the endless mode. Maze code lives in
+`runner/maze.js` (generation) and the Maze Run section of `runner/game.js`.
+
 ### Neon City
 
 Coins from every run are saved in your wallet. Spend them in **Neon City** (menu button) to build and

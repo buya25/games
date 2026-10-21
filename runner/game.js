@@ -45,8 +45,11 @@
     hud: $('hud'), score: $('score'), coins: $('coins'),
     menu: $('menu'), paused: $('paused'), over: $('over'),
     bestMenu: $('bestMenu'), bestOver: $('bestOver'), newBest: $('newBest'),
-    finalScore: $('finalScore'), finalDist: $('finalDist'), finalCoins: $('finalCoins'),
+    finalScore: $('finalScore'),
     muteBtn: $('muteBtn'), installBtn: $('installBtn'), iosHint: $('iosHint'),
+    scoreLabel: $('scoreLabel'), cleared: $('cleared'), clrLevel: $('clrLevel'), clrTime: $('clrTime'),
+    clrCoins: $('clrCoins'), clrBonus: $('clrBonus'), clrWallet: $('clrWallet'), overTitle: $('overTitle'),
+    finalLabel: $('finalLabel'), finalDetail: $('finalDetail'), contNote: $('contNote'), bestMazeMenu: $('bestMazeMenu'),
     cont: $('cont'), contTime: $('contTime'), contCost: $('contCost'), contWallet: $('contWallet'), contRing: $('contRing'),
     walletMenu: $('walletMenu'), walletOver: $('walletOver'), walletCity: $('walletCity'),
     earned: $('earned'), goal: $('goal'), city: $('city'), shop: $('shop'), cityCanvas: $('cityCanvas'),
@@ -143,6 +146,9 @@
   resize();
 
   let camX = 0;
+  let skyShift = 0; // horizontal sky offset in px; Maze Run turns the sky with the runner
+  // wrap a screen x around the view so the skyline loops when the runner turns all the way round
+  const wrapX = (x) => { const P = 1.2 * Math.PI * W; return ((((x - W / 2 + P / 2) % P) + P) % P) - P / 2 + W / 2; };
   // World (x right, y up, z forward from the player) -> screen.
   function project(x, y, z) {
     const d = z + CAM_D;
@@ -312,14 +318,22 @@
     const dx = e.clientX - drag.lastX;
     drag.lastX = e.clientX;
     drag.moved += Math.abs(dx);
-    targetX = clampX(targetX + (dx / s0) * DRAG_SENS, PLAYER_HW);
     const up = drag.sy - e.clientY;
+    if (mode === 'maze') {
+      const sx = e.clientX - drag.sx;
+      if (!drag.turned && !drag.jumped) {
+        if (Math.abs(sx) > 35 && Math.abs(sx) > Math.abs(up) * 1.2) { mazeSteer(Math.sign(sx)); drag.turned = true; }
+        else if (-up > 40 && -up > Math.abs(sx)) { mazeSteer('back'); drag.turned = true; }
+      }
+    } else {
+      targetX = clampX(targetX + (dx / s0) * DRAG_SENS, PLAYER_HW);
+    }
     if (!drag.jumped && up > 40 && up > Math.abs(e.clientX - drag.sx)) { requestJump(); drag.jumped = true; }
   });
   const endDrag = (e) => {
     if (!drag || drag.id !== e.pointerId) return;
     const quick = performance.now() - drag.t < 280;
-    if (!drag.jumped && quick && drag.moved < 14 && Math.abs(drag.sy - e.clientY) < 14) requestJump();
+    if (!drag.jumped && !drag.turned && quick && drag.moved < 14 && Math.abs(drag.sy - e.clientY) < 14) requestJump();
     drag = null;
   };
   canvas.addEventListener('pointerup', endDrag);
@@ -328,11 +342,18 @@
   window.addEventListener('keydown', (e) => {
     const k = e.key;
     if (e.target instanceof HTMLInputElement || !ui.city.classList.contains('hidden')) return;
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', ' ', 'a', 'd', 'w'].includes(k)) e.preventDefault();
+    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', ' ', 'a', 'd', 'w', 's'].includes(k)) e.preventDefault();
     if (k === ' ' || k === 'ArrowUp' || k === 'w') {
       if (state === 'play') requestJump();
-      else if (state === 'menu' || state === 'over') start();
+      else if (state === 'menu') start();
+      else if (state === 'over') playAgain();
+      else if (state === 'cleared') startMaze(mz.level + 1);
       else if (state === 'paused') resume();
+    }
+    if (mode === 'maze' && state === 'play' && !e.repeat) {
+      if (k === 'ArrowLeft' || k === 'a') mazeSteer(-1);
+      if (k === 'ArrowRight' || k === 'd') mazeSteer(1);
+      if (k === 'ArrowDown' || k === 's') mazeSteer('back');
     }
     if (k === 'p' || k === 'Escape') { if (state === 'play') pause(); else if (state === 'paused') resume(); }
     keys.add(k);
@@ -344,6 +365,11 @@
   function start() {
     initAudio();
     reset();
+    mode = 'endless';
+    mz = null;
+    skyShift = 0;
+    ui.scoreLabel.textContent = 'SCORE';
+    ui.score.parentElement.classList.remove('warn');
     speed = 0;
     runup = RUNUP;
     state = 'play';
@@ -365,11 +391,16 @@
   }
   function toMenu() {
     reset();
+    mode = 'endless';
+    mz = null;
+    skyShift = 0;
     state = 'menu';
     ui.bestMenu.textContent = best;
+    ui.bestMazeMenu.textContent = bestMaze;
     ui.walletMenu.textContent = wallet;
-    show(ui.paused, false); show(ui.over, false); show(ui.hud, false); show(ui.menu, true);
+    show(ui.paused, false); show(ui.over, false); show(ui.cleared, false); show(ui.hud, false); show(ui.menu, true);
   }
+  const playAgain = () => (mode === 'maze' ? startMaze(1) : start());
   function landed() {
     land = LAND_TIME;
     tone(150, 0.08, 'triangle', 0.08, 70); // soft footfall
@@ -386,6 +417,11 @@
     state = 'dying';
     store.set('neonDash.wallet', wallet);
     deathTimer = 1.7;
+    startFall(o);
+  }
+
+  // Knock the runner over: walls knock them back, barriers trip them forward.
+  function startFall(o) {
     shake = 0.35;
     sfx.crash();
     try { navigator.vibrate && navigator.vibrate([60, 40, 120]); } catch { /* ignore */ }
@@ -448,13 +484,25 @@
   }
   function gameOver() {
     state = 'over';
-    const s = score();
-    const record = s > best;
-    if (record) { best = s; store.set('neonDash.best', best); }
-    ui.finalScore.textContent = s;
-    ui.finalDist.textContent = Math.floor(distance);
-    ui.finalCoins.textContent = coinCount;
-    ui.bestOver.textContent = best;
+    let record;
+    if (mode === 'maze') {
+      const cleared = mz.level - 1;
+      record = false; // best maze is saved when a maze is cleared
+      ui.overTitle.textContent = "TIME'S UP!";
+      ui.finalLabel.textContent = 'Mazes cleared';
+      ui.finalScore.textContent = cleared;
+      ui.finalDetail.textContent = `Lost in maze ${mz.level} · ${coinCount} coins`;
+      ui.bestOver.textContent = bestMaze;
+    } else {
+      const s = score();
+      record = s > best;
+      if (record) { best = s; store.set('neonDash.best', best); }
+      ui.overTitle.textContent = 'CRASHED!';
+      ui.finalLabel.textContent = 'Score';
+      ui.finalScore.textContent = s;
+      ui.finalDetail.textContent = `${Math.floor(distance)} m · ${coinCount} coins`;
+      ui.bestOver.textContent = best;
+    }
     ui.newBest.firstChild.textContent = record ? 'NEW BEST! ' : 'Best: ';
     ui.newBest.classList.toggle('record', record);
     store.set('neonDash.wallet', wallet); // coins were banked as they were picked up
@@ -472,6 +520,7 @@
     state = 'continue';
     contTimer = CONTINUE_TIME;
     ui.contCost.textContent = continueCost();
+    ui.contNote.textContent = mode === 'maze' ? `Adds ${MAZE_TIME_BONUS} seconds` : '';
     ui.contWallet.textContent = wallet;
     show(ui.cont, true);
   }
@@ -482,8 +531,14 @@
     wallet -= continueCost();
     continues++;
     store.set('neonDash.wallet', wallet);
-    // clear the road ahead so the runner doesn't respawn into a wall
-    objects = objects.filter((o) => o.kind === 'coin' || o.kind === 'power' || o.z > 30);
+    if (mode === 'maze') {
+      mz.timeLeft += MAZE_TIME_BONUS;
+      mazePopup(`+${MAZE_TIME_BONUS}s`, C.cyan);
+      runup = RUNUP * 0.5;
+    } else {
+      // clear the road ahead so the runner doesn't respawn into a wall
+      objects = objects.filter((o) => o.kind === 'coin' || o.kind === 'power' || o.z > 30);
+    }
     invuln = 2.5;
     jumpBuffer = 0;
     fall = null;
@@ -729,12 +784,13 @@
   function openCity(from) {
     cityFrom = from;
     renderShop();
-    show(ui.menu, false); show(ui.over, false); show(ui.city, true);
+    show(ui.menu, false); show(ui.over, false); show(ui.cleared, false); show(ui.city, true);
     sizeCityCanvas();
   }
   function closeCity() {
     show(ui.city, false);
     if (cityFrom === 'over') { ui.walletOver.textContent = wallet; ui.goal.innerHTML = goalText(); show(ui.over, true); }
+    else if (cityFrom === 'cleared') { ui.clrWallet.textContent = wallet; show(ui.cleared, true); }
     else toMenu();
   }
 
@@ -831,7 +887,11 @@
   }
 
   $('playBtn').addEventListener('click', start);
-  $('againBtn').addEventListener('click', start);
+  $('againBtn').addEventListener('click', () => playAgain());
+  $('mazeBtn').addEventListener('click', () => startMaze(1));
+  $('nextBtn').addEventListener('click', () => startMaze(mz.level + 1));
+  $('clrMenu').addEventListener('click', toMenu);
+  $('clrShop').addEventListener('click', () => openCity('cleared'));
   $('menuBtn').addEventListener('click', toMenu);
   $('quitBtn').addEventListener('click', toMenu);
   $('pauseBtn').addEventListener('click', pause);
@@ -840,6 +900,7 @@
   document.addEventListener('visibilitychange', () => { if (document.hidden) pause(); });
   ui.bestMenu.textContent = best;
   ui.walletMenu.textContent = wallet;
+  ui.bestMazeMenu.textContent = store.get('neonDash.bestMaze', 0);
 
   // Install prompt (Android/Chrome) and iOS hint
   let deferredPrompt = null;
@@ -879,6 +940,7 @@
     particles = particles.filter((p) => p.life > 0);
 
     if (state !== 'play') return;
+    if (mode === 'maze') { updateMaze(dt); return; }
 
     if (runup > 0) {
       // run-up: ease from standing to START_SPEED
@@ -899,20 +961,7 @@
     player.lean += (Math.max(-1, Math.min(1, vx / 12)) - player.lean) * Math.min(1, dt * 10);
     camX = player.x * 0.55;
 
-    // jumping
-    if (jumpBuffer > 0) {
-      jumpBuffer -= dt;
-      if (player.y <= 0) { player.vy = JUMP_V; jumpBuffer = 0; sfx.jump(); }
-    }
-    if (player.y > 0 || player.vy > 0) {
-      player.vy -= GRAVITY * dt;
-      player.y = Math.max(0, player.y + player.vy * dt);
-      if (player.y === 0) { player.vy = 0; landed(); }
-    }
-    if (land > 0) land = Math.max(0, land - dt);
-    const step0 = Math.floor((player.phase + FOOTFALL) / Math.PI);
-    player.phase += dt * cadence(speed);
-    if (player.y === 0 && speed > 1 && Math.floor((player.phase + FOOTFALL) / Math.PI) !== step0) sfx.step(speed);
+    runnerBody(dt, speed);
 
     // power-up timers
     for (const id in power) if (power[id] > 0) power[id] = Math.max(0, power[id] - dt);
@@ -991,6 +1040,25 @@
     ui.coins.textContent = coinCount;
   }
 
+  // Jumping, landing and the running stride (shared by both modes).
+  // gaitV = the speed the legs move at (can differ from ground speed, e.g. jogging in place).
+  function runnerBody(dt, gaitV) {
+    // jumping
+    if (jumpBuffer > 0) {
+      jumpBuffer -= dt;
+      if (player.y <= 0) { player.vy = JUMP_V; jumpBuffer = 0; sfx.jump(); }
+    }
+    if (player.y > 0 || player.vy > 0) {
+      player.vy -= GRAVITY * dt;
+      player.y = Math.max(0, player.y + player.vy * dt);
+      if (player.y === 0) { player.vy = 0; landed(); }
+    }
+    if (land > 0) land = Math.max(0, land - dt);
+    const step0 = Math.floor((player.phase + FOOTFALL) / Math.PI);
+    player.phase += dt * cadence(gaitV);
+    if (player.y === 0 && gaitV > 1 && Math.floor((player.phase + FOOTFALL) / Math.PI) !== step0) sfx.step(gaitV);
+  }
+
   // ---------- Render ----------
   function poly(pts, fill, stroke, lw = 1) {
     ctx.beginPath();
@@ -1019,7 +1087,7 @@
     ctx.globalAlpha = 1;
 
     // sun with stripes
-    const sx = W / 2 - camX * 6, r = Math.min(W, H) * 0.22, sy = horizon - r * 0.15;
+    const sx = wrapX(W / 2 - camX * 6 + skyShift), r = Math.min(W, H) * 0.22, sy = horizon - r * 0.15;
     const sg = ctx.createLinearGradient(0, sy - r, 0, sy + r);
     sg.addColorStop(0, C.sun1); sg.addColorStop(0.7, C.sun2);
     ctx.save();
@@ -1035,9 +1103,9 @@
 
     // skyline silhouette with parallax
     const base = horizon + 1;
-    const off = -camX * 14;
+    const off = -camX * 14 + skyShift;
     for (const b of skyline) {
-      const x = W / 2 + (b.x - 0.5) * W + off, w = b.w * W, h = b.h * H * 0.6;
+      const x = wrapX(W / 2 + (b.x - 0.5) * W + off), w = b.w * W, h = b.h * H * 0.6;
       if (x + w < 0 || x > W) continue;
       ctx.fillStyle = '#16052e';
       ctx.fillRect(x, base - h, w, h);
@@ -1046,7 +1114,7 @@
 
     // the player's own Neon City, a little closer (more parallax)
     const u = Math.min(W, H * 0.6) / 110;
-    NeonCity.drawCity(ctx, city, W / 2 - camX * 22, base, u, time, { name: playerName });
+    NeonCity.drawCity(ctx, city, wrapX(W / 2 - camX * 22 + skyShift), base, u, time, { name: playerName });
   }
 
   function drawGround() {
@@ -1230,7 +1298,7 @@
     NeonLooks.drawTrail(ctx, project, trail, look.trail, distance, time, TRAIL_Z);
     if (invuln > 0 && Math.sin(time * 30) < 0) return; // blink while invulnerable
     NeonLooks.drawRunner(ctx, p.x, p.y, s, { lean: player.lean, phase: player.phase, air: player.y > 0.01,
-        stride: state === 'menu' ? 0 : strideOf(speed), squash: land > 0 ? Math.sin(Math.PI * (1 - land / LAND_TIME)) : 0 },
+        stride: state === 'menu' ? 0 : strideOf(gaitSpeed()), squash: land > 0 ? Math.sin(Math.PI * (1 - land / LAND_TIME)) : 0 },
       NeonLooks.byId(NeonLooks.OUTFITS, look.outfit), time, look);
     if (power.shield > 0 && !(power.shield < 2 && Math.sin(time * 20) < 0)) {
       ctx.globalAlpha = 0.5 + Math.sin(time * 5) * 0.15;
@@ -1289,6 +1357,418 @@
     }
   }
 
+  // ---------- Maze Run ----------
+  // The runner jogs along corridors of a grid maze. Swipe left/right before a
+  // junction to turn there; corners with only one way turn by themselves; dead
+  // ends turn you round. Find the exit (the light beam) before time runs out.
+  const CELL = 7;           // cell size in world units (corridor width)
+  const WALL_H = 3.3;
+  const MAZE_VIEW = 7;      // cells drawn around the runner
+  const TURN_TIME = 0.22;   // seconds for the camera to swing through a 90° turn
+  const MAZE_TIME_BONUS = 20; // seconds a continue adds
+  const DIRS = NeonMaze.DIRS;
+  let mode = 'endless';
+  let mz = null;
+  let bestMaze = store.get('neonDash.bestMaze', 0);
+  const mazeSpeed = (level) => Math.min(15, 10.5 + level * 0.5);
+  // legs keep jogging on the spot while waiting at a junction
+  const gaitSpeed = () => (mode === 'maze' && mz && mz.waiting && !fall ? 7 : speed);
+
+  function startMaze(level) {
+    initAudio();
+    const keepCoins = state === 'cleared' ? coinCount : 0;
+    reset();
+    mode = 'maze';
+    coinCount = keepCoins;
+    const n = Math.min(13, 4 + level);
+    const maze = NeonMaze.generate(n, n);
+    mz = {
+      maze, level, segs: NeonMaze.wallSegments(maze),
+      pos: { x: 0, y: 0 }, heading: [0, 1, 2, 3].find((d) => NeonMaze.isOpen(maze, 0, 0, d)), yaw: 0,
+      want: null, waiting: false, trip: 0, visited: new Set(['0,0']), items: [], popups: [],
+    };
+    // generous: players explore wrong turns, the shortest path is only a floor
+    mz.timeMax = mz.timeLeft = Math.round((maze.pathLength * CELL) / mazeSpeed(level) * 2.3 + 15);
+    placeMazeItems();
+    speed = 0;
+    runup = RUNUP;
+    state = 'play';
+    ui.scoreLabel.textContent = 'TIME';
+    for (const el of [ui.menu, ui.over, ui.paused, ui.cleared]) show(el, false);
+    show(ui.hud, true);
+    mazePopup(`MAZE ${level}`, C.cyan);
+    last = performance.now();
+  }
+
+  function placeMazeItems() {
+    const m = mz.maze;
+    for (let y = 0; y < m.h; y++) {
+      for (let x = 0; x < m.w; x++) {
+        if ((x === 0 && y === 0) || (x === m.exit.x && y === m.exit.y)) continue;
+        const open = [0, 1, 2, 3].filter((d) => NeonMaze.isOpen(m, x, y, d));
+        const straight = open.length === 2 && (open[0] + 2) % 4 === open[1];
+        if (mz.level >= 2 && straight && Math.random() < Math.min(0.35, 0.1 * mz.level)) {
+          // a barrier across a straight corridor (never at a junction)
+          mz.items.push({ kind: 'barrier', wx: x * CELL, wy: y * CELL, axis: open[0] % 2, h: 0.9 });
+        } else if (Math.random() < 0.45) {
+          const d = open[(Math.random() * open.length) | 0];
+          for (let i = 0; i < 3; i++) mz.items.push({ kind: 'coin', wx: x * CELL + DIRS[d][0] * 1.6 * i, wy: y * CELL + DIRS[d][1] * 1.6 * i, y: 0.9 });
+        }
+      }
+    }
+  }
+
+  function mazePopup(text, color = '#ffffff') { mz.popups.push({ text, color, t: 0 }); }
+
+  // World -> runner-local coordinates (x right, z forward); yaw adds the turn swing.
+  function toLocal(wx, wy, withYaw = true) {
+    const [fx, fy] = DIRS[mz.heading];
+    const dx = wx - mz.pos.x, dy = wy - mz.pos.y;
+    let x = dx * fy - dy * fx, z = dx * fx + dy * fy;
+    if (withYaw && mz.yaw) {
+      const c = Math.cos(mz.yaw), sn = Math.sin(mz.yaw);
+      [x, z] = [x * c - z * sn, x * sn + z * c];
+    }
+    return { x, z };
+  }
+
+  const cellAt = () => ({ x: Math.round(mz.pos.x / CELL), y: Math.round(mz.pos.y / CELL) });
+
+  function turnTo(d) {
+    const diff = (d - mz.heading + 4) % 4;
+    if (diff === 0) return;
+    // the view starts where it was and swings round to the new heading
+    mz.yaw += diff === 1 ? -Math.PI / 2 : diff === 3 ? Math.PI / 2 : Math.PI;
+    mz.heading = d;
+    player.lean = diff === 1 ? 1 : diff === 3 ? -1 : 0;
+    tone(260, 0.16, 'sine', 0.05, 520);
+  }
+
+  // Player input: dir = -1 (left), 1 (right) or 'back'.
+  function mazeSteer(dir) {
+    if (state !== 'play' || mode !== 'maze' || fall) return;
+    if (dir === 'back' && !mz.waiting) { turnTo((mz.heading + 2) % 4); return; }
+    mz.want = { dir, t: time };
+    if (mz.waiting) {
+      const c = cellAt();
+      const d = dir === 'back' ? (mz.heading + 2) % 4 : (mz.heading + (dir < 0 ? 3 : 1)) % 4;
+      if (NeonMaze.isOpen(mz.maze, c.x, c.y, d)) {
+        mz.waiting = false;
+        mz.want = null;
+        turnTo(d);
+        runup = RUNUP * 0.5;
+      } else {
+        shake = 0.12; // that way is a wall
+        mz.want = null;
+      }
+    }
+  }
+
+  // Called when the runner reaches the centre of a cell.
+  function atJunction() {
+    const c = cellAt(), m = mz.maze;
+    mz.visited.add(`${c.x},${c.y}`);
+    if (c.x === m.exit.x && c.y === m.exit.y) { mazeCleared(); return; }
+    const h = mz.heading, open = (d) => NeonMaze.isOpen(m, c.x, c.y, d);
+    const L = (h + 3) % 4, R = (h + 1) % 4, B = (h + 2) % 4;
+    if (mz.want) {
+      const d = mz.want.dir === 'back' ? B : mz.want.dir < 0 ? L : R;
+      if (open(d)) { mz.want = null; turnTo(d); return; }
+    }
+    if (open(h)) return; // straight on
+    const sides = [L, R].filter(open);
+    if (sides.length === 1) { turnTo(sides[0]); return; } // a corner: follow it
+    if (!sides.length) { mazePopup('Dead end!', C.pink); turnTo(B); return; }
+    mz.waiting = true; // T-junction: the player picks
+  }
+
+  function moveMaze(move) {
+    const [fx, fy] = DIRS[mz.heading];
+    const along = mz.pos.x * fx + mz.pos.y * fy;
+    const next = (Math.floor(along / CELL + 1e-6) + 1) * CELL;
+    if (along + move >= next) {
+      mz.pos.x = Math.round((mz.pos.x + fx * (next - along)) / CELL) * CELL;
+      mz.pos.y = Math.round((mz.pos.y + fy * (next - along)) / CELL) * CELL;
+      distance += next - along;
+      atJunction();
+    } else {
+      mz.pos.x += fx * move;
+      mz.pos.y += fy * move;
+      distance += move;
+    }
+  }
+
+  function mazeTrip(it) {
+    it.hit = true;
+    mz.trip = 1.5;
+    mz.timeLeft -= 3;
+    mazePopup('-3s', C.pink);
+    startFall({ kind: 'barrier', x: 0 });
+  }
+
+  function updateMaze(dt) {
+    mz.timeLeft -= dt;
+    for (const p of mz.popups) p.t += dt;
+    mz.popups = mz.popups.filter((p) => p.t < 1.4);
+    if (mz.timeLeft <= 0) { mazeTimeUp(); return; }
+    if (mz.yaw) {
+      const step = (dt * Math.PI) / 2 / TURN_TIME;
+      mz.yaw = Math.abs(mz.yaw) <= step ? 0 : mz.yaw - Math.sign(mz.yaw) * step;
+    }
+    if (mz.want && time - mz.want.t > 1.4) mz.want = null; // stale swipe
+    if (invuln > 0) invuln = Math.max(0, invuln - dt);
+
+    const top = mazeSpeed(mz.level);
+    if (mz.trip > 0) {
+      speed = 0;
+      updateFall(dt);
+      mz.trip -= dt;
+      if (mz.trip <= 0) {
+        fall = null;
+        camX = 0;
+        for (const it of mz.items) if (it.hit) it.dead = true;
+        invuln = 0.6;
+        runup = RUNUP * 0.6;
+      }
+    } else if (mz.waiting) {
+      speed = 0;
+    } else if (runup > 0) {
+      runup = Math.max(0, runup - dt);
+      const k = 1 - runup / RUNUP;
+      speed = top * k * (2 - k);
+    } else {
+      speed = top;
+    }
+    player.lean += (0 - player.lean) * Math.min(1, dt * 5);
+    if (!fall) camX = 0;
+    runnerBody(dt, gaitSpeed());
+    if (!fall && !mz.waiting) moveMaze(speed * dt);
+    if (state !== 'play') return; // reached the exit
+
+    // coins and barriers near the runner
+    for (const it of mz.items) {
+      if (it.taken || it.dead || it.hit) continue;
+      const l = toLocal(it.wx, it.wy, false);
+      if (Math.abs(l.z) > CELL / 2 || Math.abs(l.x) > CELL / 2) continue;
+      if (it.kind === 'coin') {
+        if (Math.abs(l.x) < 0.8 && Math.abs(l.z) < 0.6 && Math.abs(it.y - (player.y + 0.9)) < 1.1) {
+          it.taken = true;
+          coinCount++;
+          wallet++;
+          sfx.coin();
+        }
+      } else if (it.axis === mz.heading % 2 && Math.abs(l.z) < 0.3 + PLAYER_HD && player.y < it.h && invuln <= 0 && !fall) {
+        mazeTrip(it);
+      }
+    }
+    mz.items = mz.items.filter((it) => !it.taken && !it.dead);
+    NeonLooks.updateTrail(trail, look.trail, player, distance, speed, dt, TRAIL_Z);
+
+    ui.score.textContent = Math.max(0, Math.ceil(mz.timeLeft));
+    ui.score.parentElement.classList.toggle('warn', mz.timeLeft < 10);
+    ui.coins.textContent = coinCount;
+  }
+
+  function mazeTimeUp() {
+    state = 'dying';
+    deathTimer = 1.0;
+    speed = 0;
+    mz.waiting = false;
+    mz.timeLeft = 0;
+    store.set('neonDash.wallet', wallet);
+    mazePopup("TIME'S UP", C.pink);
+    [440, 330, 220].forEach((f, i) => setTimeout(() => tone(f, 0.25, 'square', 0.06), i * 160));
+    try { navigator.vibrate && navigator.vibrate([80, 60, 80]); } catch { /* ignore */ }
+  }
+
+  function mazeCleared() {
+    state = 'cleared';
+    speed = 0;
+    const bonus = 10 * mz.level + Math.ceil(mz.timeLeft);
+    wallet += bonus;
+    store.set('neonDash.wallet', wallet);
+    if (mz.level > bestMaze) { bestMaze = mz.level; store.set('neonDash.bestMaze', bestMaze); }
+    [523, 659, 784, 1047, 1319].forEach((f, i) => setTimeout(() => tone(f, 0.18, 'square', 0.06), i * 90));
+    try { navigator.vibrate && navigator.vibrate([40, 40, 40, 40, 120]); } catch { /* ignore */ }
+    ui.clrLevel.textContent = mz.level;
+    ui.clrTime.textContent = Math.ceil(mz.timeLeft);
+    ui.clrCoins.textContent = coinCount;
+    ui.clrBonus.textContent = bonus;
+    ui.clrWallet.textContent = wallet;
+    show(ui.hud, false);
+    show(ui.cleared, true);
+  }
+
+  // ----- Maze rendering -----
+  function renderMaze() {
+    skyShift = (mz.heading * Math.PI / 2 - mz.yaw) * W * 0.6;
+    ctx.save();
+    if (shake > 0) ctx.translate(rand(-1, 1) * shake * 22, rand(-1, 1) * shake * 22);
+    drawSky();
+    const g = ctx.createLinearGradient(0, horizon, 0, H);
+    g.addColorStop(0, '#2a0845'); g.addColorStop(1, '#0b0221');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, horizon, W, H - horizon);
+    ctx.fillStyle = C.pink;
+    ctx.fillRect(0, horizon - 1, W, 2);
+
+    const zNear = -CAM_D + 0.35, far = MAZE_VIEW * CELL * 1.3;
+    const c = cellAt(), m = mz.maze;
+    const proj = (pts) => pts.map((p) => project(p.x, p.y || 0, p.z));
+    const fillPoly = (pts, fill, stroke, lw) => {
+      ctx.beginPath(); ctx.moveTo(pts[0].x, pts[0].y);
+      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+      ctx.closePath();
+      if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+      if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
+    };
+
+    // floors (flat, so no sorting needed)
+    for (let y = c.y - MAZE_VIEW; y <= c.y + MAZE_VIEW; y++) {
+      for (let x = c.x - MAZE_VIEW; x <= c.x + MAZE_VIEW; x++) {
+        if (x < 0 || y < 0 || x >= m.w || y >= m.h) continue;
+        const corners = [[-0.5, -0.5], [0.5, -0.5], [0.5, 0.5], [-0.5, 0.5]].map(([ox, oy]) => toLocal((x + ox) * CELL, (y + oy) * CELL));
+        const pts = NeonMaze.clipNear(corners, zNear);
+        if (pts.length < 3 || pts.every((p) => p.z > far)) continue;
+        const exit = x === m.exit.x && y === m.exit.y;
+        fillPoly(proj(pts), exit ? '#3a1050' : (x + y) % 2 ? '#150727' : '#120622', 'rgba(5,217,232,.10)', 1);
+      }
+    }
+
+    // walls, items, exit beam and runner, painted far to near
+    const list = [];
+    for (const sg of mz.segs) {
+      if (Math.abs(sg.cx - c.x) > MAZE_VIEW || Math.abs(sg.cy - c.y) > MAZE_VIEW) continue;
+      const a = toLocal(sg.x0 * CELL, sg.y0 * CELL), b = toLocal(sg.x1 * CELL, sg.y1 * CELL);
+      if (a.z < zNear && b.z < zNear) continue;
+      const facing = Math.abs(b.x - a.x) > Math.abs(b.z - a.z);
+      list.push({ depth: (a.z + b.z) / 2, draw: () => drawMazeWall(a, b, facing, zNear, fillPoly) });
+    }
+    for (const it of mz.items) {
+      const l = toLocal(it.wx, it.wy);
+      if (l.z < zNear + 0.3 || l.z > far) continue;
+      if (it.kind === 'coin') list.push({ depth: l.z, draw: () => drawCoin({ x: l.x, y: it.y, z: l.z }) });
+      else {
+        const across = it.axis === mz.heading % 2;
+        list.push({ depth: l.z, draw: () => drawBox({ kind: 'barrier', x: l.x, z: l.z, hit: it.hit, h: it.h,
+          hw: across ? CELL / 2 : 0.3, hd: across ? 0.3 : CELL / 2 }) });
+      }
+    }
+    const ex = toLocal(m.exit.x * CELL, m.exit.y * CELL);
+    if (ex.z > zNear + 0.5) list.push({ depth: ex.z, draw: () => drawExitBeam(ex) });
+    list.push({ depth: -1, draw: drawPlayer });
+    list.sort((p, q) => q.depth - p.depth).forEach((it) => it.draw());
+
+    for (const pt of particles) {
+      ctx.globalAlpha = Math.max(0, Math.min(1, pt.life * 1.5));
+      ctx.fillStyle = pt.c;
+      ctx.fillRect(pt.x - 3, pt.y - 3, 6, 6);
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    drawMinimap();
+    drawMazeHints();
+  }
+
+  function drawMazeWall(a, b, facing, zNear, fillPoly) {
+    const quad = NeonMaze.clipNear([
+      { x: a.x, z: a.z, y: 0 }, { x: b.x, z: b.z, y: 0 }, { x: b.x, z: b.z, y: WALL_H }, { x: a.x, z: a.z, y: WALL_H },
+    ], zNear);
+    if (quad.length < 3) return;
+    const pts = quad.map((p) => project(p.x, p.y, p.z));
+    fillPoly(pts, facing ? '#2b0f55' : '#1b0838');
+    // neon edges: pink along the top, cyan along the floor
+    for (const [yy, color, w] of [[WALL_H, C.pink, 3], [0, 'rgba(5,217,232,.55)', 2]]) {
+      const edge = quad.map((p, i) => ({ p, s: pts[i] })).filter((q) => Math.abs(q.p.y - yy) < 1e-6);
+      if (edge.length < 2) continue;
+      ctx.beginPath(); ctx.moveTo(edge[0].s.x, edge[0].s.y);
+      for (let i = 1; i < edge.length; i++) ctx.lineTo(edge[i].s.x, edge[i].s.y);
+      ctx.strokeStyle = color; ctx.lineWidth = w; ctx.stroke();
+    }
+  }
+
+  // A beam of light over the exit, visible above the walls from anywhere nearby.
+  function drawExitBeam(l) {
+    const b = project(l.x, 0, l.z), t = project(l.x, 40, l.z);
+    const w = Math.max(4, 1.6 * b.s);
+    const g = ctx.createLinearGradient(0, b.y, 0, t.y);
+    g.addColorStop(0, 'rgba(255,210,63,.85)'); g.addColorStop(1, 'rgba(255,210,63,0)');
+    ctx.fillStyle = g;
+    ctx.fillRect(b.x - w / 2, t.y, w, b.y - t.y);
+    ctx.strokeStyle = C.gold; ctx.lineWidth = Math.max(2, b.s * 0.08);
+    const pulse = 1 + Math.sin(time * 5) * 0.1;
+    ctx.beginPath(); ctx.ellipse(b.x, b.y, 1.8 * b.s * pulse, 0.45 * b.s * pulse, 0, 0, Math.PI * 2); ctx.stroke();
+    const lab = project(l.x, 3.2, l.z);
+    ctx.fillStyle = '#ffffff';
+    ctx.font = `900 ${Math.max(10, lab.s * 0.9)}px system-ui, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillText('EXIT', lab.x, lab.y);
+    ctx.textAlign = 'start';
+  }
+
+  function drawMinimap() {
+    const m = mz.maze;
+    const size = Math.min(120, W * 0.3), cs = size / Math.max(m.w, m.h);
+    const x0 = W - size - 14, y0 = 66;
+    ctx.fillStyle = 'rgba(11,2,33,.75)';
+    ctx.fillRect(x0 - 4, y0 - 4, size + 8, size + 8);
+    const sx = (x) => x0 + x * cs, sy = (y) => y0 + (m.h - 1 - y) * cs;
+    for (const key of mz.visited) {
+      const [x, y] = key.split(',').map(Number);
+      ctx.fillStyle = 'rgba(5,217,232,.25)';
+      ctx.fillRect(sx(x), sy(y), cs, cs);
+      ctx.strokeStyle = C.pink; ctx.lineWidth = 1.2;
+      const wl = m.cells[y][x].walls;
+      ctx.beginPath();
+      if (wl[0]) { ctx.moveTo(sx(x), sy(y)); ctx.lineTo(sx(x + 1), sy(y)); }
+      if (wl[1]) { ctx.moveTo(sx(x + 1), sy(y)); ctx.lineTo(sx(x + 1), sy(y) + cs); }
+      if (wl[2]) { ctx.moveTo(sx(x), sy(y) + cs); ctx.lineTo(sx(x + 1), sy(y) + cs); }
+      if (wl[3]) { ctx.moveTo(sx(x), sy(y)); ctx.lineTo(sx(x), sy(y) + cs); }
+      ctx.stroke();
+    }
+    ctx.fillStyle = Math.sin(time * 6) > 0 ? C.gold : '#fff5c2';
+    ctx.fillRect(sx(m.exit.x) + cs * 0.2, sy(m.exit.y) + cs * 0.2, cs * 0.6, cs * 0.6);
+    // the runner as an arrow
+    const px = x0 + (mz.pos.x / CELL + 0.5) * cs, py = y0 + (m.h - 0.5 - mz.pos.y / CELL) * cs;
+    const ang = (mz.heading * Math.PI) / 2;
+    ctx.save(); ctx.translate(px, py); ctx.rotate(ang);
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath(); ctx.moveTo(0, -cs * 0.45); ctx.lineTo(cs * 0.32, cs * 0.3); ctx.lineTo(-cs * 0.32, cs * 0.3); ctx.closePath(); ctx.fill();
+    ctx.restore();
+    ctx.fillStyle = C.cyan;
+    ctx.font = '800 12px system-ui, sans-serif';
+    ctx.textAlign = 'right';
+    ctx.fillText(`MAZE ${mz.level}`, x0 + size, y0 + size + 18);
+    ctx.textAlign = 'start';
+  }
+
+  function drawMazeHints() {
+    for (const p of mz.popups) {
+      ctx.globalAlpha = Math.max(0, 1 - p.t / 1.4);
+      ctx.fillStyle = p.color;
+      ctx.font = `900 italic ${Math.min(W, H) * 0.09}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.fillText(p.text, W / 2, H * 0.3 - p.t * 40);
+    }
+    ctx.globalAlpha = 1;
+    if (mz.waiting && state === 'play') {
+      const c = cellAt(), h = mz.heading, open = (d) => NeonMaze.isOpen(mz.maze, c.x, c.y, d);
+      const pulse = 0.6 + 0.4 * Math.sin(time * 8);
+      ctx.globalAlpha = pulse;
+      ctx.fillStyle = C.cyan;
+      ctx.font = `900 ${Math.min(W, H) * 0.14}px system-ui, sans-serif`;
+      ctx.textAlign = 'center';
+      if (open((h + 3) % 4)) ctx.fillText('◀', W * 0.15, H * 0.62);
+      if (open((h + 1) % 4)) ctx.fillText('▶', W * 0.85, H * 0.62);
+      ctx.globalAlpha = 1;
+      ctx.font = '800 16px system-ui, sans-serif';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText('Swipe to pick a way', W / 2, H * 0.94);
+    }
+    ctx.textAlign = 'start';
+  }
+
   // Test hook for automated checks (only when the URL ends in #test).
   if (location.hash === '#test') {
     window.neonTest = {
@@ -1296,6 +1776,9 @@
       wall: (z, x = 0) => objects.push({ kind: 'wall', x, hw: 1, z, hd: 0.6, h: 2.4 }),
       barrier: (z) => objects.push({ kind: 'barrier', x: 0, hw: ROAD, z, hd: 0.3, h: 0.9 }),
       peek: () => ({ state, power: { ...power }, invuln, coinCount, wallet, x: player.x }),
+      maze: () => mz,
+      steer: (d) => mazeSteer(d),
+      jump: () => requestJump(),
     };
   }
 
@@ -1311,7 +1794,7 @@
     } else if (state !== 'paused') {
       update(dt);
     }
-    render();
+    if (mode === 'maze' && mz) renderMaze(); else render();
     if (!ui.city.classList.contains('hidden')) renderShopPreview(dt);
     requestAnimationFrame(frame);
   }

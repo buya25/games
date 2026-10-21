@@ -158,3 +158,9 @@ button.small {
 }
 .card .chip.on { background: rgba(5,217,232,.2); border-color: #05d9e8; color: #05d9e8; }
 .card .swatch.small { width: 30px; height: 30px; }
+
+button.big.alt { background: transparent; color: #fff; border: 2px solid #ff2a6d; box-shadow: 0 0 18px rgba(255,42,109,.35); margin-top: 0; }
+.how.small-how { font-size: 12px; opacity: .65; max-width: 300px; }
+.stat.warn span { color: #ff3b3b; text-shadow: 0 0 10px #ff3b3b; animation: pulse .5s infinite alternate; }
+@keyframes pulse { to { opacity: .55; } }
+h2.win { color: #ffd23f; text-shadow: 0 0 16px #ffb000; text-align: center; }
