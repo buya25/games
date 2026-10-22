@@ -19,10 +19,10 @@ window.NeonShop = (() => {
   const ROWS = 3;
   // two shelf walls either side of the door, and two shelf islands in the middle of the floor
   const UNITS = [
-    { x0: 0.02, x1: 0.39, top: L.wall + 0.006, base: L.door, cols: 6, wall: true },
-    { x0: 0.61, x1: 0.98, top: L.wall + 0.006, base: L.door, cols: 6, wall: true },
-    { x0: 0.05, x1: 0.37, top: 0.42, base: 0.53, cols: 5 },
-    { x0: 0.63, x1: 0.95, top: 0.42, base: 0.53, cols: 5 },
+    { x0: 0.02, x1: 0.39, top: L.wall + 0.006, base: L.door, cols: 5, wall: true },
+    { x0: 0.61, x1: 0.98, top: L.wall + 0.006, base: L.door, cols: 5, wall: true },
+    { x0: 0.05, x1: 0.37, top: 0.42, base: 0.53, cols: 4 },
+    { x0: 0.63, x1: 0.95, top: 0.42, base: 0.53, cols: 4 },
   ];
   const PILE = { x: 0.13, y: 0.735 };     // where deliveries are stacked
   const CLERK_HOME = { x: 0.25, y: 0.7 };
@@ -436,7 +436,11 @@ window.NeonShop = (() => {
     leaveShop(p, 'happy', '😊');
     r.effects.push({ kind: 'text', text: `+$${Math.round(res.revenue).toLocaleString()}`, x: p.x, y: L.counter - 0.1, t: 0 });
     sfx.ching();
-    r.drawer = 0.8;
+    // how they paid: card, or cash rounded up to a note, with change
+    const card = Math.random() < 0.6, total = res.revenue;
+    const note = total < 20 ? 5 : total < 50 ? 10 : 20;
+    r.lastSale = { qty: res.qty, price: total / res.qty, total, method: card ? 'card' : 'cash', card: 1000 + ((Math.random() * 9000) | 0), tendered: card ? total : Math.ceil((total + 0.01) / note) * note, t: r.t };
+    if (!card) r.drawer = 0.8;
     try { navigator.vibrate && navigator.vibrate(12); } catch { /* ignore */ }
   }
 
@@ -650,28 +654,41 @@ window.NeonShop = (() => {
     ctx.fillStyle = 'rgba(0,0,0,.28)';
     for (let y = top + 5; y < base - kk - 3; y += 7) for (let x = x0 + 6; x < x1 - 5; x += 7) ctx.fillRect(x, y, 1.5, 1.5);
     // shelves: board surface, LED light, goods, then the front lip with its price strip
-    const size = rh * 0.64, lip = Math.max(3, rh * 0.13), colW = (x1 - x0) / u.cols;
+    const lip = Math.max(3, rh * 0.13), colW = (x1 - x0) / u.cols;
     for (let row = 0; row < ROWS; row++) {
       const y = shelfY(u, row) * H;
-      ctx.fillStyle = '#4a2a8c'; poly(ctx, [[x0 + 3, y], [x1 - 3, y], P(x1 - 3, y, D * 0.22), P(x0 + 3, y, D * 0.22)]); ctx.fill();
+      ctx.fillStyle = '#4a2a8c'; poly(ctx, [[x0 + 3, y], [x1 - 3, y], P(x1 - 3, y, D * 0.6), P(x0 + 3, y, D * 0.6)]); ctx.fill();
       const ceil = row === ROWS - 1 ? top : shelfY(u, row + 1) * H + lip;
       g = ctx.createLinearGradient(0, ceil, 0, ceil + rh * 0.6);
       g.addColorStop(0, 'rgba(190,240,255,.22)'); g.addColorStop(1, 'rgba(190,240,255,0)');
       ctx.fillStyle = g; ctx.fillRect(x0 + 3, ceil, x1 - x0 - 6, rh * 0.6);
     }
-    ctx.font = `${Math.max(7, Math.round(size))}px system-ui, sans-serif`;
+    // goods: two packs side by side per spot and up to three deep, filled from the front
+    const FACINGS = 2, DEEP = 3, PER = FACINGS * DEEP;
+    const fsz = Math.min(rh * 0.6, colW * 0.44);
+    ctx.fillStyle = '#fff'; // emoji pick up the fill alpha
     for (const sl of r.slots) {
       if (sl.u !== ui || sl.n <= 0) continue;
-      const x = sl.x * W, y = sl.y * H - 1;
-      ctx.fillStyle = 'rgba(0,0,0,.35)';
-      ctx.beginPath(); ctx.ellipse(x, y - 1, size * 0.32, size * 0.07, 0, 0, Math.PI * 2); ctx.fill();
-      ctx.fillStyle = '#fff'; // emoji pick up the fill alpha
-      if (sl.n > 1) { ctx.globalAlpha = 0.65; ctx.fillText(G.icon, x - size * 0.16, y - size * 0.14); ctx.globalAlpha = 1; }
-      if (sl.pop > 0) {
-        const k = 1 + sl.pop * 1.6;
-        ctx.save(); ctx.translate(x, y); ctx.scale(k, k); ctx.fillText(G.icon, 0, 0); ctx.restore();
-      } else ctx.fillText(G.icon, x, y);
+      // packs are pulled to the front, so a part-stocked shelf still looks faced up
+      const vis = clamp(Math.ceil(Math.sqrt(sl.n / r.cap) * PER), 1, PER);
+      const y = sl.y * H - 1;
+      for (let d = DEEP - 1; d >= 0; d--) {
+        for (let f = 0; f < FACINGS; f++) {
+          if (d * FACINGS + f >= vis) continue;
+          const fx = sl.x * W + (f - 0.5) * colW * 0.47;
+          const [px, py] = P(fx, y, D * 0.24 * d);
+          const sc = (1 - d * 0.09) * (d === 0 && sl.pop > 0 ? 1 + sl.pop * 1.6 : 1);
+          const s = fsz * sc;
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = `rgba(0,0,0,${0.3 - d * 0.06})`;
+          ctx.beginPath(); ctx.ellipse(px, py - 0.5, s * 0.36, s * 0.08, 0, 0, Math.PI * 2); ctx.fill();
+          ctx.fillStyle = '#fff'; ctx.globalAlpha = 1 - d * 0.24;
+          ctx.font = `${Math.max(6, Math.round(s))}px system-ui, sans-serif`;
+          ctx.fillText(G.icon, px, py);
+        }
+      }
     }
+    ctx.globalAlpha = 1;
     for (let row = 0; row < ROWS; row++) {
       const y = shelfY(u, row) * H;
       ctx.fillStyle = '#e4defa'; ctx.fillRect(x0 + 2, y, x1 - x0 - 4, lip);
@@ -764,6 +781,80 @@ window.NeonShop = (() => {
     }
   }
 
+  const money2 = (n) => `$${n.toFixed(2)}`;
+  // shorten text to fit a width
+  function fit(ctx, text, w) {
+    if (ctx.measureText(text).width <= w) return text;
+    while (text.length > 1 && ctx.measureText(text + '…').width > w) text = text.slice(0, -1);
+    return text + '…';
+  }
+
+  function drawPOS(ctx, base, W, H, G, serving) {
+    const r = run;
+    const sw = Math.min(W * 0.32, 200), sh = H * 0.125, sx = clamp(base[0] - sw / 2, 4, W - sw - 4), sy = base[1] - H * 0.014 - sh;
+    // stand
+    ctx.fillStyle = '#2a2a35'; ctx.fillRect(base[0] - 3, sy + sh, 6, base[1] - sy - sh); ctx.fillRect(base[0] - 14, base[1] - 3, 28, 4);
+    // bezel and screen
+    ctx.fillStyle = '#0d0d14'; roundRect(ctx, sx, sy, sw, sh, 5); ctx.fill();
+    const x0 = sx + 4, y0 = sy + 4, w = sw - 8, h = sh - 8, pad = w * 0.05;
+    ctx.fillStyle = '#061820'; ctx.fillRect(x0, y0, w, h);
+    const line = h * 0.15, fs = Math.max(7, Math.round(h * 0.105));
+    // header bar
+    ctx.fillStyle = '#05d9e8'; ctx.fillRect(x0, y0, w, line);
+    ctx.fillStyle = '#062a33'; ctx.font = `800 ${fs}px system-ui, sans-serif`;
+    ctx.textAlign = 'left'; ctx.fillText('NEON POS · TILL 1', x0 + pad, y0 + line * 0.75);
+    ctx.textAlign = 'right'; ctx.fillText(clock(), x0 + w - pad, y0 + line * 0.75);
+    const L1 = y0 + line * 2, L2 = L1 + line, L3 = L2 + line * 1.15;
+    const price = T.shelfPrice(r.s, r.b);
+    // a payment stays on screen for a moment, even if the next customer is already up
+    const recent = r.lastSale && r.t - r.lastSale.t < (serving ? 0.9 : 1.6) ? r.lastSale : null;
+    if (recent || (serving && serving.basket)) {
+      if (recent) serving = null;
+      const k = serving ? clamp(1 - serving.timer / (serving.serveDur || 0.5), 0, 1) : 1;
+      const qty = serving ? Math.max(1, Math.ceil(k * serving.basket)) : recent.qty;
+      const each = serving ? price : recent.price, total = qty * each;
+      // item line: name and line total, then qty x price
+      ctx.font = `700 ${fs}px system-ui, sans-serif`; ctx.fillStyle = '#e6fbff';
+      ctx.textAlign = 'right'; ctx.fillText(money2(total), x0 + w - pad, L1);
+      const right = ctx.measureText(money2(total)).width;
+      ctx.textAlign = 'left'; ctx.fillText(fit(ctx, `${G.icon} ${G.name}`, w - pad * 3 - right), x0 + pad, L1);
+      ctx.fillStyle = '#7fb3c2'; ctx.font = `600 ${Math.round(fs * 0.9)}px system-ui, sans-serif`;
+      ctx.fillText(`   ${qty} × ${money2(each)}`, x0 + pad, L2);
+      if (recent) {
+        ctx.textAlign = 'right';
+        ctx.fillText(recent.method === 'card' ? `CARD •••• ${recent.card}` : `CASH ${money2(recent.tendered)}`, x0 + w - pad, L2);
+        ctx.textAlign = 'left';
+      }
+      ctx.fillStyle = 'rgba(127,179,194,.4)'; ctx.fillRect(x0 + pad, L2 + line * 0.35, w - pad * 2, 1);
+      // total
+      ctx.fillStyle = '#05d9e8'; ctx.font = `900 ${Math.round(fs * 1.25)}px system-ui, sans-serif`;
+      ctx.textAlign = 'left'; ctx.fillText('TOTAL', x0 + pad, L3 + line * 0.15);
+      ctx.textAlign = 'right'; ctx.fillText(money2(total), x0 + w - pad, L3 + line * 0.15);
+      // footer: scanning, or paid
+      const fy = y0 + h - line * 1.05;
+      if (recent) {
+        ctx.fillStyle = '#16a34a'; ctx.fillRect(x0, fy, w, line * 1.05);
+        ctx.fillStyle = '#fff'; ctx.font = `900 ${fs}px system-ui, sans-serif`; ctx.textAlign = 'center';
+        const msg = recent.method === 'card' ? '✓ PAID · APPROVED' : `✓ PAID · CHANGE ${money2(recent.tendered - recent.total)}`;
+        ctx.fillText(fit(ctx, msg, w - pad), x0 + w / 2, fy + line * 0.78);
+      } else if (Math.sin(r.t * 10) > -0.4) {
+        ctx.fillStyle = '#ffd23f'; ctx.font = `700 ${fs}px system-ui, sans-serif`; ctx.textAlign = 'center';
+        ctx.fillText('● SCANNING…', x0 + w / 2, fy + line * 0.78);
+      }
+    } else {
+      ctx.textAlign = 'center'; ctx.fillStyle = '#e6fbff'; ctx.font = `800 ${fs}px system-ui, sans-serif`;
+      ctx.fillText('Next customer, please', x0 + w / 2, L1 + line * 0.4);
+      ctx.fillStyle = '#7fb3c2'; ctx.font = `600 ${Math.round(fs * 0.9)}px system-ui, sans-serif`;
+      ctx.fillText(`Today: ${r.served} sale${r.served === 1 ? '' : 's'} · ${r.sold} sold`, x0 + w / 2, L2 + line * 0.5);
+      ctx.fillStyle = '#05d9e8'; ctx.font = `900 ${Math.round(fs * 1.35)}px system-ui, sans-serif`;
+      ctx.fillText(`$${Math.round(r.revenue).toLocaleString()}`, x0 + w / 2, L3 + line * 0.6);
+    }
+    ctx.textAlign = 'center';
+    // screen glare
+    ctx.fillStyle = 'rgba(255,255,255,.04)';
+    ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 + w * 0.35, y0); ctx.lineTo(x0, y0 + h * 0.6); ctx.closePath(); ctx.fill();
+  }
+
   function drawCounter(ctx, W, H, G) {
     const r = run, far = L.counter * H, near = far + H * 0.075;
     const f = (near - far) / (near - VP_Y * H);
@@ -825,27 +916,17 @@ window.NeonShop = (() => {
       }
     }
     // card reader
-    const cr = P(0.61, 0.72);
+    const cr = P(0.575, 0.8);
     ctx.fillStyle = '#1b1b24'; roundRect(ctx, cr[0] - 9, cr[1] - 16, 18, 20, 3); ctx.fill();
-    ctx.fillStyle = '#4ade80'; ctx.fillRect(cr[0] - 6, cr[1] - 13, 12, 6);
-    // till screen on a stand, facing you
-    const st = P(0.69, 0.45), sw = W * 0.17, sh = H * 0.055, sy = st[1] - H * 0.012 - sh;
-    ctx.fillStyle = '#2a2a35'; ctx.fillRect(st[0] - 3, sy + sh, 6, st[1] - sy - sh);
-    ctx.fillStyle = '#2a2a35'; ctx.fillRect(st[0] - 12, st[1] - 3, 24, 4);
-    ctx.fillStyle = '#0d0d14'; roundRect(ctx, st[0] - sw / 2, sy, sw, sh, 4); ctx.fill();
-    ctx.fillStyle = '#062a33'; ctx.fillRect(st[0] - sw / 2 + 4, sy + 4, sw - 8, sh - 8);
-    ctx.fillStyle = '#05d9e8'; ctx.font = `700 ${Math.round(sh * 0.22)}px system-ui, sans-serif`;
-    const sale = serving && serving.basket ? serving.basket * T.shelfPrice(r.s, r.b) : 0;
-    ctx.fillText(sale ? 'TOTAL' : 'TODAY', st[0], sy + sh * 0.38);
-    ctx.font = `900 ${Math.round(sh * 0.32)}px system-ui, sans-serif`;
-    ctx.fillText(`$${Math.round(sale || r.revenue).toLocaleString()}`, st[0], sy + sh * 0.78);
+    ctx.fillStyle = r.lastSale && r.lastSale.method === 'card' && r.t - r.lastSale.t < 1.6 ? '#4ade80' : '#1e3a2a'; ctx.fillRect(cr[0] - 6, cr[1] - 13, 12, 6);
+    // till screen on a stand, facing you: the sale being rung up, then PAID
+    drawPOS(ctx, P(0.74, 0.45), W, H, G, serving);
     // bagging stand with paper bags
-    const bs = P(0.89, 0.5);
-    ctx.fillStyle = '#9aa0b5'; ctx.fillRect(bs[0] - W * 0.05, bs[1] - H * 0.045, 2, H * 0.045); ctx.fillRect(bs[0] + W * 0.05, bs[1] - H * 0.045, 2, H * 0.045);
-    ctx.fillRect(bs[0] - W * 0.05, bs[1] - H * 0.045, W * 0.1 + 2, 2);
-    ctx.fillStyle = '#c99a5b'; ctx.fillRect(bs[0] - W * 0.035, bs[1] - H * 0.04, W * 0.07, H * 0.038);
-    ctx.fillStyle = '#a87a40'; ctx.fillRect(bs[0] - W * 0.035, bs[1] - H * 0.04, W * 0.07, 3);
-    ctx.fillStyle = '#e8d4b0'; ctx.fillRect(P(0.8, 0.5)[0] - 8, P(0.8, 0.5)[1] - 6, 16, 5); ctx.fillRect(P(0.8, 0.5)[0] - 8, P(0.8, 0.5)[1] - 11, 16, 5);
+    const bs = P(0.955, 0.5), bw = W * 0.035;
+    ctx.fillStyle = '#9aa0b5'; ctx.fillRect(bs[0] - bw, bs[1] - H * 0.045, 2, H * 0.045); ctx.fillRect(bs[0] + bw, bs[1] - H * 0.045, 2, H * 0.045);
+    ctx.fillRect(bs[0] - bw, bs[1] - H * 0.045, bw * 2 + 2, 2);
+    ctx.fillStyle = '#c99a5b'; ctx.fillRect(bs[0] - bw * 0.7, bs[1] - H * 0.04, bw * 1.4, H * 0.038);
+    ctx.fillStyle = '#a87a40'; ctx.fillRect(bs[0] - bw * 0.7, bs[1] - H * 0.04, bw * 1.4, 3);
     // you and your helpers, behind the counter
     const sellerS = H * 0.13;
     const staffXs = [0.2, 0.8, 0.08, 0.92];
