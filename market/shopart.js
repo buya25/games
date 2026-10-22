@@ -191,5 +191,61 @@ window.NeonShopArt = (() => {
     ctx.fillStyle = warm; ctx.beginPath(); ctx.ellipse(x, y, s * 0.42, s * 0.08, 0, 0, Math.PI * 2); ctx.fill();
   }
 
-  return { pack, plant, bin, wetFloor, basketStack, camera, clock, lamp, palettes: (good) => (PALETTES[good] || PALETTES.drinks).length };
+  // ---------- shop decoration, bought with arcade coins ----------
+  const DECOR = {
+    floor: [
+      { id: 'checker', name: 'Purple checker', cost: 0, a: '#1b0d38', b: '#22113f' },
+      { id: 'marble', name: 'White marble', cost: 300, a: '#d2cce0', b: '#c2bbd4', vein: true },
+      { id: 'wood', name: 'Oak boards', cost: 400, a: '#6b4423', b: '#77502c', planks: true },
+      { id: 'grid', name: 'Neon grid', cost: 600, a: '#0b0221', b: '#0e0428', line: '#05d9e8' },
+    ],
+    walls: [
+      { id: 'plum', name: 'Plum paint', cost: 0, wall: '#2a1248', trim: '#3d1a66' },
+      { id: 'mint', name: 'Mint paint', cost: 200, wall: '#2c675c', trim: '#3f8a7c' },
+      { id: 'sand', name: 'Sand paint', cost: 200, wall: '#7e6a4a', trim: '#a08860' },
+      { id: 'night', name: 'Midnight blue', cost: 300, wall: '#101a3a', trim: '#1c2a5a' },
+    ],
+    sign: [
+      { id: 'gold', name: 'Gold glow', cost: 0, color: '#ffd23f', glow: '#ff7a00' },
+      { id: 'pink', name: 'Hot pink', cost: 250, color: '#ff5c8a', glow: '#ff2a6d' },
+      { id: 'cyan', name: 'Ice cyan', cost: 250, color: '#7fe9ff', glow: '#05d9e8' },
+      { id: 'rainbow', name: 'Rainbow', cost: 800, color: '#fff', glow: '#9b5de5', rainbow: true },
+    ],
+    plants: [
+      { id: 'one', name: 'One plant', cost: 0 },
+      { id: 'none', name: 'No plants', cost: 0 },
+      { id: 'jungle', name: 'Urban jungle', cost: 500 },
+    ],
+    music: [
+      { id: 'chill', name: 'Chill', cost: 0 },
+      { id: 'synth', name: 'Synthwave', cost: 300 },
+      { id: 'jazz', name: 'Lounge jazz', cost: 300 },
+      { id: 'off', name: 'No music', cost: 0 },
+    ],
+    uniform: [
+      { id: 'green', name: 'Green aprons', cost: 0, color: '#22c55e' },
+      { id: 'red', name: 'Red aprons', cost: 150, color: '#ef4444' },
+      { id: 'blue', name: 'Blue aprons', cost: 150, color: '#3b82f6' },
+      { id: 'black', name: 'Black aprons', cost: 250, color: '#1f2937' },
+    ],
+  };
+  const DECOR_NAMES = { floor: 'Floor', walls: 'Walls', sign: 'Shop sign', plants: 'Plants', music: 'Music', uniform: 'Staff uniforms' };
+  const DECOR_KEY = 'neonTycoon.decor';
+  function loadDecor() {
+    let d = {};
+    try { d = JSON.parse(localStorage.getItem(DECOR_KEY) || '{}') || {}; } catch { d = {}; }
+    d.owned = Array.isArray(d.owned) ? d.owned : [];
+    for (const k of Object.keys(DECOR)) if (!DECOR[k].some((x) => x.id === d[k])) d[k] = DECOR[k][0].id;
+    return d;
+  }
+  function saveDecor(d) { try { localStorage.setItem(DECOR_KEY, JSON.stringify(d)); } catch { /* ignore */ } }
+  // the chosen item in each category
+  function decor() {
+    const d = loadDecor(), out = {};
+    for (const k of Object.keys(DECOR)) out[k] = DECOR[k].find((x) => x.id === d[k]);
+    return out;
+  }
+  const owns = (d, cat, id) => DECOR[cat].find((x) => x.id === id).cost === 0 || d.owned.includes(`${cat}:${id}`);
+
+  return { DECOR, DECOR_NAMES, loadDecor, saveDecor, decor, owns, pack, plant, bin, wetFloor, basketStack, camera, clock, lamp, palettes: (good) => (PALETTES[good] || PALETTES.drinks).length };
 })();

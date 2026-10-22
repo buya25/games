@@ -248,6 +248,7 @@
       status = `Stock ${b.stock} · sells about ${T.unitsPerDay(tier.cap, b.good)} a day · rent ${money(tier.rent)}/day`;
       const mult = b.mult || T.RETAIL;
       status += `<br>Shelf price ${price2(T.shelfPrice(s, b))} (${Math.round(mult * 100)}% of wholesale) · ${Math.round(T.willingShare(mult) * 100)}% of shoppers will pay it`;
+      if (b.rating) status += `<br><span class="stars">${starStr(b.rating)}</span> ${b.rating.toFixed(1)} from shoppers`;
       if (b.last && b.last.live) status += `<br>${b.servedDay === s.day ? 'Today' : 'Last time'} you served it yourself: sold ${b.last.sold} for ${money(b.last.revenue)}`;
       else if (b.last) status += `<br>Yesterday: sold ${b.last.sold} for ${money(b.last.revenue)}${b.stock === 0 ? ' · <b class="down">out of stock</b>' : ''}`;
     } else {
@@ -262,6 +263,7 @@
       ${here && b.kind === 'stall' && b.servedDay === s.day ? '<p class="muted" style="margin-top:8px">You ran this shop today. Come back tomorrow.</p>' : ''}
       <div class="btns">
         ${b.kind === 'stall' ? `<button class="btn" data-act="price:${b.id}">💲 Set price</button>` : ''}
+        ${b.kind === 'stall' ? `<button class="btn" data-act="supgs:${b.id}">🛠️ Shop upgrades${b.upgrades ? ` (${Object.keys(b.upgrades).length})` : ''}</button>` : ''}
         ${here && b.kind === 'stall' ? `<button class="btn cyan" data-act="restock:${b.id}">Restock from cargo (${s.cargo[b.good] || 0})</button>` : ''}
         ${here && b.stock > 0 ? `<button class="btn" data-act="collect:${b.id}">Load into cargo</button>` : ''}
         ${up ? `<button class="btn primary" data-act="upgrade:${b.id}">Upgrade to ${nextName} · ${money(up)}</button>` : ''}
@@ -277,7 +279,8 @@
     let h = `<div class="card"><h3>➕ Open a business in ${esc(T.D[s.district].name)}</h3>
       <p>A <b>stall</b> sells goods to shoppers every day at your shelf price, or open it and serve the shoppers yourself. A <b>workshop</b> makes goods for 40% of their usual price. Pair them on the same product in one district and the workshop keeps the stall stocked.</p>
       <div class="btns"><button class="btn primary" data-act="open:stall">🏪 Stall · ${money(T.STALLS[0].cost)}</button><button class="btn primary" data-act="open:factory">🏭 Workshop · ${money(T.FACTORIES[0].cost)}</button></div>
-      <p class="warn">Workshops pay for what they make every day: keep cash on hand or they stop.</p></div>`;
+      <p class="warn">Workshops pay for what they make every day: keep cash on hand or they stop.</p></div>
+      <button class="row" data-act="decor"><span class="ic">🎨</span><span class="nm"><b>Decorate your shops</b><small>Floors, paint, signs, plants, music and uniforms, paid with arcade coins</small></span><span class="px"><b>🪙 ${store.get('neonDash.wallet', 0)}</b></span></button>`;
     if (here.length) h += `<p class="section-title">Here in ${esc(T.D[s.district].name)}</p>` + here.map(bizLine).join('');
     if (away.length) h += `<p class="section-title">Elsewhere</p>` + away.map(bizLine).join('');
     if (!s.businesses.length) h += '<p class="muted" style="text-align:center;padding:10px">You don\'t own any businesses yet.</p>';
@@ -296,12 +299,54 @@
     for (const b of document.querySelectorAll('[data-pick]')) b.onclick = () => onPick(b.dataset.pick);
   }
 
+  const starStr = (n) => { const k = Math.round(n); return '★'.repeat(k) + '☆'.repeat(5 - k); };
+
+  // shop upgrades, paid from your Tycoon cash
+  function openUpgrades(b) {
+    const ups = b.upgrades || {};
+    openSheet(`<h2>🛠️ Shop upgrades<button class="close" data-close>✕</button></h2>
+      <p class="muted">For your ${esc(T.STALLS[b.tier].name.toLowerCase())} at ${esc(T.D[b.district].name)}. Paid from your cash; they add to what the business is worth.</p>
+      <div class="pick">${Object.entries(T.SHOP_UPGRADES).map(([k, u]) => `<button class="row" data-upg="${k}"${ups[k] ? ' disabled' : ''}><span class="ic">${u.icon}</span>
+        <span class="nm"><b>${u.name}</b><small>${esc(u.desc)}</small></span><span class="px"><b>${ups[k] ? '✓ Installed' : money(u.cost)}</b></span></button>`).join('')}</div>`);
+    for (const el of document.querySelectorAll('[data-upg]')) el.onclick = () => { if (result(T.buyShopUpgrade(s, b.id, el.dataset.upg), `${T.SHOP_UPGRADES[el.dataset.upg].name} installed!`)) openUpgrades(b); };
+  }
+
+  // shop decoration, paid with arcade coins; one style for all your shops
+  function openDecor() {
+    const A = window.NeonShopArt, d = A.loadDecor(), coins = store.get('neonDash.wallet', 0);
+    const swatch = (cat, it) => {
+      if (cat === 'plants') return `<i class="sw emo">${it.id === 'none' ? '🚫' : it.id === 'jungle' ? '🌴' : '🪴'}</i>`;
+      if (cat === 'music') return `<i class="sw emo">${it.id === 'off' ? '🔇' : '🎵'}</i>`;
+      const c = cat === 'floor' ? `linear-gradient(135deg, ${it.a} 50%, ${it.line || it.b} 50%)` : cat === 'walls' ? it.wall
+        : cat === 'sign' ? (it.rainbow ? 'linear-gradient(90deg,#ff2a6d,#ffd23f,#4ade80,#05d9e8,#9b5de5)' : it.color) : it.color;
+      return `<i class="sw" style="background:${c}"></i>`;
+    };
+    openSheet(`<h2>🎨 Decorate your shops<button class="close" data-close>✕</button></h2>
+      <p class="muted">You have 🪙 ${coins}. Earn coins in Neon Dash or by finishing a season. Your style is used in every shop you run.</p>
+      ${Object.keys(A.DECOR).map((cat) => `<p class="section-title">${A.DECOR_NAMES[cat]}</p><div class="decor">${A.DECOR[cat].map((it) => {
+        const own = A.owns(d, cat, it.id), on = d[cat] === it.id;
+        return `<button class="dec${on ? ' on' : ''}" data-dec="${cat}:${it.id}">${swatch(cat, it)}<b>${it.name}</b><small>${on ? '✓ In use' : own ? 'Owned' : `🪙 ${it.cost}`}</small></button>`;
+      }).join('')}</div>`).join('')}`);
+    for (const el of document.querySelectorAll('[data-dec]')) el.onclick = () => {
+      const [cat, id] = el.dataset.dec.split(':'), item = A.DECOR[cat].find((x) => x.id === id), d2 = A.loadDecor();
+      if (!A.owns(d2, cat, id)) {
+        const c = store.get('neonDash.wallet', 0);
+        if (c < item.cost) { toast(`You need 🪙 ${item.cost}. Earn coins in Neon Dash or by finishing a season.`); return; }
+        store.set('neonDash.wallet', c - item.cost);
+        d2.owned.push(`${cat}:${id}`);
+      }
+      d2[cat] = id; A.saveDecor(d2);
+      openDecor(); render(); toast(`${item.name} ✓`);
+    };
+  }
+
   function bizAction(act, id) {
     const b = s.businesses.find((x) => x.id === id);
     if (act === 'restock') result(T.restock(s, id, s.cargo[b.good] || 0), `Stocked the ${(T.STALLS[b.tier]).name.toLowerCase()}`);
     else if (act === 'collect') result(T.collect(s, id, b.stock), 'Loaded into your cargo');
     else if (act === 'shop') openShop(b);
     else if (act === 'price') openPrice(b);
+    else if (act === 'supgs') openUpgrades(b);
     else if (act === 'upgrade') result(T.upgradeBusiness(s, id), 'Upgraded!');
     else if (act === 'product') openProductPicker('Change product', (g) => { if (result(T.setProduct(s, id, g), `Now ${b.kind === 'stall' ? 'selling' : 'making'} ${T.G[g].name}`)) closeSheet(); }, b.kind);
     else if (act === 'sellbiz') {
@@ -343,7 +388,7 @@
     const hud = (run) => {
       if (run) takings = run.revenue;
       const si = NeonShop.stockInfo();
-      const key = [NeonShop.clock(), Math.round(takings), b.stock, si && si.shelves, b.mult, NeonShop.frontWaiting()].join('|');
+      const key = [NeonShop.clock(), Math.round(takings), b.stock, si && si.shelves, b.mult, NeonShop.frontWaiting(), run && run.till2].join('|');
       if (key === lastKey) return;
       lastKey = key;
       $('shopClock').textContent = NeonShop.clock();
@@ -351,6 +396,7 @@
       $('shopStock').textContent = si ? `${si.shelves} · ${b.stock - si.shelves}` : b.stock;
       $('shopPrice').innerHTML = priceLine(b);
       $('shopServe').classList.toggle('ready', NeonShop.frontWaiting());
+      $('shopTill').classList.toggle('on', !!(run && run.till2));
       $('cash').textContent = compact(s.cash);
     };
     const res = NeonShop.open(s, b.id, {
@@ -369,22 +415,38 @@
   }
 
   function shopSummary(b, m) {
-    const lost = m.lostPrice + m.lostWait + m.lostStock;
+    const lost = m.lostPrice + m.lostWait + m.lostStock, wx = T.WEATHER[m.weather] || T.WEATHER.sunny;
     const tips = [];
     if (m.lostStock) tips.push(`📦 ${m.lostStock} left because the shelves were empty. Bring more stock, or build a workshop here making ${T.G[b.good].name}.`);
     if (m.lostPrice > m.served / 2 && m.lostPrice) tips.push(`😒 ${m.lostPrice} thought your price was too high. Try a lower price.`);
     else if (!m.lostPrice && m.served > 4) tips.push('😍 Nobody balked at your price. You could charge a bit more.');
     if (m.lostWait) tips.push(`😠 ${m.lostWait} got tired of waiting. Serve faster, or upgrade: bigger shops come with helpers.`);
+    if (m.stolen) tips.push(`🚨 ${m.stolen} went out the door unpaid. Tap shoplifters (👀) before they reach the door, or fit security gates.`);
     openSheet(`<h2>🌙 Closing time</h2>
-      <p class="big-num">${money(m.revenue)}</p>
-      <div class="kv"><span>Shoppers who came in</span><span>${m.entrants}</span><span>Served</span><span>${m.served}</span>
-        <span>${T.G[b.good].icon} sold</span><span>${m.sold}</span><span>Walked out</span><span>${lost}</span></div>
+      <p class="big-num">${money(m.revenue + (m.extras || 0))}</p>
+      <div class="kv"><span>Weather</span><span>${wx.icon} ${wx.name}</span><span>Shoppers who came in</span><span>${m.entrants}</span><span>Served</span><span>${m.served}</span>
+        <span>${T.G[b.good].icon} sold</span><span>${m.sold} · ${money(m.revenue)}</span>
+        ${m.extras ? `<span>Tips, drinks and coffee</span><span>${money(m.extras)}</span>` : ''}
+        ${m.helped ? `<span>Shoppers you helped</span><span>${m.helped}</span>` : ''}
+        ${m.caught || m.stolen ? `<span>Shoplifters</span><span>${m.caught} caught · ${m.stolen} stolen</span>` : ''}
+        <span>Walked out</span><span>${lost}</span></div>
+      ${m.reviews && m.reviews.length ? `<p class="section-title">Today's reviews · <span class="stars">${starStr(m.stars)}</span></p>
+        <div class="news">${m.reviews.map((rv) => `<div><span class="stars">${starStr(rv.stars)}</span><span>${esc(rv.text)}</span></div>`).join('')}</div>
+        <p class="muted">Shop rating: ${m.rating.toFixed(1)} ★. A better rating brings more shoppers, even on days you don't run it.</p>` : ''}
       ${tips.length ? `<div class="news">${tips.map((x) => `<div><span>${x.slice(0, 2)}</span><span>${esc(x.slice(2).trim())}</span></div>`).join('')}</div>` : ''}
       <p class="muted">Rent is paid when the day ends. Automatic sales are skipped at this shop today.</p>
       <button class="btn primary" data-close>Done</button>`);
   }
   $('shopServe').addEventListener('click', () => NeonShop.serve());
-  $('shopCanvas').addEventListener('pointerdown', () => NeonShop.serve());
+  {
+    const cv = $('shopCanvas');
+    const at = (e) => { const rc = cv.getBoundingClientRect(); return [e.clientX - rc.left, e.clientY - rc.top]; };
+    cv.addEventListener('pointerdown', (e) => { if (NeonShop.pointerDown(...at(e)) === 'drag') try { cv.setPointerCapture(e.pointerId); } catch { /* ignore */ } });
+    cv.addEventListener('pointermove', (e) => NeonShop.pointerMove(...at(e)));
+    cv.addEventListener('pointerup', () => { if (NeonShop.pointerUp() === 'stocked') toast('📦 Shelf stocked by hand!'); });
+    cv.addEventListener('pointercancel', () => NeonShop.pointerUp());
+  }
+  $('shopTill').onclick = () => { const on = NeonShop.toggleTill2(); toast(on ? '🧾 The clerk opens till 2' : 'Till 2 closed: the clerk is back on the shop floor'); };
   $('shopUp').onclick = () => { const r = NeonShop.current(); if (r) nudgePrice(r.b, 0.05); };
   $('shopDown').onclick = () => { const r = NeonShop.current(); if (r) nudgePrice(r.b, -0.05); };
   $('shopRefill').onclick = () => { const r = NeonShop.refill(); toast(r.ok ? `🚚 Delivery on its way: ${r.moved} ${T.G[NeonShop.current().b.good].name}` : r.msg); };
@@ -620,6 +682,7 @@
     else if (act === 'bank') bankAction(a, b);
     else if (act === 'open' && s.cash < (a === 'stall' ? T.STALLS : T.FACTORIES)[0].cost) toast(`You need ${money((a === 'stall' ? T.STALLS : T.FACTORIES)[0].cost)} cash. Try a loan in the 🏦 Bank tab.`);
     else if (act === 'open') openProductPicker(a === 'stall' ? '🏪 What will the stall sell?' : '🏭 What will the workshop make?', (g) => { if (result(T.openBusiness(s, a, g), 'Open for business!')) { closeSheet(); } }, a);
+    else if (act === 'decor') openDecor();
     else bizAction(act, parseInt(a, 10));
   });
   window.addEventListener('resize', () => { if (s && tab === 'stats') render(); });

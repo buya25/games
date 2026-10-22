@@ -28,7 +28,16 @@ same district. Bigger shops come with helpers who serve on their own. The shop h
 drinks fridge, an itemised till (card or cash, with change and a printed receipt), sliding doors,
 a street with traffic outside, a sky that goes from morning to night, hanging lamps, shoppers who
 browse, compare and chat (some bring a partner or a child), and soft background music
-(`market/shopart.js` draws the packaging and props). Shelf prices you set also drive the
+(`market/shopart.js` draws the packaging and props).
+
+Each hands-on day opens with the shutters rolling up and ends with the takings being counted. The
+weather (the same for everyone on a seed; hot during a heatwave) changes the crowd. Shoppers come in
+types (regulars, people in a hurry, bargain hunters, tourists, and the odd shoplifter you can tap to
+stop), raise a hand for help, and leave reviews that set the stall's star rating, which also nudges
+its automatic sales. You can drag boxes onto shelves yourself, open a second till, buy shop upgrades
+with cash (self-checkout, coffee corner, cold-drinks fridge, security gates) and decorate every shop
+with arcade coins (floor, paint, sign, plants, music, uniforms). Wear builds up over the season and
+the clerk mops, wipes the windows and picks up dropped packs. Shelf prices you set also drive the
 automatic sales on the other days: a higher price earns more per sale, but fewer shoppers buy.
 
 Challenges: after a season, share a link; your friend plays the same seed (same prices, news and share
