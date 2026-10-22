@@ -37,7 +37,16 @@ stop), raise a hand for help, and leave reviews that set the stall's star rating
 its automatic sales. You can drag boxes onto shelves yourself, open a second till, buy shop upgrades
 with cash (self-checkout, coffee corner, cold-drinks fridge, security gates) and decorate every shop
 with arcade coins (floor, paint, sign, plants, music, uniforms). Wear builds up over the season and
-the clerk mops, wipes the windows and picks up dropped packs. Shelf prices you set also drive the
+the clerk mops, wipes the windows and picks up dropped packs.
+
+It also plays like a real business: food and drink have sell-by dates (old stock is marked down to
+half price, then thrown out), you hire staff with skills and wages who tire and can quit, order
+from suppliers (cheap and slow, or quick and dear), and compete with a rival shop over the road.
+The street has rush hours, regulars with stamp cards, returns to sort out (refund, swap or refuse),
+seasons and holidays with decorations, neighbourhood events (a street market, a parade, a power
+cut), dogs waiting outside, kids knocking displays over and influencers whose haul videos bring a
+crowd. The shop front grows with the stall, and you can pinch to zoom and tap shoppers to see who
+they are. Shelf prices you set also drive the
 automatic sales on the other days: a higher price earns more per sale, but fewer shoppers buy.
 
 Challenges: after a season, share a link; your friend plays the same seed (same prices, news and share
