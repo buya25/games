@@ -140,3 +140,24 @@ a.btn { color: #fff; }
   max-width: calc(100% - 32px); padding: 11px 16px; border-radius: 14px; background: rgba(11, 2, 33, .95); border: 1px solid var(--gold);
   font-weight: 700; text-align: center;
 }
+
+/* ---------- hands-on shop ---------- */
+body.noscroll { overflow: hidden; }
+.pricer { display: flex; align-items: center; gap: 10px; }
+.pricer > div { flex: 1; text-align: center; line-height: 1.25; }
+.pricer > div b { font-size: 20px; }
+.pricer > div small { display: block; font-size: 12px; }
+.pricer .btn { width: 46px; height: 46px; padding: 0; font-size: 22px; }
+.shopview { position: fixed; inset: 0; z-index: 8; display: flex; flex-direction: column; background: var(--bg); touch-action: manipulation; }
+.shophud { display: flex; align-items: center; gap: 10px; padding: calc(env(safe-area-inset-top) + 10px) 12px 8px; border-bottom: 1px solid var(--line); }
+.shophud .stat small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#shopCanvas { flex: 1; width: 100%; min-height: 0; display: block; }
+.shopbar { display: flex; flex-direction: column; gap: 10px; padding: 10px 12px calc(env(safe-area-inset-bottom) + 12px); background: var(--surface); border-top: 2px solid var(--gold); }
+.shopbtns { display: flex; gap: 10px; }
+.shopbtns .btn { flex: none; }
+.serve {
+  flex: 1; padding: 14px; border: none; border-radius: 16px; font-size: 18px; font-weight: 900; letter-spacing: 2px;
+  color: var(--bg); background: rgba(255, 210, 63, .45); transition: background .15s, box-shadow .15s;
+}
+.serve.ready { background: linear-gradient(90deg, var(--gold), #ff7a00); box-shadow: 0 0 18px rgba(255, 160, 0, .5); }
+.shopgo { width: 100%; margin-top: 10px; padding: 12px; font-size: 15px; }

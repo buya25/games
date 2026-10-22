@@ -246,7 +246,10 @@
     let status;
     if (b.kind === 'stall') {
       status = `Stock ${b.stock} · sells about ${T.unitsPerDay(tier.cap, b.good)} a day · rent ${money(tier.rent)}/day`;
-      if (b.last) status += `<br>Yesterday: sold ${b.last.sold} for ${money(b.last.revenue)}${b.stock === 0 ? ' · <b class="down">out of stock</b>' : ''}`;
+      const mult = b.mult || T.RETAIL;
+      status += `<br>Shelf price ${price2(T.shelfPrice(s, b))} (${Math.round(mult * 100)}% of wholesale) · ${Math.round(T.willingShare(mult) * 100)}% of shoppers will pay it`;
+      if (b.last && b.last.live) status += `<br>${b.servedDay === s.day ? 'Today' : 'Last time'} you served it yourself: sold ${b.last.sold} for ${money(b.last.revenue)}`;
+      else if (b.last) status += `<br>Yesterday: sold ${b.last.sold} for ${money(b.last.revenue)}${b.stock === 0 ? ' · <b class="down">out of stock</b>' : ''}`;
     } else {
       status = `Makes ${T.unitsPerDay(tier.out, b.good)} a day at ${price2(G.base * T.PRODUCE_COST)} each · upkeep ${money(tier.upkeep)}/day · storage ${b.stock}/${T.storageCap(b)}`;
       if (b.last) status += `<br>Yesterday: made ${b.last.made} (cost ${money(b.last.cost)})`;
@@ -255,7 +258,10 @@
     const nextName = (b.kind === 'stall' ? T.STALLS : T.FACTORIES)[b.tier + 1]?.name;
     return `<div class="card"><h3>${b.kind === 'stall' ? '🏪' : '🏭'} ${tier.name} · ${G.icon} ${G.name}<span class="muted" style="margin-left:auto;font-size:12px">${T.D[b.district].icon} ${T.D[b.district].name}</span></h3>
       <p>${status}</p>
+      ${here && b.kind === 'stall' && T.shopDayAvailable(s, b) ? `<button class="btn primary shopgo" data-act="shop:${b.id}">🏪 Open shop and serve today</button>` : ''}
+      ${here && b.kind === 'stall' && b.servedDay === s.day ? '<p class="muted" style="margin-top:8px">You ran this shop today. Come back tomorrow.</p>' : ''}
       <div class="btns">
+        ${b.kind === 'stall' ? `<button class="btn" data-act="price:${b.id}">💲 Set price</button>` : ''}
         ${here && b.kind === 'stall' ? `<button class="btn cyan" data-act="restock:${b.id}">Restock from cargo (${s.cargo[b.good] || 0})</button>` : ''}
         ${here && b.stock > 0 ? `<button class="btn" data-act="collect:${b.id}">Load into cargo</button>` : ''}
         ${up ? `<button class="btn primary" data-act="upgrade:${b.id}">Upgrade to ${nextName} · ${money(up)}</button>` : ''}
@@ -269,7 +275,7 @@
   function businessHtml() {
     const here = s.businesses.filter((b) => b.district === s.district), away = s.businesses.filter((b) => b.district !== s.district);
     let h = `<div class="card"><h3>➕ Open a business in ${esc(T.D[s.district].name)}</h3>
-      <p>A <b>stall</b> sells goods to shoppers every day at a markup. A <b>workshop</b> makes goods for 40% of their usual price. Pair them on the same product in one district and the workshop keeps the stall stocked.</p>
+      <p>A <b>stall</b> sells goods to shoppers every day at your shelf price, or open it and serve the shoppers yourself. A <b>workshop</b> makes goods for 40% of their usual price. Pair them on the same product in one district and the workshop keeps the stall stocked.</p>
       <div class="btns"><button class="btn primary" data-act="open:stall">🏪 Stall · ${money(T.STALLS[0].cost)}</button><button class="btn primary" data-act="open:factory">🏭 Workshop · ${money(T.FACTORIES[0].cost)}</button></div>
       <p class="warn">Workshops pay for what they make every day: keep cash on hand or they stop.</p></div>`;
     if (here.length) h += `<p class="section-title">Here in ${esc(T.D[s.district].name)}</p>` + here.map(bizLine).join('');
@@ -294,6 +300,8 @@
     const b = s.businesses.find((x) => x.id === id);
     if (act === 'restock') result(T.restock(s, id, s.cargo[b.good] || 0), `Stocked the ${(T.STALLS[b.tier]).name.toLowerCase()}`);
     else if (act === 'collect') result(T.collect(s, id, b.stock), 'Loaded into your cargo');
+    else if (act === 'shop') openShop(b);
+    else if (act === 'price') openPrice(b);
     else if (act === 'upgrade') result(T.upgradeBusiness(s, id), 'Upgraded!');
     else if (act === 'product') openProductPicker('Change product', (g) => { if (result(T.setProduct(s, id, g), `Now ${b.kind === 'stall' ? 'selling' : 'making'} ${T.G[g].name}`)) closeSheet(); }, b.kind);
     else if (act === 'sellbiz') {
@@ -303,6 +311,83 @@
       $('confirmSell').onclick = () => { if (result(T.sellBusiness(s, id), 'Sold')) closeSheet(); };
     }
   }
+
+  // ---------- shelf price ----------
+  const priceLine = (b) => {
+    const mult = b.mult || T.RETAIL;
+    return `<b class="num">${price2(T.shelfPrice(s, b))}</b> <small class="muted">${Math.round(mult * 100)}% of wholesale · ${Math.round(T.willingShare(mult) * 100)}% will pay</small>`;
+  };
+  const nudgePrice = (b, d) => T.setShelfPrice(s, b.id, Math.round(((b.mult || T.RETAIL) + d) * 20) / 20);
+  function openPrice(b) {
+    const G = T.G[b.good];
+    openSheet(`<h2>💲 ${G.icon} ${G.name} price<button class="close" data-close>✕</button></h2>
+      <p>Wholesale here is ${price2(T.price(s, b.district, b.good))}. A higher price earns more on each sale, but fewer shoppers will pay it.</p>
+      <div class="pricer"><button class="btn" id="pDown">−</button><div id="pNow"></div><button class="btn" id="pUp">+</button></div>
+      <button class="btn" id="pReset">Reset to ${Math.round(T.RETAIL * 100)}%</button>
+      <button class="btn primary" data-close>Done</button>`);
+    const show = () => { $('pNow').innerHTML = priceLine(b); save(); render(); };
+    $('pDown').onclick = () => { nudgePrice(b, -0.05); show(); };
+    $('pUp').onclick = () => { nudgePrice(b, 0.05); show(); };
+    $('pReset').onclick = () => { T.setShelfPrice(s, b.id, T.RETAIL); show(); };
+    show();
+  }
+
+  // ---------- hands-on shop day ----------
+  function openShop(b) {
+    if (!window.NeonShop) return;
+    const view = $('shopView'), G = T.G[b.good];
+    view.classList.remove('hidden');
+    document.body.classList.add('noscroll');
+    $('shopTitle').textContent = `${G.icon} ${T.STALLS[b.tier].name} · ${T.D[b.district].name}`;
+    let takings = 0, lastKey = '';
+    const hud = (run) => {
+      if (run) takings = run.revenue;
+      const key = [NeonShop.clock(), Math.round(takings), b.stock, b.mult, NeonShop.frontWaiting()].join('|');
+      if (key === lastKey) return;
+      lastKey = key;
+      $('shopClock').textContent = NeonShop.clock();
+      $('shopTake').textContent = money(takings);
+      $('shopStock').textContent = b.stock;
+      $('shopPrice').innerHTML = priceLine(b);
+      $('shopServe').classList.toggle('ready', NeonShop.frontWaiting());
+      $('cash').textContent = compact(s.cash);
+    };
+    const res = NeonShop.open(s, b.id, {
+      canvas: $('shopCanvas'),
+      onTick: hud,
+      onEnd: (sum) => {
+        view.classList.add('hidden');
+        document.body.classList.remove('noscroll');
+        save(); render();
+        shopSummary(b, sum);
+      },
+    });
+    if (!res.ok) { view.classList.add('hidden'); document.body.classList.remove('noscroll'); toast(res.msg); return; }
+    save();
+    hud();
+  }
+
+  function shopSummary(b, m) {
+    const lost = m.lostPrice + m.lostWait + m.lostStock;
+    const tips = [];
+    if (m.lostStock) tips.push(`📦 ${m.lostStock} left because the shelves were empty. Bring more stock, or build a workshop here making ${T.G[b.good].name}.`);
+    if (m.lostPrice > m.served / 2 && m.lostPrice) tips.push(`😒 ${m.lostPrice} thought your price was too high. Try a lower price.`);
+    else if (!m.lostPrice && m.served > 4) tips.push('😍 Nobody balked at your price. You could charge a bit more.');
+    if (m.lostWait) tips.push(`😠 ${m.lostWait} got tired of waiting. Serve faster, or upgrade: bigger shops come with helpers.`);
+    openSheet(`<h2>🌙 Closing time</h2>
+      <p class="big-num">${money(m.revenue)}</p>
+      <div class="kv"><span>Shoppers who came in</span><span>${m.entrants}</span><span>Served</span><span>${m.served}</span>
+        <span>${T.G[b.good].icon} sold</span><span>${m.sold}</span><span>Walked out</span><span>${lost}</span></div>
+      ${tips.length ? `<div class="news">${tips.map((x) => `<div><span>${x.slice(0, 2)}</span><span>${esc(x.slice(2).trim())}</span></div>`).join('')}</div>` : ''}
+      <p class="muted">Rent is paid when the day ends. Automatic sales are skipped at this shop today.</p>
+      <button class="btn primary" data-close>Done</button>`);
+  }
+  $('shopServe').addEventListener('click', () => NeonShop.serve());
+  $('shopCanvas').addEventListener('pointerdown', () => NeonShop.serve());
+  $('shopUp').onclick = () => { const r = NeonShop.current(); if (r) nudgePrice(r.b, 0.05); };
+  $('shopDown').onclick = () => { const r = NeonShop.current(); if (r) nudgePrice(r.b, -0.05); };
+  $('shopRefill').onclick = () => { const r = NeonShop.refill(); toast(r.ok ? `Shelves topped up (+${r.moved})` : r.msg); };
+  $('shopClose').onclick = () => NeonShop.closeEarly();
 
   // ---------- Exchange ----------
   function exchangeHtml() {
@@ -562,5 +647,5 @@
   }
   showTitle();
 
-  if (location.hash === '#test') window.tycoonTest = { state: () => s, T, endDay, encodeChallenge };
+  if (location.hash === '#test') window.tycoonTest = { state: () => s, T, endDay, encodeChallenge, shop: window.NeonShop };
 })();

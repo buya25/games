@@ -30,6 +30,7 @@
         <li><b>Travel</b> or <b>End day</b> moves time on. Prices, news and your businesses update overnight.</li>
         <li><b>Business:</b> stalls sell goods for you every day; workshops make goods for 40% of their price. Put a workshop and a stall selling the same thing in one district and the workshop keeps the stall stocked.</li>
         <li><b>Factories pay for production every day</b>: keep some cash on hand or they stop.</li>
+        <li><b>Run your shop:</b> at one of your stalls, tap <b>Open shop</b> to serve the shoppers yourself. Set your price: too high and they walk out, too slow and they get tired of waiting.</li>
         <li><b>Exchange:</b> buy shares in Neon City companies; news moves them.</li>
         <li><b>Bank:</b> the loan costs 0.5% a day; savings earn 0.1% and are safe from pickpockets.</li>
         <li>After 120 days your net worth sets your rank and pays arcade coins into your wallet.</li>
@@ -61,6 +62,20 @@
     </nav>
   </section>
 
+  <section id="shopView" class="shopview hidden" aria-label="Your shop">
+    <div class="shophud">
+      <div class="stat"><small>Time</small><b id="shopClock"></b></div>
+      <div class="stat grow"><small id="shopTitle"></small><b id="shopTake">$0</b></div>
+      <div class="stat"><small>Stock</small><b id="shopStock"></b></div>
+      <button id="shopClose" class="btn">Close</button>
+    </div>
+    <canvas id="shopCanvas"></canvas>
+    <div class="shopbar">
+      <div class="pricer"><button class="btn" id="shopDown" aria-label="Lower price">−</button><div id="shopPrice"></div><button class="btn" id="shopUp" aria-label="Raise price">+</button></div>
+      <div class="shopbtns"><button class="btn cyan" id="shopRefill">📦 Restock</button><button class="serve" id="shopServe">SERVE 🛎️</button></div>
+    </div>
+  </section>
+
   <div id="sheet" class="sheet hidden" role="dialog" aria-modal="true">
     <div class="sheet-body" id="sheetBody"></div>
   </div>
@@ -68,6 +83,7 @@
 
   <script src="../runner/looks.js"></script>
   <script src="engine.js"></script>
+  <script src="shop.js"></script>
   <script src="ui.js"></script>
   <script>
     if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('../sw.js').catch(() => {}));
