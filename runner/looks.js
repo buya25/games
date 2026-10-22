@@ -66,6 +66,7 @@ window.NeonLooks = (() => {
   // left, cyan from the right), a soft highlight, and shadow toward the edges.
   // k scales the contrast (1 for limbs, lower for big flat areas like the back).
   function roundShade(ctx, x0, y0, x1, y1, color, k = 1) {
+    if (Math.abs(x1 - x0) + Math.abs(y1 - y0) < 8) return color; // too small to see the shading: a flat fill is far cheaper
     const g = ctx.createLinearGradient(x0, y0, x1, y1);
     if (!isHex(color)) { g.addColorStop(0, color); g.addColorStop(1, color); return g; }
     g.addColorStop(0, mix(color, '#ff2a6d', 0.45 * k));
