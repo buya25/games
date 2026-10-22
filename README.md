@@ -20,9 +20,10 @@ stall stocked). Play the Neon Exchange, manage savings and a loan, and react to 
 net worth sets your rank and pays arcade coins into the shared wallet.
 
 Run your shop: when you're in the same district as one of your stalls, tap **Open shop** to serve that
-day yourself (`market/shop.js`). Shoppers walk in, check your shelf price against what they're willing
-to pay, queue at the counter and leave if you're too slow. Tap SERVE (or the shop floor) to serve the
-customer at the front, change the price as you go, and restock from your cargo or a workshop in the
+day yourself (`market/shop.js`). Shoppers walk in off the street, read the price tag, take goods off
+the shelves into a basket, queue at the till and leave if you're too slow. Restocking sends a delivery
+van: the courier drops boxes on the stock pile and a stock clerk carries them to the shelves. Tap SERVE (or the shop floor) to serve the
+customer at the front, change the price as you go, and order stock from your cargo or a workshop in the
 same district. Bigger shops come with helpers who serve on their own. Shelf prices you set also drive the
 automatic sales on the other days: a higher price earns more per sale, but fewer shoppers buy.
 

@@ -342,12 +342,13 @@
     let takings = 0, lastKey = '';
     const hud = (run) => {
       if (run) takings = run.revenue;
-      const key = [NeonShop.clock(), Math.round(takings), b.stock, b.mult, NeonShop.frontWaiting()].join('|');
+      const si = NeonShop.stockInfo();
+      const key = [NeonShop.clock(), Math.round(takings), b.stock, si && si.shelves, b.mult, NeonShop.frontWaiting()].join('|');
       if (key === lastKey) return;
       lastKey = key;
       $('shopClock').textContent = NeonShop.clock();
       $('shopTake').textContent = money(takings);
-      $('shopStock').textContent = b.stock;
+      $('shopStock').textContent = si ? `${si.shelves} · ${b.stock - si.shelves}` : b.stock;
       $('shopPrice').innerHTML = priceLine(b);
       $('shopServe').classList.toggle('ready', NeonShop.frontWaiting());
       $('cash').textContent = compact(s.cash);
@@ -386,7 +387,7 @@
   $('shopCanvas').addEventListener('pointerdown', () => NeonShop.serve());
   $('shopUp').onclick = () => { const r = NeonShop.current(); if (r) nudgePrice(r.b, 0.05); };
   $('shopDown').onclick = () => { const r = NeonShop.current(); if (r) nudgePrice(r.b, -0.05); };
-  $('shopRefill').onclick = () => { const r = NeonShop.refill(); toast(r.ok ? `Shelves topped up (+${r.moved})` : r.msg); };
+  $('shopRefill').onclick = () => { const r = NeonShop.refill(); toast(r.ok ? `🚚 Delivery on its way: ${r.moved} ${T.G[NeonShop.current().b.good].name}` : r.msg); };
   $('shopClose').onclick = () => NeonShop.closeEarly();
 
   // ---------- Exchange ----------
