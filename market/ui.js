@@ -374,10 +374,14 @@
     };
     openSheet(`<h2>🎨 Decorate your shops<button class="close" data-close>✕</button></h2>
       <p class="muted">You have 🪙 ${coins}. Earn coins in Neon Dash or by finishing a season. Your style is used in every shop you run.</p>
+      <p class="section-title">⚙️ Graphics</p>
+      <div class="decor">${[['auto', '🪄 Auto', 'Sharp, and smoother if your phone needs it'], ['high', '✨ Sharp', 'Full detail'], ['low', '⚡ Smooth', 'Faster on older phones']].map(([id, name, desc]) =>
+        `<button class="dec${NeonShop.getGfx() === id ? ' on' : ''}" data-gfx="${id}"><b>${name}</b><small>${NeonShop.getGfx() === id ? '✓ In use' : desc}</small></button>`).join('')}</div>
       ${Object.keys(A.DECOR).map((cat) => `<p class="section-title">${A.DECOR_NAMES[cat]}</p><div class="decor">${A.DECOR[cat].map((it) => {
         const own = A.owns(d, cat, it.id), on = d[cat] === it.id;
         return `<button class="dec${on ? ' on' : ''}" data-dec="${cat}:${it.id}">${swatch(cat, it)}<b>${it.name}</b><small>${on ? '✓ In use' : own ? 'Owned' : `🪙 ${it.cost}`}</small></button>`;
       }).join('')}</div>`).join('')}`);
+    for (const el of document.querySelectorAll('[data-gfx]')) el.onclick = () => { NeonShop.setGfx(el.dataset.gfx); openDecor(); toast('Graphics: ' + el.textContent.trim().split('\n')[0]); };
     for (const el of document.querySelectorAll('[data-dec]')) el.onclick = () => {
       const [cat, id] = el.dataset.dec.split(':'), item = A.DECOR[cat].find((x) => x.id === id), d2 = A.loadDecor();
       if (!A.owns(d2, cat, id)) {

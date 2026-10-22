@@ -50,6 +50,33 @@ window.NeonShop = (() => {
 
   let run = null;
 
+  // ---------- graphics quality ----------
+  // 'auto' starts sharp and steps the resolution down if the phone can't keep up (and remembers it);
+  // 'high' is always sharp, 'low' always smooth.
+  const GFX_KEY = 'neonTycoon.gfx', GFX_AUTO_KEY = 'neonTycoon.gfxAuto';
+  const getGfx = () => { try { return localStorage.getItem(GFX_KEY) || 'auto'; } catch { return 'auto'; } };
+  function setGfx(mode) { try { localStorage.setItem(GFX_KEY, mode); localStorage.removeItem(GFX_AUTO_KEY); } catch { /* ignore */ } if (run) run.dprCap = startCap(); }
+  function startCap() {
+    const mode = getGfx();
+    if (mode === 'high') return 2;
+    if (mode === 'low') return 1.25;
+    try { return +localStorage.getItem(GFX_AUTO_KEY) || 2; } catch { return 2; }
+  }
+  // called each frame with the real time since the last one
+  function adaptQuality(r, real) {
+    if (getGfx() !== 'auto' || r.intro > 0 || r.ending || document.hidden) return;
+    const q = r.q || (r.q = { t: 0, n: 0, sum: 0 });
+    q.t += real; q.n++; q.sum += real;
+    if (q.t < 2.5) return;
+    const fps = q.n / q.sum;
+    r.q = null;
+    if (fps < 42 && r.dprCap > 1.25 && (window.devicePixelRatio || 1) > 1.25) {
+      r.dprCap = r.dprCap > 1.6 ? 1.5 : 1.25;
+      try { localStorage.setItem(GFX_AUTO_KEY, String(r.dprCap)); } catch { /* ignore */ }
+      r.effects.push({ kind: 'text', text: '⚙️ Smoother graphics on', x: 0.5, y: 0.5, t: 0, color: '#7fe9ff' });
+    }
+  }
+
   // ---------- sound ----------
   let actx = null;
   const muted = () => { try { return JSON.parse(localStorage.getItem('neonDash.muted') || 'false'); } catch { return false; } };
@@ -224,6 +251,7 @@ window.NeonShop = (() => {
       // opening up and closing down
       intro: 2.6, outro: 0, lights: 0, shutter: 1,
       floor: [], till2: false, till2Timer: 0, drag: null, away: 0, cam: null, view: null,
+      dprCap: startCap(),
       stats: { waits: [], stolen: 0, caught: 0, helped: 0, extras: 0, good: 0, bad: 0, returns: 0, newRegulars: 0, rewards: 0, reducedSold: 0, knocked: 0, haul: false },
     };
     // wear and tear builds up over the season: scuffs on the floor, smudges on the windows
@@ -240,10 +268,12 @@ window.NeonShop = (() => {
     // passers-by who just walk past, so the street feels alive
     for (let i = 0; i < 4; i++) addPasser(Math.random());
     ambience.start();
+    layers = {};
     const loop = (now) => {
       if (!run) return;
-      const dt = Math.min(0.05, (now - run.last) / 1000);
+      const real = (now - run.last) / 1000, dt = Math.min(0.05, real);
       run.last = now;
+      if (real > 0 && real < 0.5) adaptQuality(run, real);
       step(dt);
       draw();
       ui.onTick(run);
@@ -1103,7 +1133,7 @@ window.NeonShop = (() => {
   // ---------- drawing ----------
   function draw() {
     const r = run, cv = r.ui.canvas;
-    const dpr = Math.min(window.devicePixelRatio || 1, 2), W = cv.clientWidth, H = cv.clientHeight;
+    const dpr = Math.min(window.devicePixelRatio || 1, r.dprCap || 2), W = cv.clientWidth, H = cv.clientHeight;
     if (!W || !H) return; // not laid out yet
     if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
     const ctx = cv.getContext('2d');
@@ -1135,18 +1165,26 @@ window.NeonShop = (() => {
     for (const p of r.people.filter(outside)) drawPerson(ctx, p, W, H, G);
     if (courier && outside(courier)) drawPerson(ctx, courier, W, H, G);
     for (const d of r.dogs) drawDog(ctx, d, W, H);
-    drawStorefront(ctx, W, H, G);
-    drawFloor(ctx, W, H);
-    UNITS.forEach((u, i) => { if (u.wall) drawUnit(ctx, u, i, W, H, G); });
-    drawFridge(ctx, W, H);
+    // the still parts come from cached layers (not when zoomed in, so they stay sharp)
+    const cache = r.zoom.z < 1.05, K = `${W}x${H}@${dpr}`, k = dayK(), night = nightAt(k);
+    if (cache) {
+      const open = !r.closed && r.intro <= 0.3;
+      blit(ctx, layer('back', [K, r.b.wear.smudges.length, r.b.wear.scuffs.length, open, onSale(), Math.round(night * 10), k > 0.6, Math.round(r.lights * 5), r.power, r.decor.sign.id, r.decor.floor.id, r.weather].join('|'),
+        (g) => { drawStorefront(g, W, H, G, 'static'); drawFloor(g, W, H); }, [0, 0, W, L.counter * H + 2]));
+      drawStorefront(ctx, W, H, G, 'live');
+    } else { drawStorefront(ctx, W, H, G); drawFloor(ctx, W, H); }
+    UNITS.forEach((u, i) => { if (u.wall) drawUnitCached(ctx, u, i, W, H, G, cache); });
+    if (cache) blit(ctx, layer('fridge', K, (g) => drawFridge(g, W, H), [(FRIDGE.x0 - 0.06) * W, (FRIDGE.top - 0.02) * H, (FRIDGE.x1 - FRIDGE.x0 + 0.1) * W, (FRIDGE.base - FRIDGE.top + 0.04) * H]));
+    else drawFridge(ctx, W, H);
     drawDoor(ctx, W, H);
     drawShutters(ctx, W, H);
-    drawSideWalls(ctx, W, H);
-    drawLamps(ctx, W, H);
+    if (cache) {
+      blit(ctx, layer('walls', [K, r.decor.walls.id, r.b.tier, Math.round(night * 10), Math.round(r.lights * 10)].join('|'), (g) => { drawSideWalls(g, W, H); drawLamps(g, W, H); }, [0, 0, W, 0.68 * H]));
+    } else { drawSideWalls(ctx, W, H); drawLamps(ctx, W, H); }
 
     // inside: shelf islands, the stock pile and people, far to near
     const items = [];
-    UNITS.forEach((u, i) => { if (!u.wall) items.push({ y: u.base, draw: () => drawUnit(ctx, u, i, W, H, G) }); });
+    UNITS.forEach((u, i) => { if (!u.wall) items.push({ y: u.base, draw: () => drawUnitCached(ctx, u, i, W, H, G, cache) }); });
     items.push({ y: PILE.y, draw: () => drawPile(ctx, W, H, G) });
     const plants = r.decor.plants.id;
     for (const [kind, x, y] of holidayProps()) items.push({ y, draw: () => drawHolidayProp(ctx, kind, x, y, W, H) });
@@ -1185,7 +1223,10 @@ window.NeonShop = (() => {
       ctx.strokeStyle = `rgba(255,210,63,${0.5 + 0.4 * Math.sin(r.t * 8)})`; ctx.lineWidth = 3;
       ctx.beginPath(); ctx.ellipse(front.x * W, front.y * H, s * 0.5, s * 0.16, 0, 0, Math.PI * 2); ctx.stroke();
     }
-    drawCounter(ctx, W, H, G);
+    if (cache) {
+      blit(ctx, layer('counter', K, (g) => drawCounter(g, W, H, G, 'static'), [0, (L.counter - 0.07) * H, W, (1 - L.counter + 0.07) * H]));
+      drawCounter(ctx, W, H, G, 'live');
+    } else drawCounter(ctx, W, H, G);
     // the receipt, torn off and handed over
     for (const fx of r.effects) {
       if (fx.kind !== 'receipt' || !r.printerXY) continue;
@@ -1264,22 +1305,27 @@ window.NeonShop = (() => {
   function drawStreet(ctx, W, H) {
     const r = run, F = FRONT, k = dayK(), night = nightAt(k);
     // sky and the buildings across the road
-    let [top, bot] = skyAt(k);
-    const grey = r.weather === 'rain' || r.weather === 'snow' ? 0.55 : r.weather === 'cloudy' ? 0.3 : 0;
-    if (grey) { top = mix(rgbHex(top), '#5b6070', grey); bot = mix(rgbHex(bot), '#7a7f8c', grey); }
-    let g = ctx.createLinearGradient(0, F.glass * H, 0, F.road0 * H);
-    g.addColorStop(0, top); g.addColorStop(1, bot);
-    ctx.fillStyle = g; ctx.fillRect(0, F.glass * H, W, (F.road0 - F.glass) * H + 1);
-    // clouds drifting by
+    const sky = (ctx) => {
+      let [top, bot] = skyAt(k);
+      const grey = r.weather === 'rain' || r.weather === 'snow' ? 0.55 : r.weather === 'cloudy' ? 0.3 : 0;
+      if (grey) { top = mix(rgbHex(top), '#5b6070', grey); bot = mix(rgbHex(bot), '#7a7f8c', grey); }
+      const g = ctx.createLinearGradient(0, F.glass * H, 0, F.road0 * H);
+      g.addColorStop(0, top); g.addColorStop(1, bot);
+      ctx.fillStyle = g; ctx.fillRect(0, F.glass * H, W, (F.road0 - F.glass) * H + 1);
+      for (const b of r.skyline) {
+        const x = b.x * W, w = b.w * W, bt = (F.road0 - b.h) * H, bb = F.road0 * H;
+        ctx.fillStyle = mix('#5d6f8f', '#1c0a3a', night); ctx.fillRect(x, bt, w, bb - bt);
+        ctx.fillStyle = night > 0.3 ? (b.lit > 0.5 ? `rgba(255,210,63,${0.6 * night})` : `rgba(5,217,232,${0.5 * night})`) : `rgba(200,230,255,${0.35 * (1 - night)})`;
+        for (let wy = bt + 4; wy < bb - 4; wy += 7) for (let wx = x + 3; wx < x + w - 3; wx += 6) if (((wx * 7 + wy * 3) | 0) % 5 < 2) ctx.fillRect(wx, wy, 2, 3);
+      }
+    };
+    let g;
+    if (r.zoom.z < 1.05) blit(ctx, layer('sky', [W, H, r.dpr, Math.round(k * 60), r.weather].join('|'), sky, [0, F.glass * H, W, (F.road0 - F.glass) * H + 1]));
+    else sky(ctx);
+    // clouds drifting by (in front of the buildings, as seen from inside)
     for (const c of r.clouds) {
       ctx.fillStyle = r.weather === 'rain' || r.weather === 'snow' ? 'rgba(90,95,110,.7)' : `rgba(255,255,255,${0.5 - night * 0.35})`;
       for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.ellipse((c.x + c.w * (i - 1) * 0.3) * W, c.y * H, c.w * W * 0.3, H * 0.012, 0, 0, Math.PI * 2); ctx.fill(); }
-    }
-    for (const b of r.skyline) {
-      const x = b.x * W, w = b.w * W, bt = (F.road0 - b.h) * H, bb = F.road0 * H;
-      ctx.fillStyle = mix('#5d6f8f', '#1c0a3a', night); ctx.fillRect(x, bt, w, bb - bt);
-      ctx.fillStyle = night > 0.3 ? (b.lit > 0.5 ? `rgba(255,210,63,${0.6 * night})` : `rgba(5,217,232,${0.5 * night})`) : `rgba(200,230,255,${0.35 * (1 - night)})`;
-      for (let wy = bt + 4; wy < bb - 4; wy += 7) for (let wx = x + 3; wx < x + w - 3; wx += 6) if (((wx * 7 + wy * 3) | 0) % 5 < 2) ctx.fillRect(wx, wy, 2, 3);
     }
     drawAcross(ctx, W, H, night);
     // road with lane markings and passing cars
@@ -1350,6 +1396,35 @@ window.NeonShop = (() => {
     if (v.state === 'parked' && Math.sin(run.t * 6) > 0) { ctx.fillStyle = '#ffb000'; ctx.fillRect(left + w - 3, base - h * 0.5, 3, 3); } // hazard lights
   }
 
+  // ---------- cached layers ----------
+  // Parts of the picture that rarely change (the floor, walls, shelves, shop front, counter) are
+  // painted once into an off-screen canvas and copied in each frame; each is repainted only when
+  // its key (what it depends on) changes.
+  let layers = {};
+  function layer(name, key, paint, box) {
+    const dpr = run.dpr, [bx, by, bw, bh] = box;
+    let ly = layers[name];
+    if (!ly || ly.key !== key) {
+      const c = (ly && ly.c) || document.createElement('canvas');
+      c.width = Math.max(1, Math.ceil(bw * dpr)); c.height = Math.max(1, Math.ceil(bh * dpr));
+      const g = c.getContext('2d');
+      g.setTransform(dpr, 0, 0, dpr, -bx * dpr, -by * dpr);
+      g.clearRect(bx, by, bw, bh);
+      g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+      paint(g);
+      ly = layers[name] = { c, key, box };
+    }
+    return ly;
+  }
+  const blit = (ctx, ly) => ctx.drawImage(ly.c, ly.box[0], ly.box[1], ly.box[2], ly.box[3]);
+  // a shelving unit: cached until its packs, stickers or price change
+  function drawUnitCached(ctx, u, ui, W, H, G, cache) {
+    const r = run, mine = r.slots.filter((sl) => sl.u === ui);
+    if (!cache || onSale() || mine.some((sl) => sl.pop > 0)) { drawUnit(ctx, u, ui, W, H, G); return; }
+    const key = [W, H, r.dpr, T.shelfPrice(r.s, r.b), mine.map((sl) => sl.n + (r.stickers.has(sl) ? 's' : '')).join(',')].join('|');
+    blit(ctx, layer('unit' + ui, key, (g) => drawUnit(g, u, ui, W, H, G), [(u.x0 - 0.05) * W, (u.top - 0.07) * H, (u.x1 - u.x0 + 0.1) * W, (u.base - u.top + 0.13) * H]));
+  }
+
   // textures (bricks, pegboard) are drawn once into a small tile and repeated
   const patterns = {};
   function pattern(ctx, name, w, h, paint) {
@@ -1380,11 +1455,12 @@ window.NeonShop = (() => {
   }
 
   const onSale = () => (run.b.mult || T.RETAIL) < T.RETAIL - 0.001;
-  function drawStorefront(ctx, W, H, G) {
+  // part: 'static' draws what rarely changes (cached), 'live' what moves; both when left out
+  function drawStorefront(ctx, W, H, G, part) {
     const r = run, F = FRONT, night = nightAt(dayK()), art = window.NeonShopArt;
-    const gy0 = F.glass * H, gy1 = F.sill * H;
+    const gy0 = F.glass * H, gy1 = F.sill * H, S = part !== 'live', LV = part !== 'static';
     // the glass: a faint tint and reflections
-    for (const [a, b] of F.windows) {
+    if (S) for (const [a, b] of F.windows) {
       const x0 = a * W, x1 = b * W;
       ctx.fillStyle = 'rgba(140,210,255,.06)'; ctx.fillRect(x0, gy0, x1 - x0, gy1 - gy0);
       ctx.fillStyle = 'rgba(255,255,255,.06)';
@@ -1393,13 +1469,13 @@ window.NeonShop = (() => {
       poly(ctx, [[x0 + k * 0.27, gy0], [x0 + k * 0.31, gy0], [x0 + k * 0.17, gy1], [x0 + k * 0.13, gy1]]); ctx.fill();
     }
     // greasy smudges build up on the glass until the clerk wipes them
-    for (const [wi, u, v] of r.b.wear.smudges) {
+    if (S) for (const [wi, u, v] of r.b.wear.smudges) {
       const [a, b] = F.windows[wi], sx = (a + (b - a) * u) * W, sy = gy0 + (gy1 - gy0) * v;
       const sg = ctx.createRadialGradient(sx, sy, 0, sx, sy, H * 0.018);
       sg.addColorStop(0, 'rgba(230,230,240,.22)'); sg.addColorStop(1, 'rgba(230,230,240,0)');
       ctx.fillStyle = sg; ctx.fillRect(sx - H * 0.018, sy - H * 0.018, H * 0.036, H * 0.036);
     }
-    if (r.weather === 'rain') { // drops running down the windows
+    if (LV && r.weather === 'rain') { // drops running down the windows
       ctx.fillStyle = 'rgba(220,235,255,.5)';
       for (const [u, v, d] of r.drops) {
         const wi = u < 0.5 ? 0 : 1, [a, b] = F.windows[wi], sx = (a + (b - a) * ((u * 2) % 1)) * W, sy = gy0 + (gy1 - gy0) * ((v + r.t * 0.04 * d) % 1);
@@ -1407,7 +1483,7 @@ window.NeonShop = (() => {
       }
     }
     // window stickers: OPEN sign hanging in the left window, a poster in the right one
-    {
+    if (S) {
       const cx = W * BX(0.115), cy = (F.transom + 0.026) * H, sw = W * 0.13, sh = H * 0.026;
       ctx.strokeStyle = 'rgba(200,200,220,.5)'; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(cx - sw * 0.3, F.transom * H); ctx.lineTo(cx - sw * 0.3, cy - sh / 2); ctx.moveTo(cx + sw * 0.3, F.transom * H); ctx.lineTo(cx + sw * 0.3, cy - sh / 2); ctx.stroke();
@@ -1425,15 +1501,18 @@ window.NeonShop = (() => {
       ctx.fillText(sale ? 'SALE!' : 'FRESH!', px, py + ph * 0.9);
     }
     // bulkhead over the windows with the shop's name
-    let g = ctx.createLinearGradient(0, 0, 0, gy0);
-    if (r.b.tier === 0) { g.addColorStop(0, '#5a3a22'); g.addColorStop(1, '#3d2716'); } // a painted wooden board for a little stall
-    else { g.addColorStop(0, '#140628'); g.addColorStop(1, '#22093f'); }
-    ctx.fillStyle = g; ctx.fillRect(0, 0, W, gy0);
-    if (r.b.tier === 0) { ctx.fillStyle = 'rgba(0,0,0,.18)'; for (let y = 6; y < gy0; y += 7) ctx.fillRect(0, y, W, 1); }
-    drawMarquee(ctx, W, H, gy0);
+    if (S) {
+      const g = ctx.createLinearGradient(0, 0, 0, gy0);
+      if (r.b.tier === 0) { g.addColorStop(0, '#5a3a22'); g.addColorStop(1, '#3d2716'); } // a painted wooden board for a little stall
+      else { g.addColorStop(0, '#140628'); g.addColorStop(1, '#22093f'); }
+      ctx.fillStyle = g; ctx.fillRect(0, 0, W, gy0);
+      if (r.b.tier === 0) { ctx.fillStyle = 'rgba(0,0,0,.18)'; for (let y = 6; y < gy0; y += 7) ctx.fillRect(0, y, W, 1); }
+    }
+    if (LV) drawMarquee(ctx, W, H, gy0);
     ctx.font = `900 ${Math.round(Math.min(H * 0.026, W * 0.045))}px system-ui, sans-serif`;
     { const want = W * 0.6, have = ctx.measureText(`${G.icon} ${G.name.toUpperCase()} · ${T.STALLS[r.b.tier].name.toUpperCase()}`).width; if (have > want) ctx.font = `900 ${Math.round(Math.min(H * 0.026, W * 0.045) * want / have)}px system-ui, sans-serif`; }
     const sg = r.decor.sign, label = `${G.icon} ${G.name.toUpperCase()} · ${T.STALLS[r.b.tier].name.toUpperCase()}`;
+    if (sg.rainbow ? LV : S) { // the sign's lettering (a rainbow sign shimmers, so it's drawn live)
     if (sg.rainbow) {
       const tw = ctx.measureText(label).width, rg = ctx.createLinearGradient(W / 2 - tw / 2, 0, W / 2 + tw / 2, 0);
       ['#ff2a6d', '#ffd23f', '#4ade80', '#05d9e8', '#9b5de5'].forEach((c, i) => rg.addColorStop((i / 4 + r.t * 0.1) % 1, c));
@@ -1442,9 +1521,11 @@ window.NeonShop = (() => {
     ctx.shadowColor = sg.glow; ctx.shadowBlur = r.b.tier === 0 ? 0 : (4 + 8 * night) * r.lights * (r.power ? 0 : 1);
     ctx.fillText(label, W / 2, L.sign * H * 0.68);
     ctx.shadowBlur = 0;
-    ctx.fillStyle = '#ff2a6d'; ctx.fillRect(0, gy0 - 3, W, 2);
+    }
+    if (S) { ctx.fillStyle = '#ff2a6d'; ctx.fillRect(0, gy0 - 3, W, 2); }
     // a wall clock showing the time, and a security camera in the corner
-    art.clock(ctx, W * BX(0.93), gy0 * 0.5, gy0 * 0.36, OPEN_H + dayK() * (CLOSE_H - OPEN_H));
+    if (LV) art.clock(ctx, W * BX(0.93), gy0 * 0.5, gy0 * 0.36, OPEN_H + dayK() * (CLOSE_H - OPEN_H));
+    if (!S) { art.camera(ctx, W * BX(0.05), gy0 - 2, H * 0.03, r.t); drawHoliday(ctx, W, H, gy0); return; }
     // brick piers, and the wall under the windows
     for (const [a, b] of F.piers) bricks(ctx, a * W, gy0 - 1, b * W, L.door * H);
     for (const [a, b] of F.windows) bricks(ctx, a * W, gy1, b * W, L.door * H);
@@ -1459,8 +1540,7 @@ window.NeonShop = (() => {
       ctx.fillStyle = '#cfc8e6'; ctx.fillRect(x0 - 2, gy1 - 2, x1 - x0 + 4, 4);
       ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillRect(x0 - 2, gy1 + 2, x1 - x0 + 4, 2);
     }
-    art.camera(ctx, W * BX(0.05), gy0 - 2, H * 0.03, r.t);
-    drawHoliday(ctx, W, H, gy0);
+    if (LV) { art.camera(ctx, W * BX(0.05), gy0 - 2, H * 0.03, r.t); drawHoliday(ctx, W, H, gy0); }
     ctx.font = `${Math.round(gy0 * 0.55)}px system-ui, sans-serif`; ctx.fillStyle = '#fff';
     ctx.fillText(T.WEATHER[r.weather].icon, W * BX(0.07), gy0 * 0.72); // today's weather, at the far end of the sign board
   }
@@ -2209,11 +2289,15 @@ window.NeonShop = (() => {
     ctx.beginPath(); ctx.moveTo(x0, y0); ctx.lineTo(x0 + w * 0.35, y0); ctx.lineTo(x0, y0 + h * 0.6); ctx.closePath(); ctx.fill();
   }
 
-  function drawCounter(ctx, W, H, G) {
-    const r = run, far = L.counter * H, near = far + H * 0.075;
+  // part: 'static' (cached) or 'live', like the shop front
+  function drawCounter(ctx, W, H, G, part) {
+    const r = run, far = L.counter * H, near = far + H * 0.075, S = part !== 'live', LV = part !== 'static';
     const f = (near - far) / (near - VP_Y * H);
     // a point on the counter top: u across (0 left, 1 right), v from our edge (0) to the shoppers' edge (1)
     const P = (u, v) => toVP(-0.02 * W + u * 1.04 * W, near, f * v, W, H);
+    const pr = P(0.4, 0.07), cr = P(0.575, 0.8), serving = r.people.find((x) => x.state === 'serving');
+    r.printerXY = [pr[0], pr[1] - 12];
+    if (S) {
     // stone counter top with speckles
     let g = ctx.createLinearGradient(0, far, 0, near);
     g.addColorStop(0, '#8b82ad'); g.addColorStop(1, '#cec7e6');
@@ -2231,6 +2315,22 @@ window.NeonShop = (() => {
       ctx.strokeStyle = 'rgba(255,255,255,.14)'; ctx.lineWidth = 1.5; ctx.strokeRect(dx, dy, dw, dh);
       ctx.fillStyle = 'rgba(255,255,255,.35)'; ctx.fillRect(dx + dw / 2 - 10, dy + dh * 0.4, 20, 3);
     }
+    // conveyor belt, rollers, the scanner, the receipt printer, the card reader and the bagging stand
+    ctx.fillStyle = '#16121c'; poly(ctx, [P(0.05, 0.85), P(0.45, 0.85), P(0.45, 0.15), P(0.05, 0.15)]); ctx.fill();
+    ctx.fillStyle = '#9aa0b5';
+    for (const u of [0.05, 0.45]) { poly(ctx, [P(u - 0.006, 0.88), P(u + 0.006, 0.88), P(u + 0.006, 0.12), P(u - 0.006, 0.12)]); ctx.fill(); }
+    ctx.fillStyle = '#3a3f4f'; poly(ctx, [P(0.47, 0.8), P(0.57, 0.8), P(0.57, 0.2), P(0.47, 0.2)]); ctx.fill();
+    ctx.fillStyle = 'rgba(5,217,232,.35)'; poly(ctx, [P(0.48, 0.72), P(0.56, 0.72), P(0.56, 0.28), P(0.48, 0.28)]); ctx.fill();
+    ctx.fillStyle = '#2a2a35'; roundRect(ctx, pr[0] - 12, pr[1] - 11, 24, 11, 2); ctx.fill();
+    ctx.fillStyle = '#0b0b10'; ctx.fillRect(pr[0] - 8, pr[1] - 11, 16, 2);
+    ctx.fillStyle = '#1b1b24'; roundRect(ctx, cr[0] - 9, cr[1] - 16, 18, 20, 3); ctx.fill();
+    const bs = P(0.955, 0.5), bw = W * 0.035;
+    ctx.fillStyle = '#9aa0b5'; ctx.fillRect(bs[0] - bw, bs[1] - H * 0.045, 2, H * 0.045); ctx.fillRect(bs[0] + bw, bs[1] - H * 0.045, 2, H * 0.045);
+    ctx.fillRect(bs[0] - bw, bs[1] - H * 0.045, bw * 2 + 2, 2);
+    ctx.fillStyle = '#c99a5b'; ctx.fillRect(bs[0] - bw * 0.7, bs[1] - H * 0.04, bw * 1.4, H * 0.038);
+    ctx.fillStyle = '#a87a40'; ctx.fillRect(bs[0] - bw * 0.7, bs[1] - H * 0.04, bw * 1.4, 3);
+    }
+    if (!LV) return;
     // cash drawer: slides open when you take money
     {
       const out = r.drawer > 0 ? Math.min(1, r.drawer * 4) : 0;
@@ -2243,19 +2343,13 @@ window.NeonShop = (() => {
       ctx.strokeStyle = 'rgba(255,255,255,.2)'; ctx.lineWidth = 1.5; ctx.strokeRect(dx, dy, dw, dh);
       ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.arc(dx + dw / 2, dy + dh * 0.5, 3, 0, Math.PI * 2); ctx.fill();
     }
-    // conveyor belt
-    ctx.fillStyle = '#16121c'; poly(ctx, [P(0.05, 0.85), P(0.45, 0.85), P(0.45, 0.15), P(0.05, 0.15)]); ctx.fill();
+    // the belt moves while scanning
     ctx.strokeStyle = 'rgba(255,255,255,.09)'; ctx.lineWidth = 1;
     for (let k = 0; k < 20; k++) {
       const u = 0.05 + ((k * 0.02 + r.belt * 0.08) % 0.4);
       ctx.beginPath(); ctx.moveTo(...P(u, 0.85)); ctx.lineTo(...P(u, 0.15)); ctx.stroke();
     }
-    ctx.fillStyle = '#9aa0b5';
-    for (const u of [0.05, 0.45]) { poly(ctx, [P(u - 0.006, 0.88), P(u + 0.006, 0.88), P(u + 0.006, 0.12), P(u - 0.006, 0.12)]); ctx.fill(); }
-    // scanner window, with a laser while scanning
-    const serving = r.people.find((x) => x.state === 'serving');
-    ctx.fillStyle = '#3a3f4f'; poly(ctx, [P(0.47, 0.8), P(0.57, 0.8), P(0.57, 0.2), P(0.47, 0.2)]); ctx.fill();
-    ctx.fillStyle = 'rgba(5,217,232,.35)'; poly(ctx, [P(0.48, 0.72), P(0.56, 0.72), P(0.56, 0.28), P(0.48, 0.28)]); ctx.fill();
+    // the scanner's laser
     if (serving && Math.sin(r.t * 40) > -0.3) {
       ctx.strokeStyle = '#ff3b3b'; ctx.lineWidth = 2; ctx.shadowColor = '#ff3b3b'; ctx.shadowBlur = 8;
       ctx.beginPath(); ctx.moveTo(...P(0.48, 0.5)); ctx.lineTo(...P(0.56, 0.5)); ctx.stroke(); ctx.shadowBlur = 0;
@@ -2268,11 +2362,7 @@ window.NeonShop = (() => {
         window.NeonShopArt.pack(ctx, r.b.good, p[0], p[1] + 3, H * 0.026, i, r.dpr);
       }
     }
-    // receipt printer: the receipt rolls out while scanning
-    const pr = P(0.4, 0.07);
-    ctx.fillStyle = '#2a2a35'; roundRect(ctx, pr[0] - 12, pr[1] - 11, 24, 11, 2); ctx.fill();
-    ctx.fillStyle = '#0b0b10'; ctx.fillRect(pr[0] - 8, pr[1] - 11, 16, 2);
-    r.printerXY = [pr[0], pr[1] - 12];
+    // the receipt rolls out of the printer while scanning
     {
       const paid = r.lastSale && r.t - r.lastSale.t < 0.15;
       const k = serving ? clamp(1 - serving.timer / (serving.serveDur || 0.5), 0, 1) : paid ? 1 : 0;
@@ -2282,18 +2372,10 @@ window.NeonShop = (() => {
         ctx.fillStyle = '#c4c4c4'; for (let y = pr[1] - 14; y > pr[1] - 11 - len + 2; y -= 3) ctx.fillRect(pr[0] - 4, y, 8, 1);
       }
     }
-    // card reader
-    const cr = P(0.575, 0.8);
-    ctx.fillStyle = '#1b1b24'; roundRect(ctx, cr[0] - 9, cr[1] - 16, 18, 20, 3); ctx.fill();
+    // the card reader's light
     ctx.fillStyle = r.lastSale && r.lastSale.method === 'card' && r.t - r.lastSale.t < 1.6 ? '#4ade80' : '#1e3a2a'; ctx.fillRect(cr[0] - 6, cr[1] - 13, 12, 6);
     // till screen on a stand, facing you: the sale being rung up, then PAID
     drawPOS(ctx, P(0.74, 0.45), W, H, G, serving);
-    // bagging stand with paper bags
-    const bs = P(0.955, 0.5), bw = W * 0.035;
-    ctx.fillStyle = '#9aa0b5'; ctx.fillRect(bs[0] - bw, bs[1] - H * 0.045, 2, H * 0.045); ctx.fillRect(bs[0] + bw, bs[1] - H * 0.045, 2, H * 0.045);
-    ctx.fillRect(bs[0] - bw, bs[1] - H * 0.045, bw * 2 + 2, 2);
-    ctx.fillStyle = '#c99a5b'; ctx.fillRect(bs[0] - bw * 0.7, bs[1] - H * 0.04, bw * 1.4, H * 0.038);
-    ctx.fillStyle = '#a87a40'; ctx.fillRect(bs[0] - bw * 0.7, bs[1] - H * 0.04, bw * 1.4, 3);
     // you and your helpers, behind the counter
     const sellerS = H * 0.13;
     const staffXs = [0.2, 0.8, 0.08, 0.92];
@@ -2346,7 +2428,7 @@ window.NeonShop = (() => {
   };
 
   return {
-    open, serve, refill, order, setPrice, closeEarly, clock, frontWaiting, stockInfo, pointerDown, pointerMove, pointerUp, tap, zoomBy, panBy, resetZoom,
+    getGfx, setGfx, open, serve, refill, order, setPrice, closeEarly, clock, frontWaiting, stockInfo, pointerDown, pointerMove, pointerUp, tap, zoomBy, panBy, resetZoom,
     toggleTill2, resolveReturn, pendingReturn: () => !!(run && run.pendingReturn), active: () => !!run, current: () => run,
   };
 })();
