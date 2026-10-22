@@ -49,6 +49,14 @@ crowd. The shop front grows with the stall, and you can pinch to zoom and tap sh
 they are. Shelf prices you set also drive the
 automatic sales on the other days: a higher price earns more per sale, but fewer shoppers buy.
 
+The shop is drawn in real 3D with [three.js](https://threejs.org/) (`market/shop3d.js`, with three.js
+0.170 vendored in `market/vendor/` under its MIT licence). You look into it from above, like a dollhouse:
+shelving with rows of packs several deep, the fridge, the till with its live screen, staff and shoppers as
+little 3D figures, and the street, van, parade and weather outside. The simulation in `shop.js` is shared
+by both views, and speech bubbles, patience bars and labels are drawn over the 3D scene. Pinch to zoom,
+drag to look around. Phones without WebGL (or anyone who picks 🖼️ Classic under Decorate → Shop view)
+get the drawn 2D shop.
+
 Challenges: after a season, share a link; your friend plays the same seed (same prices, news and share
 moves) and sees your net worth next to theirs all season.
 

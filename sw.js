@@ -1,6 +1,6 @@
 // One service worker for the whole arcade: the launcher and every game, so it all works offline.
 // Bump VERSION whenever any file changes so phones pick up the update.
-const VERSION = 'neon-arcade-v12';
+const VERSION = 'neon-arcade-v13';
 const FILES = [
   './',
   'index.html',
@@ -23,6 +23,8 @@ const FILES = [
   'market/engine.js',
   'market/shopart.js',
   'market/shop.js',
+  'market/shop3d.js',
+  'market/vendor/three.module.min.js',
   'market/ui.js',
   'runner/icons/icon-192.png',
   'runner/icons/icon-512.png',

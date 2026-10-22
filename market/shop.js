@@ -56,6 +56,12 @@ window.NeonShop = (() => {
   const GFX_KEY = 'neonTycoon.gfx', GFX_AUTO_KEY = 'neonTycoon.gfxAuto';
   const getGfx = () => { try { return localStorage.getItem(GFX_KEY) || 'auto'; } catch { return 'auto'; } };
   function setGfx(mode) { try { localStorage.setItem(GFX_KEY, mode); localStorage.removeItem(GFX_AUTO_KEY); } catch { /* ignore */ } if (run) run.dprCap = startCap(); }
+  // the shop in 3D (WebGL), or the classic drawn view
+  const VIEW_KEY = 'neonTycoon.view';
+  const has3D = () => !!(window.NeonShop3D && window.NeonShop3D.supported());
+  const getView = () => { let v = '3d'; try { v = localStorage.getItem(VIEW_KEY) || '3d'; } catch { /* ignore */ } return v === '3d' && !has3D() ? '2d' : v; };
+  function setView(v) { try { localStorage.setItem(VIEW_KEY, v); } catch { /* ignore */ } }
+  let r3dCache = null; // one WebGL renderer, reused day after day
   function startCap() {
     const mode = getGfx();
     if (mode === 'high') return 2;
@@ -269,15 +275,20 @@ window.NeonShop = (() => {
     for (let i = 0; i < 4; i++) addPasser(Math.random());
     ambience.start();
     layers = {};
+    if (ui.canvas3d && getView() === '3d') {
+      try { r3dCache = r3dCache || window.NeonShop3D.create(ui.canvas3d); r3dCache.attach(run); run.r3d = r3dCache; }
+      catch (e) { console.warn('3D shop unavailable', e); run.r3d = null; ui.canvas3d.style.display = 'none'; }
+    } else if (ui.canvas3d) ui.canvas3d.style.display = 'none';
     const loop = (now) => {
       if (!run) return;
       const real = (now - run.last) / 1000, dt = Math.min(0.05, real);
       run.last = now;
       if (real > 0 && real < 0.5) adaptQuality(run, real);
       step(dt);
-      draw();
+      markStickers();
+      if (run.r3d) { run.r3d.render(dt); drawOverlay3D(); } else draw();
       ui.onTick(run);
-      if (run && run.done) { ambience.stop(); const sum = summary(); const cb = ui.onEnd; run = null; cb(sum); return; }
+      if (run && run.done) { if (run.r3d) run.r3d.detach(); ambience.stop(); const sum = summary(); const cb = ui.onEnd; run = null; cb(sum); return; }
       run.raf = requestAnimationFrame(loop);
     };
     run.raf = requestAnimationFrame(loop);
@@ -424,7 +435,7 @@ window.NeonShop = (() => {
       pool.sort((a, c) => Math.abs(a.x - p.x) - Math.abs(c.x - p.x) || c.row - a.row);
       const sl = pool[0], t = Math.min(need, sl.n);
       sl.n -= t; need -= t; p.basket += t;
-      if (flies < 4) run.effects.push({ kind: 'fly', x: sl.x, y: sl.y, to: p, t: -flies * 0.12, dur: 0.38 });
+      if (flies < 4) run.effects.push({ kind: 'fly', x: sl.x, y: sl.y, sl, to: p, t: -flies * 0.12, dur: 0.38 });
       flies++;
     }
     p.state = 'pick'; p.timer = 0.45 + Math.min(4, flies) * 0.12; p.facing = 'back';
@@ -1037,11 +1048,15 @@ window.NeonShop = (() => {
   // ---------- touch: catch a shoplifter, help a shopper, drag a box, or serve ----------
   // a point on screen to a point in the shop, undoing the zoom and camera
   const toWorld = (x, y) => {
-    if (!run.inv || !window.DOMPoint) return [x, y];
+    if (run.r3d || !run.inv || !window.DOMPoint) return [x, y];
     const q = run.inv.transformPoint(new DOMPoint(x * run.dpr, y * run.dpr));
     return [q.x, q.y];
   };
   function personAt(wx, wy, W, H, test) {
+    if (run.r3d) { // wx, wy are on the screen
+      const hits3 = run.people.filter((p) => { if (!test(p)) return false; const [x, y, s] = onScreen(p); return Math.abs(wx - x) < s * 0.6 && wy < y + 6 && wy > y - s * 2.1; });
+      return hits3.sort((a, b) => b.y - a.y)[0];
+    }
     const hits = run.people.filter((p) => test(p) && Math.abs(wx - (p.x + (p.ox || 0)) * W) < scaleAt(p.y, H) * 0.6 && wy < p.y * H + 6 && wy > p.y * H - scaleAt(p.y, H) * 2.1);
     return hits.sort((a, b) => b.y - a.y)[0];
   }
@@ -1050,6 +1065,11 @@ window.NeonShop = (() => {
     const r = run;
     if (!r || r.intro > 0 || r.ending) return 'none';
     const W = r.ui.canvas.clientWidth, H = r.ui.canvas.clientHeight, [wx, wy] = toWorld(x, y);
+    if (r.r3d) {
+      const [px, py, ppm] = r.r3d.project(PILE.x, PILE.y, 0.4);
+      if (r.pile > 0 && Math.abs(x - px) < ppm * 0.9 && Math.abs(y - py) < ppm * 0.7) { r.drag = { x, y }; r.away = 99; return 'drag'; }
+      return 'none';
+    }
     const s = scaleAt(PILE.y, H);
     if (r.pile > 0 && Math.abs(wx - PILE.x * W) < s * 0.9 && wy < PILE.y * H + 8 && wy > PILE.y * H - s * 1.1) {
       r.drag = { x: wx, y: wy }; r.away = 99; // you leave the till to carry it
@@ -1073,23 +1093,25 @@ window.NeonShop = (() => {
   // pinch to zoom (1x to 2.4x) and drag to look around
   function zoomBy(f, sx, sy) {
     const r = run; if (!r) return;
+    if (r.r3d) { r.r3d.zoom(f, sx, sy); r.zoom.z = r.r3d.zoomLevel(); return; }
     const W = r.ui.canvas.clientWidth, H = r.ui.canvas.clientHeight, zm = r.zoom, z2 = clamp(zm.z * f, 1, 2.4);
     zm.tx = sx - ((sx - zm.tx) / zm.z) * z2; zm.ty = sy - ((sy - zm.ty) / zm.z) * z2; zm.z = z2;
     panBy(0, 0, W, H);
   }
   function panBy(dx, dy) {
     const r = run; if (!r) return;
+    if (r.r3d) { r.r3d.pan(dx, dy); return; }
     const W = r.ui.canvas.clientWidth, H = r.ui.canvas.clientHeight, zm = r.zoom;
     zm.tx = clamp(zm.tx + dx, W - W * zm.z, 0); zm.ty = clamp(zm.ty + dy, H - H * zm.z, 0);
   }
-  function resetZoom() { if (run) run.zoom = { z: 1, tx: 0, ty: 0 }; }
+  function resetZoom() { if (run) { run.zoom = { z: 1, tx: 0, ty: 0 }; if (run.r3d) run.r3d.resetView(); } }
   function pointerMove(x, y) { if (run && run.drag) { const [wx, wy] = toWorld(x, y); run.drag.x = wx; run.drag.y = wy; } }
   function pointerUp() {
     const r = run;
     if (!r || !r.drag) return 'none';
     const W = r.ui.canvas.clientWidth, H = r.ui.canvas.clientHeight, { x, y } = r.drag;
     r.drag = null; r.away = 0.8; // back to the till in a moment
-    const ui = UNITS.findIndex((u) => x >= u.x0 * W && x <= u.x1 * W && y >= (u.top - 0.05) * H && y <= (u.base + 0.04) * H);
+    const ui = r.r3d ? r.r3d.unitAt(x, y) : UNITS.findIndex((u) => x >= u.x0 * W && x <= u.x1 * W && y >= (u.top - 0.05) * H && y <= (u.base + 0.04) * H);
     if (ui < 0 || unitRoom(ui) <= 0) return 'none';
     let n = Math.min(r.pile, unitRoom(ui), r.cap * UNITS[ui].cols * 2);
     r.pile -= n;
@@ -1131,6 +1153,15 @@ window.NeonShop = (() => {
   const frontWaiting = () => !!(run && queue().some(atTill));
 
   // ---------- drawing ----------
+  // packs near their sell-by date carry a half-price sticker (the oldest are put out front)
+  function markStickers() {
+    const r = run;
+    r.stickers = new Set();
+    if (r.reduced > 0) {
+      let left = r.reduced;
+      for (const sl of r.slots.slice().sort((a, c) => a.row - c.row || a.u - c.u || a.x - c.x)) { if (left <= 0) break; if (sl.n > 0) { r.stickers.add(sl); left -= sl.n; } }
+    }
+  }
   function draw() {
     const r = run, cv = r.ui.canvas;
     const dpr = Math.min(window.devicePixelRatio || 1, r.dprCap || 2), W = cv.clientWidth, H = cv.clientHeight;
@@ -1141,12 +1172,6 @@ window.NeonShop = (() => {
     ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
     const G = T.G[r.b.good], art = window.NeonShopArt;
     r.dpr = dpr;
-    // packs near their sell-by date carry a half-price sticker (the oldest are put out front)
-    r.stickers = new Set();
-    if (r.reduced > 0) {
-      let left = r.reduced;
-      for (const sl of r.slots.slice().sort((a, c) => a.row - c.row || a.u - c.u || a.x - c.x)) { if (left <= 0) break; if (sl.n > 0) { r.stickers.add(sl); left -= sl.n; } }
-    }
 
     ctx.fillStyle = '#0d0420'; ctx.fillRect(0, 0, W, H);
     // a camera move: a short zoom on a big sale, or on the van arriving
@@ -1257,13 +1282,20 @@ window.NeonShop = (() => {
     ctx.globalAlpha = 1;
     drawInfo(ctx, W, H, G);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if (r.power) { ctx.fillStyle = 'rgba(5,2,15,.45)'; ctx.fillRect(0, 0, W, H); } // a power cut: just daylight from the windows
+    drawScreen(ctx, W, H);
+    ctx.textAlign = 'start';
+  }
+
+  // over everything, in screen space: a power cut, the rush badge, lights off, opening and closing
+  function drawScreen(ctx, W, H, lit) {
+    const r = run;
+    if (r.power && !lit) { ctx.fillStyle = 'rgba(5,2,15,.45)'; ctx.fillRect(0, 0, W, H); } // a power cut: just daylight from the windows
     if (!r.intro && !r.ending && !r.closed && rushRate(dayK()) / RUSH_AVG > 1.35) {
       ctx.fillStyle = 'rgba(255,90,40,.9)'; roundRect(ctx, 8, H * 0.29, 92, 18, 9); ctx.fill();
       ctx.fillStyle = '#fff'; ctx.font = '800 11px system-ui, sans-serif'; ctx.fillText('🔥 Rush hour!', 54, H * 0.29 + 13);
     }
     // lights off before opening and after closing
-    if (r.lights < 1) { ctx.fillStyle = `rgba(5,2,15,${(1 - r.lights) * 0.6})`; ctx.fillRect(0, 0, W, H); }
+    if (r.lights < 1 && !lit) { ctx.fillStyle = `rgba(5,2,15,${(1 - r.lights) * 0.6})`; ctx.fillRect(0, 0, W, H); }
     // counting the day's takings at closing
     if (r.ending && r.outro < 1.3) {
       const k = clamp(1 - (r.outro - 0.2) / 1.0, 0, 1), cy = H * 0.45;
@@ -1277,6 +1309,81 @@ window.NeonShop = (() => {
       ctx.fillStyle = 'rgba(255,255,255,.85)'; ctx.font = `800 ${Math.round(H * 0.024)}px system-ui, sans-serif`;
       ctx.fillText(r.intro > 0.9 ? '🔑 Opening up…' : '💡 Lights on!', W / 2, H * 0.45);
     }
+  }
+
+  // ---------- the 3D view: the shop itself is drawn by shop3d.js; this draws what goes over it ----------
+  // where a person stands on screen, and how big they are (s: about half their height in pixels)
+  function onScreen(p) {
+    const [x, y, ppm, vis] = run.r3d.project(p.x + (p.ox || 0), p.y, 0);
+    return [x, y, ppm * 0.9 * (p.child ? 0.66 : 1), vis];
+  }
+  function drawOverlay3D() {
+    const r = run, cv = r.ui.canvas, r3d = r.r3d;
+    const dpr = Math.min(window.devicePixelRatio || 1, r.dprCap || 2), W = cv.clientWidth, H = cv.clientHeight;
+    if (!W || !H) return;
+    if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    const ctx = cv.getContext('2d'), G = T.G[r.b.good], art = window.NeonShopArt;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); ctx.clearRect(0, 0, W, H);
+    ctx.textAlign = 'center'; ctx.textBaseline = 'alphabetic';
+    r.dpr = dpr;
+    // the front of the queue glows: tap to serve
+    const front = queue().find(atTill);
+    if (front) {
+      const [x, y, s] = onScreen(front);
+      ctx.strokeStyle = `rgba(255,210,63,${0.5 + 0.4 * Math.sin(r.t * 8)})`; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.ellipse(x, y, s * 0.5, s * 0.16, 0, 0, Math.PI * 2); ctx.stroke();
+    }
+    // badges, patience bars and speech bubbles; the clerk's STAFF tag
+    const all = r.people.concat([r.clerk]);
+    for (const p of all.sort((a, b) => a.y - b.y)) {
+      const [x, y, s, vis] = onScreen(p);
+      if (!vis || x < -40 || x > W + 40) continue;
+      drawTags(ctx, p, x, y, s, W, G);
+    }
+    // dust from dropped boxes
+    for (const d of r.dust) {
+      const [x, y] = r3d.project(d.x, PILE.y, 0.15 + (PILE.y - d.y) * 6);
+      ctx.fillStyle = `rgba(220,200,170,${0.5 * (1 - d.t / 0.6)})`;
+      ctx.beginPath(); ctx.arc(x, y, 2 + d.t * 10, 0, Math.PI * 2); ctx.fill();
+    }
+    // goods flying from the shelf (or the fridge) into a basket
+    for (const fx of r.effects) {
+      if (fx.kind !== 'fly' || fx.t < 0) continue;
+      const k = fx.t / fx.dur, [tx, ty, ts] = onScreen(fx.to);
+      const [x0, y0] = fx.sl ? r3d.slotOnScreen(fx.sl) : r3d.project(fx.x, L.door, 1.2), x1 = tx - ts * 0.34, y1 = ty - ts * 0.8;
+      art.pack(ctx, fx.item || r.b.good, x0 + (x1 - x0) * k, y0 + (y1 - y0) * k - Math.sin(k * Math.PI) * 18, H * 0.026, 0, dpr);
+    }
+    // the receipt, torn off and handed over
+    for (const fx of r.effects) {
+      if (fx.kind !== 'receipt') continue;
+      const k = fx.t / fx.dur, [tx, ty, ts] = onScreen(fx.to), [px, py] = r3d.project(0.3, L.counter, 1.15);
+      const x = px + (tx + ts * 0.3 - px) * k, y = py + (ty - ts * 1.6 - py) * k - Math.sin(k * Math.PI) * 20;
+      ctx.save(); ctx.translate(x, y); ctx.rotate(k * 3);
+      ctx.fillStyle = '#fff'; ctx.fillRect(-4, -6, 8, 12); ctx.fillStyle = '#bbb'; ctx.fillRect(-3, -3, 6, 1); ctx.fillRect(-3, 0, 6, 1);
+      ctx.restore();
+    }
+    // the box you're carrying, and the shelf it will go on
+    if (r.drag) {
+      const ui = r3d.unitAt(r.drag.x, r.drag.y);
+      if (ui >= 0) {
+        const rc = r3d.unitRect(ui);
+        ctx.strokeStyle = unitRoom(ui) > 0 ? '#4ade80' : '#ff6b6b'; ctx.lineWidth = 3; ctx.setLineDash([6, 4]);
+        ctx.strokeRect(rc[0] - 3, rc[1] - 3, rc[2] - rc[0] + 6, rc[3] - rc[1] + 6); ctx.setLineDash([]);
+      }
+      drawBox(ctx, r.drag.x, r.drag.y + 10, H * 0.05, G);
+    }
+    // floating messages: over a person or the till, or across the middle of the screen
+    ctx.font = `900 ${Math.round(H * 0.028)}px system-ui, sans-serif`;
+    for (const fx of r.effects) {
+      if (fx.kind !== 'text') continue;
+      const [x, y] = fx.x === 0.5 ? [W / 2, fx.y * H] : r3d.project(fx.x, clamp(fx.y + 0.1, L.enter, L.counter), 2.1);
+      ctx.globalAlpha = Math.max(0, 1 - fx.t);
+      ctx.fillStyle = fx.color || '#ffd23f';
+      ctx.fillText(fx.text, x, y - fx.t * 20);
+    }
+    ctx.globalAlpha = 1;
+    drawInfo(ctx, W, H, G, (p) => { const [x, y, s] = onScreen(p); return [x, y - s * 2.3]; });
+    drawScreen(ctx, W, H, true);
     ctx.textAlign = 'start';
   }
 
@@ -1800,14 +1907,14 @@ window.NeonShop = (() => {
     }
   }
   // an info card when you tap a shopper
-  function drawInfo(ctx, W, H, G) {
+  function drawInfo(ctx, W, H, G, head) {
     const r = run, p = r.info && r.info.p;
     if (!p || !r.people.includes(p)) return;
     const kinds = { regular: `⭐ Regular · ${p.reg ? p.reg.stamps || 0 : 0}/5 stamps`, rushed: '⏱️ In a hurry', bargain: '🏷️ Bargain hunter', tourist: '📸 Tourist', influencer: '📱 Influencer', returner: '🔁 Bringing something back' };
     const doing = { look: 'Browsing', consider: 'Reading the label', pick: 'Picking up', queue: 'In the queue', toQueue: 'Heading to the till', wait: 'Waiting for stock', help: 'Wants help', fridge: 'Getting a drink', enter: 'Walking round', leaving: 'Leaving', sneak: 'Heading for the door' }[p.state] || 'Shopping';
     const moodTxt = { happy: '😊 Happy', meh: '😐 So-so', angry: '😠 Annoyed', sad: '😢 Unhappy' }[p.mood] || '🙂 Fine';
     const lines = [`${p.name || 'Shopper'}`, kinds[p.type] || '🛍️ Shopper', `${doing} · ${moodTxt}`, `Wants ${p.qty}× ${G.icon}${p.basket ? ` · has ${p.basket}` : ''}`];
-    const s = scaleAt(p.y, H), x = clamp((p.x + (p.ox || 0)) * W, W * 0.22, W * 0.78), y = p.y * H - s * 2.3;
+    const s = scaleAt(p.y, H), hd = head ? head(p) : [(p.x + (p.ox || 0)) * W, p.y * H - s * 2.3], x = clamp(hd[0], W * 0.22, W * 0.78), y = hd[1];
     ctx.font = '700 11px system-ui, sans-serif';
     const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16, hh = lines.length * 14 + 10;
     ctx.globalAlpha = Math.min(1, r.info.t / 0.3);
@@ -2164,11 +2271,6 @@ window.NeonShop = (() => {
       ctx.beginPath(); ctx.moveTo(px + s * 0.18, py - s * 1.35); ctx.lineTo(hx, hy); ctx.stroke();
       ctx.fillStyle = SKIN[p.look.skin] || '#c68642'; ctx.beginPath(); ctx.arc(hx, hy, Math.max(2.5, s * 0.08), 0, Math.PI * 2); ctx.fill();
     }
-    // what kind of shopper (a small badge) when they're inside
-    if (p.badge && p.y > L.wall && p.state !== 'leaving' && !(p.bubble && p.bubbleT > 0)) {
-      ctx.font = `${p.reg ? 800 : 400} ${Math.round(Math.max(10, s * (p.reg ? 0.18 : 0.24)))}px system-ui, sans-serif`; ctx.fillStyle = p.reg ? '#ffd23f' : '#fff';
-      ctx.fillText(p.reg ? `⭐ ${p.name}` : p.badge, px + (p.reg ? 0 : s * 0.3), py - s * 1.85);
-    }
     // the clerk's cloth or mop while cleaning
     if (p.kind === 'clerk' && p.state === 'choring') {
       if (p.chore === 'wipe') {
@@ -2200,6 +2302,16 @@ window.NeonShop = (() => {
       ctx.beginPath(); ctx.arc(bx, by - bh / 2, bw * 0.36, Math.PI, 0); ctx.stroke();
     }
     if (p.bag) { ctx.font = `${Math.round(s * 0.45)}px system-ui, sans-serif`; ctx.fillStyle = '#fff'; ctx.fillText('🛍️', px + s * 0.35, py - s * 0.75); }
+    drawTags(ctx, p, px, py, s, W, G);
+  }
+
+  // name badges, the queue's patience bars and speech bubbles, over a person (both views)
+  function drawTags(ctx, p, px, py, s, W, G) {
+    // what kind of shopper (a small badge) when they're inside
+    if (p.badge && p.y > L.wall && p.state !== 'leaving' && !(p.bubble && p.bubbleT > 0)) {
+      ctx.font = `${p.reg ? 800 : 400} ${Math.round(Math.max(10, s * (p.reg ? 0.18 : 0.24)))}px system-ui, sans-serif`; ctx.fillStyle = p.reg ? '#ffd23f' : '#fff';
+      ctx.fillText(p.reg ? `⭐ ${p.name}` : p.badge, px + (p.reg ? 0 : s * 0.3), py - s * 1.85);
+    }
     // what they're buying, and how patient they are
     if (p.state === 'queue' || p.state === 'serving') {
       const k = Math.max(0, 1 - p.wait / p.patience);
@@ -2219,11 +2331,13 @@ window.NeonShop = (() => {
     return text + '…';
   }
 
-  function drawPOS(ctx, base, W, H, G, serving) {
+  // rect: draw just the screen into this rectangle (the 3D till uses it as a texture)
+  function drawPOS(ctx, base, W, H, G, serving, rect) {
     const r = run;
-    const sw = Math.min(W * 0.32, 200), sh = H * 0.125, sx = clamp(base[0] - sw / 2, 4, W - sw - 4), sy = base[1] - H * 0.014 - sh;
+    const sw = rect ? rect.w : Math.min(W * 0.32, 200), sh = rect ? rect.h : H * 0.125;
+    const sx = rect ? rect.x : clamp(base[0] - sw / 2, 4, W - sw - 4), sy = rect ? rect.y : base[1] - H * 0.014 - sh;
     // stand
-    ctx.fillStyle = '#2a2a35'; ctx.fillRect(base[0] - 3, sy + sh, 6, base[1] - sy - sh); ctx.fillRect(base[0] - 14, base[1] - 3, 28, 4);
+    if (!rect) { ctx.fillStyle = '#2a2a35'; ctx.fillRect(base[0] - 3, sy + sh, 6, base[1] - sy - sh); ctx.fillRect(base[0] - 14, base[1] - 3, 28, 4); }
     // bezel and screen
     ctx.fillStyle = '#0d0d14'; roundRect(ctx, sx, sy, sw, sh, 5); ctx.fill();
     const x0 = sx + 4, y0 = sy + 4, w = sw - 8, h = sh - 8, pad = w * 0.05;
@@ -2429,6 +2543,9 @@ window.NeonShop = (() => {
 
   return {
     getGfx, setGfx, open, serve, refill, order, setPrice, closeEarly, clock, frontWaiting, stockInfo, pointerDown, pointerMove, pointerUp, tap, zoomBy, panBy, resetZoom,
+    getView, setView, has3D,
+    layout: () => ({ L, UNITS, ROWS, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
+    _drawPOS: (...a) => drawPOS(...a),
     toggleTill2, resolveReturn, pendingReturn: () => !!(run && run.pendingReturn), active: () => !!run, current: () => run,
   };
 })();

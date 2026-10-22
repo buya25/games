@@ -33,6 +33,7 @@
         <li><b>More to manage:</b> food and drink go off (old stock sells at half price), hire staff (👥) and keep them happy, order from suppliers (📦), watch the rival over the road, and sort out returns. Pinch to zoom, tap a shopper to see who they are.</li>
         <li><b>In your shop:</b> tap shoplifters (👀) before they reach the door, tap a raised hand 🙋 to help, drag a box from the stock pile onto a shelf, and open till 2 when the queue grows.</li>
         <li><b>Run your shop:</b> at one of your stalls, tap <b>Open shop</b> to serve the shoppers yourself. Set your price: too high and they walk out, too slow and they get tired of waiting.</li>
+        <li><b>3D shop:</b> your shop is built in 3D. Pinch to zoom in on the shelves and drag to look around. Prefer the drawn look? Pick 🖼️ Classic under 🎨 Decorate → Shop view.</li>
         <li><b>Exchange:</b> buy shares in Neon City companies; news moves them.</li>
         <li><b>Bank:</b> the loan costs 0.5% a day; savings earn 0.1% and are safe from pickpockets.</li>
         <li>After 120 days your net worth sets your rank and pays arcade coins into your wallet.</li>
@@ -71,7 +72,7 @@
       <div class="stat"><small>Shelf · back</small><b id="shopStock"></b></div>
       <button id="shopZoom" class="btn hidden">🔍 1×</button><button id="shopClose" class="btn">Close</button>
     </div>
-    <canvas id="shopCanvas"></canvas>
+    <div id="shopStage"><canvas id="shop3d" aria-hidden="true"></canvas><canvas id="shopCanvas"></canvas></div>
     <div class="shopbar">
       <div id="shopReturn" class="returnrow hidden"><span>🔁 A return:</span><button class="btn" data-ret="refund">💵 Refund</button><button class="btn" data-ret="swap">🔄 Swap</button><button class="btn danger" data-ret="refuse">✋ Refuse</button></div>
       <div class="pricer"><button class="btn" id="shopDown" aria-label="Lower price">−</button><div id="shopPrice"></div><button class="btn" id="shopUp" aria-label="Raise price">+</button></div>
@@ -89,6 +90,7 @@
   <script src="shopart.js"></script>
   <script src="shop.js"></script>
   <script src="ui.js"></script>
+  <script type="module" src="shop3d.js"></script>
   <script>
     if ('serviceWorker' in navigator) window.addEventListener('load', () => navigator.serviceWorker.register('../sw.js').catch(() => {}));
   </script>
