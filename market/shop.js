@@ -109,7 +109,7 @@ window.NeonShop = (() => {
       staffLooks: Array.from({ length: STAFF[tier] }, randomLook),
       clerk: { kind: 'clerk', look: { outfit: 'dj', skin: (Math.random() * 5) | 0, hair: 'short', hairColor: 2 }, x: CLERK_HOME.x, y: CLERK_HOME.y, state: 'idle', carry: 0, phase: 0, facing: 'front' },
       speckles: Array.from({ length: 70 }, () => ({ u: Math.random(), v: Math.random(), dark: Math.random() < 0.5 })),
-      belt: 0, drawer: 0,
+      belt: 0, drawer: 0, doorOpen: 0, cars: [],
       skyline: Array.from({ length: 9 }, (_, i) => ({ x: i / 9 + rand(-0.02, 0.02), w: rand(0.08, 0.14), h: rand(0.04, 0.09), lit: Math.random() })),
     };
     // stock the shelves for opening: bottom rows first, spread across all the shelving
@@ -289,6 +289,17 @@ window.NeonShop = (() => {
     }
     stepClerk(dt);
     stepVan(dt);
+    // traffic on the road
+    if (Math.random() < dt * 0.3) {
+      const dir = Math.random() < 0.5 ? 1 : -1;
+      r.cars.push({ x: dir > 0 ? -0.15 : 1.15, dir, lane: dir > 0 ? 0.142 : 0.131, speed: rand(0.3, 0.55), color: CAR_COLORS[(Math.random() * CAR_COLORS.length) | 0] });
+    }
+    for (const c of r.cars) c.x += c.dir * c.speed * dt;
+    r.cars = r.cars.filter((c) => c.x > -0.3 && c.x < 1.3);
+    // the doors open for anyone walking in or out
+    const nearDoor = (p) => p && Math.abs(p.x - 0.5) < 0.1 && p.y > L.street - 0.01 && p.y < L.enter + 0.06;
+    const wantOpen = r.people.some((p) => p.kind === 'shopper' && (p.state === 'enter' || p.state === 'leaving') && nearDoor(p)) || nearDoor(r.van && r.van.courier);
+    r.doorOpen = clamp(r.doorOpen + (wantOpen ? 4 : -2.5) * dt, 0, 1);
     // helpers at the till serve the front of the queue on their own
     r.staffTimers = r.staffTimers.map((tm) => {
       tm -= dt;
@@ -481,12 +492,11 @@ window.NeonShop = (() => {
 
     ctx.fillStyle = '#0d0420'; ctx.fillRect(0, 0, W, H);
     drawStreet(ctx, W, H);
-    // people and the van outside, seen through the shop window
+    // people outside, seen through the windows
     const outside = (p) => p.y < L.wall - 0.001;
     const courier = r.van && r.van.courier;
     for (const p of r.people.filter(outside)) drawPerson(ctx, p, W, H, G);
     if (courier && outside(courier)) drawPerson(ctx, courier, W, H, G);
-    if (r.van) drawVan(ctx, r.van, W, H);
     drawStorefront(ctx, W, H, G);
     drawFloor(ctx, W, H);
     UNITS.forEach((u, i) => { if (u.wall) drawUnit(ctx, u, i, W, H, G); });
@@ -534,23 +544,67 @@ window.NeonShop = (() => {
     ctx.textAlign = 'start';
   }
 
+  // the shop front: brick piers, two display windows and a pair of sliding glass doors
+  const FRONT = {
+    glass: 0.05, transom: 0.072, road0: 0.118, road1: 0.146, sill: 0.17,
+    windows: [[0.02, 0.39], [0.61, 0.98]], door: [0.42, 0.58],
+    piers: [[0, 0.02], [0.39, 0.42], [0.58, 0.61], [0.98, 1]],
+  };
+  const CAR_COLORS = ['#ff2a6d', '#05d9e8', '#ffd23f', '#9b5de5', '#f2f2f2', '#22c55e'];
+
   function drawStreet(ctx, W, H) {
-    const g = ctx.createLinearGradient(0, L.sign * H, 0, L.wall * H);
+    const r = run, F = FRONT;
+    // night sky and the buildings across the road
+    let g = ctx.createLinearGradient(0, F.glass * H, 0, F.road0 * H);
     g.addColorStop(0, '#12052e'); g.addColorStop(1, '#3a0d55');
-    ctx.fillStyle = g; ctx.fillRect(0, L.sign * H, W, (L.wall - L.sign) * H);
-    // city skyline across the road
-    for (const b of run.skyline) {
-      const x = b.x * W, w = b.w * W, top = (L.street - 0.012 - b.h) * H, bot = (L.street - 0.012) * H;
+    ctx.fillStyle = g; ctx.fillRect(0, F.glass * H, W, (F.road0 - F.glass) * H + 1);
+    for (const b of r.skyline) {
+      const x = b.x * W, w = b.w * W, top = (F.road0 - b.h) * H, bot = F.road0 * H;
       ctx.fillStyle = '#1c0a3a'; ctx.fillRect(x, top, w, bot - top);
       ctx.fillStyle = b.lit > 0.5 ? 'rgba(255,210,63,.55)' : 'rgba(5,217,232,.45)';
       for (let wy = top + 4; wy < bot - 4; wy += 7) for (let wx = x + 3; wx < x + w - 3; wx += 6) if (((wx * 7 + wy * 3) | 0) % 5 < 2) ctx.fillRect(wx, wy, 2, 3);
     }
-    ctx.fillStyle = '#2a1446'; ctx.fillRect(0, (L.street - 0.012) * H, W, (L.wall - L.street + 0.012) * H); // pavement
-    ctx.fillStyle = 'rgba(5,217,232,.35)'; ctx.fillRect(0, (L.street - 0.012) * H, W, 1.5);
+    // road with lane markings and passing cars
+    ctx.fillStyle = '#1a1424'; ctx.fillRect(0, F.road0 * H, W, (F.road1 - F.road0) * H);
+    ctx.fillStyle = 'rgba(255,210,63,.5)';
+    const lane = (F.road0 + F.road1) / 2 * H;
+    for (let x = ((-r.t * 30) % 40) - 40; x < W; x += 40) ctx.fillRect(x, lane, 18, 1.5);
+    for (const c of r.cars) drawCar(ctx, c, W, H);
+    if (r.van) drawVan(ctx, r.van, W, H);
+    // curb and pavement, with street lamps
+    ctx.fillStyle = '#5a4a6e'; ctx.fillRect(0, F.road1 * H, W, 2);
+    g = ctx.createLinearGradient(0, F.road1 * H, 0, L.door * H);
+    g.addColorStop(0, '#3a2a52'); g.addColorStop(1, '#4d3a66');
+    ctx.fillStyle = g; ctx.fillRect(0, F.road1 * H + 2, W, (L.door - F.road1) * H);
+    ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.lineWidth = 1;
+    for (let x = 0; x < W; x += 22) { ctx.beginPath(); ctx.moveTo(x, F.road1 * H + 2); ctx.lineTo(x - 3, L.wall * H); ctx.stroke(); }
+    for (const lx of [0.2, 0.8]) {
+      const x = lx * W, y0 = (F.road1 + 0.004) * H, y1 = (F.glass + 0.03) * H;
+      ctx.fillStyle = '#2a2a35'; ctx.fillRect(x - 1.5, y1, 3, y0 - y1);
+      ctx.fillRect(x - 1.5, y1, 10, 2.5);
+      const lg = ctx.createRadialGradient(x + 9, y1 + 3, 0, x + 9, y1 + 3, H * 0.05);
+      lg.addColorStop(0, 'rgba(255,230,150,.5)'); lg.addColorStop(1, 'rgba(255,230,150,0)');
+      ctx.fillStyle = lg; ctx.fillRect(x + 9 - H * 0.05, y1 + 3 - H * 0.05, H * 0.1, H * 0.1);
+      ctx.fillStyle = '#fff2c4'; ctx.fillRect(x + 6, y1 + 2, 6, 2);
+    }
+  }
+
+  function drawCar(ctx, c, W, H) {
+    const w = W * 0.13, h = H * 0.026, x = c.x * W, base = c.lane * H;
+    ctx.fillStyle = c.color; roundRect(ctx, x - w / 2, base - h * 0.62, w, h * 0.5, 3); ctx.fill();
+    roundRect(ctx, x - w * 0.27 - c.dir * w * 0.04, base - h, w * 0.5, h * 0.45, 4); ctx.fill();
+    ctx.fillStyle = 'rgba(10,20,40,.8)'; roundRect(ctx, x - w * 0.23 - c.dir * w * 0.04, base - h * 0.93, w * 0.42, h * 0.32, 3); ctx.fill();
+    ctx.fillStyle = '#111';
+    for (const k of [-0.3, 0.3]) { ctx.beginPath(); ctx.arc(x + k * w, base - h * 0.12, h * 0.17, 0, Math.PI * 2); ctx.fill(); }
+    const fx = x + c.dir * w / 2, bx = x - c.dir * w / 2;
+    const lg = ctx.createRadialGradient(fx, base - h * 0.4, 0, fx, base - h * 0.4, w * 0.35);
+    lg.addColorStop(0, 'rgba(255,240,180,.55)'); lg.addColorStop(1, 'rgba(255,240,180,0)');
+    ctx.fillStyle = lg; ctx.fillRect(fx - w * 0.35, base - h * 0.4 - w * 0.35, w * 0.7, w * 0.7);
+    ctx.fillStyle = '#ff3b3b'; ctx.fillRect(bx - c.dir * 1, base - h * 0.5, 2.5, 2.5);
   }
 
   function drawVan(ctx, v, W, H) {
-    const x = v.x * W, base = (L.street + 0.004) * H, h = H * 0.07, w = W * 0.34;
+    const x = v.x * W, base = (FRONT.road1 + 0.003) * H, h = H * 0.065, w = W * 0.32;
     const left = x - w / 2;
     ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(left + 4, base - 3, w - 8, 5);
     // cargo box and cab
@@ -560,42 +614,116 @@ window.NeonShop = (() => {
     ctx.fillStyle = '#ff2a6d'; ctx.fillRect(left, base - h * 0.45, w * 0.72, h * 0.08);
     ctx.fillStyle = '#3a0d55'; ctx.font = `900 ${Math.round(h * 0.2)}px system-ui, sans-serif`;
     ctx.fillText('NEON FREIGHT', left + w * 0.36, base - h * 0.55);
-    // wheels
     for (const wx of [left + w * 0.18, left + w * 0.82]) {
       ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(wx, base - h * 0.12, h * 0.16, 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#888'; ctx.beginPath(); ctx.arc(wx, base - h * 0.12, h * 0.06, 0, Math.PI * 2); ctx.fill();
     }
+    if (v.state === 'parked' && Math.sin(run.t * 6) > 0) { ctx.fillStyle = '#ffb000'; ctx.fillRect(left + w - 3, base - h * 0.5, 3, 3); } // hazard lights
+  }
+
+  // a brick wall section
+  function bricks(ctx, x0, y0, x1, y1) {
+    ctx.fillStyle = '#26102a'; ctx.fillRect(x0, y0, x1 - x0, y1 - y0);
+    const bh = 5, bw = 13, shades = ['#5a1f45', '#4e1a3d', '#63244c', '#541c41'];
+    for (let row = 0, y = y0; y < y1; row++, y += bh) {
+      for (let col = -1, x = x0 - (row % 2 ? bw / 2 : 0); x < x1; col++, x += bw) {
+        ctx.fillStyle = shades[(row * 7 + col * 3 + 8) % 4];
+        const bx = Math.max(x0, x + 0.5), ex = Math.min(x1, x + bw - 1);
+        if (ex > bx) ctx.fillRect(bx, y + 0.5, ex - bx, Math.min(bh - 1, y1 - y - 0.5));
+      }
+    }
   }
 
   function drawStorefront(ctx, W, H, G) {
-    const r = run;
-    // sign over the window
-    ctx.fillStyle = '#0b0221'; ctx.fillRect(0, 0, W, L.sign * H);
-    ctx.fillStyle = '#ff2a6d'; ctx.fillRect(0, L.sign * H - 2, W, 2);
+    const r = run, F = FRONT;
+    const gy0 = F.glass * H, gy1 = F.sill * H;
+    // the glass: a faint tint and reflections
+    for (const [a, b] of F.windows) {
+      const x0 = a * W, x1 = b * W;
+      ctx.fillStyle = 'rgba(140,210,255,.06)'; ctx.fillRect(x0, gy0, x1 - x0, gy1 - gy0);
+      ctx.fillStyle = 'rgba(255,255,255,.06)';
+      const k = x1 - x0;
+      poly(ctx, [[x0 + k * 0.1, gy0], [x0 + k * 0.22, gy0], [x0 + k * 0.08, gy1], [x0 - k * 0.04, gy1]]); ctx.fill();
+      poly(ctx, [[x0 + k * 0.27, gy0], [x0 + k * 0.31, gy0], [x0 + k * 0.17, gy1], [x0 + k * 0.13, gy1]]); ctx.fill();
+    }
+    // window stickers: OPEN sign hanging in the left window, a poster in the right one
+    {
+      const cx = W * 0.115, cy = (F.transom + 0.026) * H, sw = W * 0.15, sh = H * 0.026;
+      ctx.strokeStyle = 'rgba(200,200,220,.5)'; ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(cx - sw * 0.3, F.transom * H); ctx.lineTo(cx - sw * 0.3, cy - sh / 2); ctx.moveTo(cx + sw * 0.3, F.transom * H); ctx.lineTo(cx + sw * 0.3, cy - sh / 2); ctx.stroke();
+      ctx.fillStyle = 'rgba(10,2,25,.85)'; roundRect(ctx, cx - sw / 2, cy - sh / 2, sw, sh, sh / 2); ctx.fill();
+      const on = !r.closed;
+      ctx.strokeStyle = on ? '#ff2a6d' : '#5a2a3a'; ctx.lineWidth = 2; ctx.shadowColor = '#ff2a6d'; ctx.shadowBlur = on ? 10 : 0; ctx.stroke();
+      ctx.font = `900 ${Math.round(sh * 0.7)}px system-ui, sans-serif`; ctx.fillStyle = on ? '#ff5c8a' : '#7a4a5a';
+      ctx.fillText(on ? 'OPEN' : 'CLOSED', cx, cy + sh * 0.26);
+      ctx.shadowBlur = 0;
+      const px = W * 0.87, py = (F.transom + 0.008) * H, pw = W * 0.12, ph = H * 0.06;
+      g0(ctx, px - pw / 2, py, pw, ph);
+      ctx.font = `${Math.round(ph * 0.42)}px system-ui, sans-serif`; ctx.fillStyle = '#fff'; ctx.fillText(G.icon, px, py + ph * 0.55);
+      ctx.font = `900 ${Math.round(ph * 0.2)}px system-ui, sans-serif`; ctx.fillStyle = '#0b0221'; ctx.fillText('FRESH!', px, py + ph * 0.86);
+    }
+    // bulkhead over the windows with the shop's name
+    let g = ctx.createLinearGradient(0, 0, 0, gy0);
+    g.addColorStop(0, '#140628'); g.addColorStop(1, '#22093f');
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, gy0);
     ctx.font = `900 ${Math.round(Math.min(H * 0.026, W * 0.045))}px system-ui, sans-serif`;
     ctx.fillStyle = '#ffd23f'; ctx.shadowColor = '#ff7a00'; ctx.shadowBlur = 8;
-    ctx.fillText(`${G.icon} ${G.name.toUpperCase()} · ${T.STALLS[r.b.tier].name.toUpperCase()}`, W / 2, L.sign * H * 0.72);
+    ctx.fillText(`${G.icon} ${G.name.toUpperCase()} · ${T.STALLS[r.b.tier].name.toUpperCase()}`, W / 2, L.sign * H * 0.68);
     ctx.shadowBlur = 0;
-    // window frame and a glint on the glass
-    ctx.strokeStyle = '#3d1670'; ctx.lineWidth = 3;
-    for (const fx of [0.21, 0.79]) { ctx.beginPath(); ctx.moveTo(fx * W, L.sign * H); ctx.lineTo(fx * W, L.wall * H); ctx.stroke(); }
-    ctx.fillStyle = 'rgba(255,255,255,.05)';
-    ctx.beginPath(); ctx.moveTo(W * 0.05, L.sign * H); ctx.lineTo(W * 0.15, L.sign * H); ctx.lineTo(W * 0.05, L.wall * H); ctx.closePath(); ctx.fill();
-    // OPEN / CLOSED sign in the window
-    ctx.font = `900 ${Math.round(H * 0.022)}px system-ui, sans-serif`;
-    ctx.fillStyle = r.closed ? '#ff6b6b' : '#ff2a6d'; ctx.shadowColor = '#ff2a6d'; ctx.shadowBlur = r.closed ? 0 : 10;
-    ctx.fillText(r.closed ? 'CLOSED' : 'OPEN', W * 0.11, (L.sign + 0.035) * H);
-    ctx.shadowBlur = 0;
-    // wall under the window
-    ctx.fillStyle = '#1e0b3c'; ctx.fillRect(0, L.wall * H, W, (L.door - L.wall) * H);
+    ctx.fillStyle = '#ff2a6d'; ctx.fillRect(0, gy0 - 3, W, 2);
+    // brick piers, and the wall under the windows
+    for (const [a, b] of F.piers) bricks(ctx, a * W, gy0 - 1, b * W, L.door * H);
+    for (const [a, b] of F.windows) bricks(ctx, a * W, gy1, b * W, L.door * H);
+    // window frames: outer frame, a transom bar near the top, a mullion, and a sill
+    for (const [a, b] of F.windows) {
+      const x0 = a * W, x1 = b * W, mid = (x0 + x1) / 2;
+      ctx.fillStyle = '#1b1b26';
+      ctx.fillRect(x0, gy0, x1 - x0, 4); ctx.fillRect(x0, gy0, 4, gy1 - gy0); ctx.fillRect(x1 - 4, gy0, 4, gy1 - gy0);
+      ctx.fillRect(x0, F.transom * H - 2, x1 - x0, 4); ctx.fillRect(mid - 2, F.transom * H, 4, gy1 - F.transom * H);
+      ctx.fillStyle = 'rgba(255,255,255,.18)';
+      ctx.fillRect(x0 + 4, gy0 + 4, x1 - x0 - 8, 1); ctx.fillRect(x0 + 4, F.transom * H + 2, x1 - x0 - 8, 1);
+      ctx.fillStyle = '#cfc8e6'; ctx.fillRect(x0 - 2, gy1 - 2, x1 - x0 + 4, 4);
+      ctx.fillStyle = 'rgba(0,0,0,.4)'; ctx.fillRect(x0 - 2, gy1 + 2, x1 - x0 + 4, 2);
+    }
+  }
+  // a small poster with a gradient
+  function g0(ctx, x, y, w, h) {
+    const g = ctx.createLinearGradient(x, y, x, y + h);
+    g.addColorStop(0, '#ffd23f'); g.addColorStop(1, '#ff7a00');
+    ctx.fillStyle = g; roundRect(ctx, x, y, w, h, 3); ctx.fill();
   }
 
+  // automatic sliding glass doors: they open when someone walks up
   function drawDoor(ctx, W, H) {
-    const x0 = W * 0.41, x1 = W * 0.59, y0 = (L.sign + 0.012) * H, y1 = L.door * H;
-    ctx.fillStyle = '#2a1446'; ctx.fillRect(x0, L.wall * H, x1 - x0, y1 - L.wall * H); // threshold
-    ctx.fillStyle = 'rgba(5,217,232,.18)'; ctx.fillRect(x0 + 6, y1 - 7, x1 - x0 - 12, 5);
-    ctx.strokeStyle = '#05d9e8'; ctx.lineWidth = 2.5; ctx.strokeRect(x0, y0, x1 - x0, y1 - y0);
-    ctx.beginPath(); ctx.moveTo((x0 + x1) / 2, y0); ctx.lineTo((x0 + x1) / 2, y1); ctx.stroke();
+    const r = run, F = FRONT;
+    const x0 = F.door[0] * W, x1 = F.door[1] * W, y0 = F.glass * H, y1 = L.door * H, half = (x1 - x0) / 2;
+    const slide = r.doorOpen * half * 0.92;
+    // frame header with the motion sensor and an ENTRANCE sign
+    ctx.fillStyle = '#1b1b26'; ctx.fillRect(x0 - 3, y0, x1 - x0 + 6, H * 0.016);
+    ctx.fillStyle = '#0b0b10'; ctx.fillRect((x0 + x1) / 2 - 7, y0 + H * 0.016, 14, 4);
+    ctx.fillStyle = r.doorOpen > 0.05 ? '#4ade80' : '#ff3b3b'; ctx.fillRect((x0 + x1) / 2 - 1.5, y0 + H * 0.016 + 1, 3, 2);
+    ctx.font = `800 ${Math.round(H * 0.011)}px system-ui, sans-serif`; ctx.fillStyle = '#4ade80';
+    ctx.fillText('ENTRANCE', (x0 + x1) / 2, y0 + H * 0.012);
+    // the two panels slide behind the piers
+    ctx.save();
+    ctx.beginPath(); ctx.rect(x0, y0 + H * 0.016, x1 - x0, y1 - y0 - H * 0.016); ctx.clip();
+    for (const side of [-1, 1]) {
+      const px0 = side < 0 ? x0 - slide : x0 + half + slide, py0 = y0 + H * 0.016;
+      ctx.fillStyle = 'rgba(150,220,255,.12)'; ctx.fillRect(px0, py0, half, y1 - py0);
+      ctx.fillStyle = 'rgba(255,255,255,.08)';
+      poly(ctx, [[px0 + half * 0.2, py0], [px0 + half * 0.45, py0], [px0 + half * 0.1, y1], [px0 - half * 0.15, y1]]); ctx.fill();
+      ctx.strokeStyle = '#a7adbf'; ctx.lineWidth = 3; ctx.strokeRect(px0 + 1.5, py0 + 1.5, half - 3, y1 - py0 - 3);
+      ctx.fillStyle = '#a7adbf'; ctx.fillRect(px0, y1 - H * 0.012, half, H * 0.012); // kick rail
+      // handle bar on the inner edge
+      const hx = side < 0 ? px0 + half - 7 : px0 + 5;
+      ctx.fillStyle = '#d7dbe8'; ctx.fillRect(hx, py0 + (y1 - py0) * 0.42, 2.5, (y1 - py0) * 0.2);
+    }
+    // opening hours on the glass
+    const hx = x0 + half + slide + half / 2, hy = y0 + (y1 - y0) * 0.3;
+    ctx.font = `800 ${Math.round(Math.min(H * 0.011, half * 0.22))}px system-ui, sans-serif`; ctx.fillStyle = 'rgba(255,255,255,.65)';
+    ctx.fillText('OPEN', hx, hy); ctx.fillText('9–21', hx, hy + H * 0.013);
+    ctx.restore();
+    ctx.fillStyle = '#7a7f92'; ctx.fillRect(x0, y1 - 2, x1 - x0, 3); // threshold strip
   }
 
   function drawFloor(ctx, W, H) {
@@ -619,6 +747,14 @@ window.NeonShop = (() => {
       g.addColorStop(0, 'rgba(5,217,232,.10)'); g.addColorStop(1, 'rgba(5,217,232,0)');
       ctx.fillStyle = g; ctx.fillRect(lx * W - W * 0.25, ly * H - W * 0.25, W * 0.5, W * 0.5);
     }
+    // skirting along the front wall, and a welcome mat inside the door
+    ctx.fillStyle = '#12052a'; ctx.fillRect(0, L.door * H, W, 3);
+    const my0 = L.door * H + 3, my1 = (L.door + 0.035) * H;
+    const w0 = (FRONT.door[1] - FRONT.door[0]) * W * 0.95, w1 = w0 * scaleAt(L.door + 0.035, H) / scaleAt(L.door, H);
+    ctx.fillStyle = '#26262e'; poly(ctx, [[W / 2 - w0 / 2, my0], [W / 2 + w0 / 2, my0], [W / 2 + w1 / 2, my1], [W / 2 - w1 / 2, my1]]); ctx.fill();
+    ctx.strokeStyle = '#3d3d4a'; ctx.lineWidth = 2; ctx.stroke();
+    ctx.font = `800 ${Math.round((my1 - my0) * 0.45)}px system-ui, sans-serif`; ctx.fillStyle = 'rgba(255,255,255,.3)';
+    ctx.fillText('WELCOME', W / 2, my0 + (my1 - my0) * 0.68);
   }
 
   // perspective: everything recedes toward the point where the floor tiles meet
