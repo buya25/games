@@ -121,9 +121,23 @@
   }
 
   // Effects from news events: a multiplier on one good, optionally only in one district.
+  // ---------- seasons and holidays (fixed days, the same for everyone) ----------
+  const SEASONS = [{ from: 1, id: 'spring', icon: '🌸', name: 'Spring' }, { from: 31, id: 'summer', icon: '☀️', name: 'Summer' },
+    { from: 61, id: 'autumn', icon: '🍂', name: 'Autumn' }, { from: 91, id: 'winter', icon: '❄️', name: 'Winter' }];
+  const HOLIDAYS = [
+    { id: 'valentine', from: 12, to: 15, icon: '💘', name: "Valentine's Day", goods: { signs: 1.6, holo: 1.3 } },
+    { id: 'summer', from: 45, to: 51, icon: '🏖️', name: 'Summer holidays', goods: { drinks: 1.35, sneakers: 1.2 } },
+    { id: 'halloween', from: 78, to: 83, icon: '🎃', name: 'Halloween', goods: { holo: 1.4, noodles: 1.2, signs: 1.2 } },
+    { id: 'xmas', from: 108, to: 116, icon: '🎄', name: 'Neon Christmas', goods: { holo: 1.6, sneakers: 1.4, vinyl: 1.4, chips: 1.3 } },
+  ];
+  const season = (day) => SEASONS.filter((x) => day >= x.from).pop();
+  const holiday = (day) => HOLIDAYS.find((h) => day >= h.from && day <= h.to) || null;
+
   function effectMod(s, d, g) {
     let m = 1;
     for (const e of s.effects) if (e.good === g && (!e.district || e.district === d)) m *= e.mult;
+    const h = holiday(s.day);
+    if (h && h.goods[g]) m *= h.goods[g];
     return m;
   }
 
@@ -211,11 +225,11 @@
     if (!b) return { ok: false };
     qty = Math.min(qty, b.stock);
     if (qty <= 0) return { ok: false, msg: 'Out of stock' };
-    const revenue = round2(qty * shelfPrice(s, b));
-    b.stock -= qty;
+    const red = takeStock(s, b, qty); // marked-down packs go at half price
+    const revenue = round2((qty - red * 0.5) * shelfPrice(s, b));
     s.cash = round2(s.cash + revenue);
     b.last.sold += qty; b.last.revenue = round2(b.last.revenue + revenue);
-    return { ok: true, qty, revenue };
+    return { ok: true, qty, revenue, reduced: red };
   }
   // top up the shelves from your cargo and any workshop in this district making the same good
   function shelfRoom(b) { return Math.max(0, unitsPerDay(STALLS[b.tier].cap, b.good) * 3 - b.stock); }
@@ -225,10 +239,10 @@
     let moved = 0;
     for (const f of s.businesses) {
       if (f.kind !== 'factory' || f.district !== b.district || f.good !== b.good) continue;
-      const m = Math.min(f.stock, shelfRoom(b)); f.stock -= m; b.stock += m; moved += m;
+      const m = Math.min(f.stock, shelfRoom(b)); f.stock -= m; addStock(s, b, m); moved += m;
     }
     const fromCargo = Math.min(s.cargo[b.good] || 0, shelfRoom(b));
-    if (fromCargo) { s.cargo[b.good] -= fromCargo; if (!s.cargo[b.good]) delete s.cargo[b.good]; b.stock += fromCargo; moved += fromCargo; }
+    if (fromCargo) { s.cargo[b.good] -= fromCargo; if (!s.cargo[b.good]) delete s.cargo[b.good]; addStock(s, b, fromCargo); moved += fromCargo; }
     return moved ? { ok: true, moved } : { ok: false, msg: `No ${G[b.good].name} in your cargo or workshop.` };
   }
 
@@ -237,15 +251,128 @@
     sunny: { icon: '☀️', name: 'Sunny', crowd: 1 },
     cloudy: { icon: '☁️', name: 'Cloudy', crowd: 0.97 },
     rain: { icon: '🌧️', name: 'Rainy', crowd: 0.82 },
+    snow: { icon: '🌨️', name: 'Snowy', crowd: 0.8 },
     hot: { icon: '🥵', name: 'Hot', crowd: 1.05 },
   };
   function weather(s, day = s.day) {
     if (s.effects.some((e) => e.good === 'drinks' && !e.district && e.mult >= 1.5)) return 'hot';
     const x = seeded(mixSeed(s.seed, day, 99))();
-    return x < 0.22 ? 'rain' : x < 0.45 ? 'cloudy' : x < 0.9 ? 'sunny' : 'hot';
+    const winter = season(day).id === 'winter';
+    return x < 0.22 ? (winter ? 'snow' : 'rain') : x < 0.45 ? 'cloudy' : x < 0.9 ? 'sunny' : winter ? 'cloudy' : 'hot';
   }
   // a stall's star rating (from the reviews on days you ran it) brings more or fewer shoppers
   const ratingMod = (b) => (b.rating ? 1 + (b.rating - 3.5) * 0.06 : 1);
+
+  // ---------- sell-by dates: food and drink go off ----------
+  // Perishable stock is kept in dated batches. The oldest sells first, it's marked down to half
+  // price in its last two days, and it's thrown out once past its date.
+  const LIFE = { drinks: 12, noodles: 6, coffee: 15 };
+  const REDUCED_DAYS = 2;
+  function syncBatches(s, b) {
+    if (b.kind !== 'stall' || !LIFE[b.good]) { delete b.batches; return null; }
+    const sum = (b.batches || []).reduce((a, x) => a + x.q, 0);
+    if (!b.batches || sum !== b.stock) b.batches = b.stock > 0 ? [{ q: b.stock, d: s.day }] : [];
+    return b.batches;
+  }
+  const daysLeft = (s, b, x) => LIFE[b.good] - (s.day - x.d);
+  function addStock(s, b, q) {
+    const bt = syncBatches(s, b);
+    b.stock += q;
+    if (bt && q > 0) { const last = bt[bt.length - 1]; if (last && last.d === s.day) last.q += q; else bt.push({ q, d: s.day }); }
+  }
+  // take q units, oldest first; returns how many of them were marked down
+  function takeStock(s, b, q) {
+    const bt = syncBatches(s, b);
+    b.stock -= q;
+    if (!bt) return 0;
+    let red = 0;
+    while (q > 0 && bt.length) {
+      const x = bt[0], n = Math.min(q, x.q);
+      if (daysLeft(s, b, x) <= REDUCED_DAYS) red += n;
+      x.q -= n; q -= n;
+      if (!x.q) bt.shift();
+    }
+    return red;
+  }
+  function freshness(s, b) {
+    const bt = syncBatches(s, b);
+    if (!bt) return null;
+    let reduced = 0, expiring = 0;
+    for (const x of bt) { const dl = daysLeft(s, b, x); if (dl <= REDUCED_DAYS) reduced += x.q; if (dl <= 1) expiring += x.q; }
+    return { reduced, expiring, life: LIFE[b.good] };
+  }
+
+  // ---------- staff you hire for a stall ----------
+  const STAFF_SLOTS = [1, 2, 4];
+  const SKILLS = {
+    cashier: { icon: '⚡', name: 'Fast cashier', wage: 35, desc: 'Serves shoppers quickly.' },
+    friendly: { icon: '😊', name: 'Friendly', wage: 30, desc: 'Shoppers wait longer; sells 3% more on normal days.' },
+    stocker: { icon: '📦', name: 'Stocker', wage: 30, desc: 'Keeps shelves full: the clerk works faster.' },
+  };
+  const NAMES = ['Maya', 'Leo', 'Zara', 'Kai', 'Nina', 'Omar', 'Ivy', 'Jin', 'Rosa', 'Theo', 'Ama', 'Felix', 'Luna', 'Ravi', 'Sofia', 'Eli', 'Noor', 'Max', 'Yuki', 'Tariq'];
+  function staffOf(b) {
+    if (!b.staff) b.staff = Array.from({ length: b.kind === 'stall' ? [0, 1, 3][b.tier] : 0 }, (_, i) => ({ name: NAMES[(b.id * 7 + i * 5) % NAMES.length], skill: 'cashier', wage: 35, morale: 70 }));
+    return b.staff;
+  }
+  // three people looking for work today (the same all day)
+  function candidates(s, b) {
+    const r = seeded(mixSeed(s.seed, s.day, 300 + b.id)), keys = Object.keys(SKILLS);
+    return [0, 1, 2].map(() => { const skill = keys[Math.floor(r() * keys.length)]; return { name: NAMES[Math.floor(r() * NAMES.length)], skill, wage: SKILLS[skill].wage + Math.floor(r() * 3) * 5, look: Math.floor(r() * 1e6) }; });
+  }
+  function hire(s, id, i) {
+    const b = s.businesses.find((x) => x.id === id);
+    if (!b || b.kind !== 'stall') return { ok: false, msg: 'Not found.' };
+    const staff = staffOf(b);
+    if (staff.length >= STAFF_SLOTS[b.tier]) return { ok: false, msg: `A ${STALLS[b.tier].name.toLowerCase()} has room for ${STAFF_SLOTS[b.tier]}. Upgrade for more staff.` };
+    const c = candidates(s, b)[i];
+    if (!c || staff.some((x) => x.name === c.name)) return { ok: false, msg: 'They already work for you.' };
+    staff.push({ name: c.name, skill: c.skill, wage: c.wage, morale: 75, look: c.look });
+    return { ok: true, c };
+  }
+  function fireStaff(s, id, i) { const b = s.businesses.find((x) => x.id === id); if (!b || !staffOf(b)[i]) return { ok: false, msg: 'Not found.' }; b.staff.splice(i, 1); return { ok: true }; }
+  function giveBonus(s, id, i) {
+    const b = s.businesses.find((x) => x.id === id), m = b && staffOf(b)[i];
+    if (!m) return { ok: false, msg: 'Not found.' };
+    if (s.cash < 50) return { ok: false, msg: 'A bonus costs $50.' };
+    s.cash = round2(s.cash - 50); m.morale = Math.min(100, m.morale + 30);
+    return { ok: true };
+  }
+
+  // ---------- a rival shop over the road (from day 8): its prices move, and it runs sales ----------
+  const RIVALS = { downtown: 'MegaMart', docks: 'Dockside Deals', tech: 'ByteBuy', night: 'Night Owl', arena: 'Fan Zone' };
+  function rival(s, b, day = s.day) {
+    if (day < 8) return null;
+    const r = seeded(mixSeed(s.seed, day, 200 + DISTRICTS.findIndex((d) => d.id === b.district) * 10 + GOODS.findIndex((g) => g.id === b.good)));
+    const sale = r() < 0.15;
+    return { name: RIVALS[b.district] || 'MegaMart', mult: round2(sale ? 0.95 + r() * 0.05 : 1.12 + r() * 0.22), sale };
+  }
+  function rivalMod(s, b, mult) {
+    const rv = rival(s, b);
+    if (!rv) return 1;
+    return mult > rv.mult * 1.05 ? 0.82 : mult < rv.mult * 0.95 ? 1.08 : 1;
+  }
+
+  // ---------- ordering stock from a supplier ----------
+  const SUPPLIERS = {
+    budget: { icon: '🐢', name: 'Budget Bulk', cost: 0.85, delay: [18, 30], short: 0.25, desc: 'Cheap but slow, and sometimes short.' },
+    express: { icon: '⚡', name: 'Neon Express', cost: 1.12, delay: [3, 6], short: 0, desc: 'Fast and always complete, but pricier.' },
+  };
+  function orderRoom(b) { return Math.max(0, unitsPerDay(STALLS[b.tier].cap, b.good) * 3 - b.stock); }
+  function orderStock(s, id, key, qty) {
+    const b = s.businesses.find((x) => x.id === id), sp = SUPPLIERS[key];
+    if (!b || b.kind !== 'stall' || !sp) return { ok: false, msg: 'Not found.' };
+    qty = Math.min(Math.floor(qty), orderRoom(b));
+    if (qty <= 0) return { ok: false, msg: 'Your shelves and stockroom are full.' };
+    const each = round2(price(s, b.district, b.good) * sp.cost);
+    if (s.cash < qty * each) return { ok: false, msg: `That costs $${Math.round(qty * each).toLocaleString()}.` };
+    const got = Math.random() < sp.short ? Math.max(1, Math.floor(qty * (0.6 + Math.random() * 0.2))) : qty;
+    s.cash = round2(s.cash - got * each);
+    addStock(s, b, got);
+    const [d0, d1] = sp.delay;
+    return { ok: true, got, qty, cost: round2(got * each), each, delay: d0 + Math.random() * (d1 - d0) };
+  }
+  // a haul video from your shop brings a buzz of extra shoppers the next day
+  const buzzMod = (s, b) => (b.buzz && b.buzz.day === s.day ? b.buzz.mult : 1);
 
   // ---------- shop upgrades, bought with cash, that change how the shop works ----------
   const SHOP_UPGRADES = {
@@ -277,7 +404,7 @@
     const b = s.businesses.find((x) => x.id === id);
     if (!b || !b.last) return { ok: false };
     qty = Math.min(qty, b.stock);
-    b.stock -= qty;
+    takeStock(s, b, qty);
     b.last.stolen = (b.last.stolen || 0) + qty;
     return { ok: true, qty };
   }
@@ -336,7 +463,7 @@
     q = Math.min(Math.floor(q), s.cargo[b.good] || 0);
     if (q <= 0) return { ok: false, msg: `No ${G[b.good].name} in your cargo.` };
     s.cargo[b.good] -= q; if (!s.cargo[b.good]) delete s.cargo[b.good];
-    b.stock += q;
+    addStock(s, b, q);
     return { ok: true, q };
   }
   function collect(s, id, q) {
@@ -344,7 +471,7 @@
     if (!b || b.district !== s.district) return { ok: false, msg: 'You need to be there.' };
     q = Math.min(Math.floor(q), b.stock, cargoCap(s) - cargoUsed(s));
     if (q <= 0) return { ok: false, msg: b.stock ? 'Not enough cargo space.' : 'Nothing to collect.' };
-    b.stock -= q;
+    if (b.kind === 'stall') takeStock(s, b, q); else b.stock -= q;
     s.cargo[b.good] = (s.cargo[b.good] || 0) + q;
     return { ok: true, q };
   }
@@ -479,7 +606,7 @@
         if (st.kind !== 'stall' || st.district !== b.district || st.good !== b.good) continue;
         const room = Math.max(0, unitsPerDay(STALLS[st.tier].cap, st.good) * 3 - st.stock);
         const move = Math.min(room, b.stock);
-        b.stock -= move; st.stock += move;
+        b.stock -= move; addStock(s, st, move);
       }
       b.last = { made, cost: Math.round(made * unitCost + t.upkeep) };
       rep.lines.push({ icon: G[b.good].icon, text: `${t.name} at ${D[b.district].name} made ${made} ${G[b.good].name}${made < want ? ' (short of cash)' : ''}.` });
@@ -491,19 +618,44 @@
         // you ran it yourself today: sales already happened at the counter
         s.cash = round2(s.cash - t.rent);
         rep.sales += b.last.revenue + (b.last.extra || 0); rep.upkeep += t.rent;
-        rep.lines.push({ icon: G[b.good].icon, text: `You ran the ${t.name.toLowerCase()} at ${D[b.district].name} yourself: ${b.last.sold} sold for $${Math.round(b.last.revenue).toLocaleString()}${b.last.extra ? ` (+$${Math.round(b.last.extra).toLocaleString()} extras)` : ''}.` });
+        rep.lines.push({ icon: G[b.good].icon, text: `You ran the ${t.name.toLowerCase()} at ${D[b.district].name} yourself: ${b.last.sold} sold for $${Math.round(b.last.revenue).toLocaleString()}${b.last.extra ? ` (${b.last.extra >= 0 ? '+' : '−'}$${Math.abs(Math.round(b.last.extra)).toLocaleString()} ${b.last.extra >= 0 ? 'extras' : 'in refunds and rewards'})` : ''}.` });
         continue;
       }
       const mult = b.mult || RETAIL;
       const demand = Math.floor(unitsPerDay(t.cap, b.good) * (0.55 + 0.6 * luck) * effectMod(s, b.district, b.good) * priceDemand(mult)
-        * WEATHER[weather(s)].crowd * ratingMod(b) * (b.upgrades && b.upgrades.coffee ? 1.12 : 1));
+        * WEATHER[weather(s)].crowd * ratingMod(b) * (b.upgrades && b.upgrades.coffee ? 1.12 : 1)
+        * rivalMod(s, b, mult) * buzzMod(s, b) * (1 + 0.03 * staffOf(b).filter((m) => m.skill === 'friendly').length));
       const sold = Math.min(b.stock, demand);
-      const revenue = round2(sold * price(s, b.district, b.good) * mult);
-      b.stock -= sold;
+      const red = takeStock(s, b, sold);
+      const revenue = round2((sold - red * 0.5) * price(s, b.district, b.good) * mult);
       s.cash = round2(s.cash + revenue - t.rent);
       rep.sales += revenue; rep.upkeep += t.rent;
       b.last = { sold, revenue: Math.round(revenue), demand };
       rep.lines.push({ icon: G[b.good].icon, text: `${t.name} at ${D[b.district].name} sold ${sold} ${G[b.good].name} for $${Math.round(revenue).toLocaleString()}${b.stock === 0 && demand > sold ? ' (sold out!)' : ''}.` });
+    }
+
+    // staff wages and morale; perishables past their date are thrown out
+    for (const b of s.businesses.filter((x) => x.kind === 'stall')) {
+      const staff = staffOf(b);
+      if (staff.length) {
+        const wages = staff.reduce((a, m) => a + m.wage, 0);
+        s.cash = round2(s.cash - wages); rep.upkeep += wages;
+        const rq = seeded(mixSeed(s.seed, s.day, 400 + b.id));
+        for (let i = staff.length - 1; i >= 0; i--) {
+          const m = staff[i];
+          if (b.servedDay !== s.day) m.morale = Math.min(100, m.morale + 4); // a quieter day
+          if (m.morale < 20 && rq() < 0.4) { staff.splice(i, 1); news.push({ icon: '😤', text: `${m.name} quit your ${STALLS[b.tier].name.toLowerCase()} at ${D[b.district].name}: overworked and fed up.` }); }
+        }
+      }
+      const bt = syncBatches(s, b);
+      if (bt) {
+        let gone = 0;
+        while (bt.length && daysLeft(s, b, bt[0]) <= 1) { gone += bt[0].q; bt.shift(); }
+        if (gone) {
+          b.stock -= gone;
+          rep.lines.push({ icon: '🗑️', text: `${gone} ${G[b.good].name} at ${D[b.district].name} went past their sell-by date and were thrown out.` });
+        }
+      }
     }
 
     // living costs and interest
@@ -514,6 +666,10 @@
 
     s.day++;
     if (travelTo && D[travelTo]) s.district = travelTo;
+    const hol = holiday(s.day);
+    if (hol && hol.from === s.day) news.push({ icon: hol.icon, text: `${hol.name} starts! ${Object.keys(hol.goods).map((g) => G[g].name).join(', ')} sell for more for a few days.` });
+    const sea = season(s.day);
+    if (sea.from === s.day && s.day > 1) news.push({ icon: sea.icon, text: `${sea.name} has arrived in Neon City.` });
     for (const d of DISTRICTS) for (const g of GOODS) {
       const h = s.hist.prices[d.id][g.id];
       h.push(price(s, d.id, g.id));
@@ -530,7 +686,8 @@
 
   const api = {
     SEASON_DAYS, GOODS, DISTRICTS, STOCKS, STALLS, FACTORIES, VEHICLES, RANKS, PRODUCE_COST, RETAIL, RESALE, PRICE_MIN, PRICE_MAX,
-    willingShare, priceDemand, shopperLimit, WEATHER, weather, ratingMod, SHOP_UPGRADES, buyShopUpgrade, shopExtra, shopLoss, shelfPrice, setShelfPrice, shopDayAvailable, startShopDay, shopSale, shelfRoom, refillShelves, effectMod, LOAN_RATE, DEPOSIT_RATE,
+    willingShare, priceDemand, shopperLimit, WEATHER, weather, ratingMod, season, holiday, HOLIDAYS, LIFE, freshness, SKILLS, STAFF_SLOTS, NAMES, staffOf, candidates, hire, fireStaff, giveBonus,
+    rival, SUPPLIERS, orderStock, orderRoom, SHOP_UPGRADES, buyShopUpgrade, shopExtra, shopLoss, shelfPrice, setShelfPrice, shopDayAvailable, startShopDay, shopSale, shelfRoom, refillShelves, effectMod, LOAN_RATE, DEPOSIT_RATE,
     G, D, seeded, newSeed, newGame, price, buyPrice, sellPrice, quote, maxBuy, buy, sell, cargoUsed, cargoCap,
     openBusiness, upgradeBusiness, upgradeCost, sellBusiness, setProduct, restock, collect, unitsPerDay, storageCap,
     buyVehicle, bankMove, maxDebt, trade, maxShares, netWorth, rankFor, coinsFor, endDay,

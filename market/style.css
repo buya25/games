@@ -172,3 +172,8 @@ body.noscroll { overflow: hidden; }
 .dec small { font-size: 12px; color: var(--muted); }
 .dec .sw { display: block; width: 28px; height: 28px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, .3); font-style: normal; }
 .dec .sw.emo { border: none; font-size: 22px; line-height: 28px; }
+
+.returnrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; padding: 8px; border-radius: 12px; background: rgba(255, 159, 107, .15); border: 1px solid #ff9f6b; font-weight: 800; font-size: 13px; }
+.returnrow .btn { padding: 8px 10px; font-size: 13px; }
+.row .px .btn { padding: 6px 8px; font-size: 12px; }
+div.row { cursor: default; }
