@@ -161,3 +161,14 @@ body.noscroll { overflow: hidden; }
 }
 .serve.ready { background: linear-gradient(90deg, var(--gold), #ff7a00); box-shadow: 0 0 18px rgba(255, 160, 0, .5); }
 .shopgo { width: 100%; margin-top: 10px; padding: 12px; font-size: 15px; }
+
+#shopCanvas { touch-action: none; }
+.shopbtns #shopTill.on { color: var(--bg); background: #4ade80; border-color: #4ade80; }
+.stars { color: var(--gold); letter-spacing: 1px; }
+.decor { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+.dec { display: flex; flex-direction: column; align-items: flex-start; gap: 3px; padding: 10px; border-radius: 12px; text-align: left; background: var(--card); border: 1px solid var(--line); }
+.dec.on { border-color: var(--gold); background: rgba(255, 210, 63, .1); }
+.dec b { font-size: 14px; }
+.dec small { font-size: 12px; color: var(--muted); }
+.dec .sw { display: block; width: 28px; height: 28px; border-radius: 8px; border: 1px solid rgba(255, 255, 255, .3); font-style: normal; }
+.dec .sw.emo { border: none; font-size: 22px; line-height: 28px; }

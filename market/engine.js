@@ -232,6 +232,56 @@
     return moved ? { ok: true, moved } : { ok: false, msg: `No ${G[b.good].name} in your cargo or workshop.` };
   }
 
+  // ---------- weather: the same for everyone on a seed, and hot during a heatwave ----------
+  const WEATHER = {
+    sunny: { icon: '☀️', name: 'Sunny', crowd: 1 },
+    cloudy: { icon: '☁️', name: 'Cloudy', crowd: 0.97 },
+    rain: { icon: '🌧️', name: 'Rainy', crowd: 0.82 },
+    hot: { icon: '🥵', name: 'Hot', crowd: 1.05 },
+  };
+  function weather(s, day = s.day) {
+    if (s.effects.some((e) => e.good === 'drinks' && !e.district && e.mult >= 1.5)) return 'hot';
+    const x = seeded(mixSeed(s.seed, day, 99))();
+    return x < 0.22 ? 'rain' : x < 0.45 ? 'cloudy' : x < 0.9 ? 'sunny' : 'hot';
+  }
+  // a stall's star rating (from the reviews on days you ran it) brings more or fewer shoppers
+  const ratingMod = (b) => (b.rating ? 1 + (b.rating - 3.5) * 0.06 : 1);
+
+  // ---------- shop upgrades, bought with cash, that change how the shop works ----------
+  const SHOP_UPGRADES = {
+    selfcheck: { icon: '🖥️', name: 'Self-checkout', cost: 2500, desc: 'Some shoppers scan and pay by themselves.' },
+    coffee: { icon: '☕', name: 'Coffee corner', cost: 4000, desc: 'Draws 12% more shoppers, and some buy a coffee.' },
+    fridge: { icon: '🧊', name: 'Cold drinks fridge', cost: 3000, desc: 'Shoppers grab cold drinks from the fridge, more on hot days.' },
+    gates: { icon: '🚨', name: 'Security gates', cost: 2000, desc: 'Shoplifters are stopped at the door automatically.' },
+  };
+  function buyShopUpgrade(s, id, key) {
+    const b = s.businesses.find((x) => x.id === id), u = SHOP_UPGRADES[key];
+    if (!b || b.kind !== 'stall' || !u) return { ok: false, msg: 'Not found.' };
+    if (b.upgrades && b.upgrades[key]) return { ok: false, msg: 'Already installed.' };
+    if (s.cash < u.cost) return { ok: false, msg: `You need $${u.cost.toLocaleString()} cash.` };
+    s.cash = round2(s.cash - u.cost);
+    b.invested += u.cost;
+    b.upgrades = Object.assign({}, b.upgrades, { [key]: true });
+    return { ok: true };
+  }
+  // money from the shop that isn't your own stock: cold drinks, coffee and tips
+  function shopExtra(s, id, amount) {
+    const b = s.businesses.find((x) => x.id === id);
+    if (!b || !b.last) return { ok: false };
+    s.cash = round2(s.cash + amount);
+    b.last.extra = round2((b.last.extra || 0) + amount);
+    return { ok: true };
+  }
+  // goods walked out of the door without paying
+  function shopLoss(s, id, qty) {
+    const b = s.businesses.find((x) => x.id === id);
+    if (!b || !b.last) return { ok: false };
+    qty = Math.min(qty, b.stock);
+    b.stock -= qty;
+    b.last.stolen = (b.last.stolen || 0) + qty;
+    return { ok: true, qty };
+  }
+
   // ---------- businesses ----------
   const tiers = (b) => (b.kind === 'stall' ? STALLS : FACTORIES);
 
@@ -440,12 +490,13 @@
       if (b.servedDay === s.day) {
         // you ran it yourself today: sales already happened at the counter
         s.cash = round2(s.cash - t.rent);
-        rep.sales += b.last.revenue; rep.upkeep += t.rent;
-        rep.lines.push({ icon: G[b.good].icon, text: `You ran the ${t.name.toLowerCase()} at ${D[b.district].name} yourself: ${b.last.sold} sold for $${Math.round(b.last.revenue).toLocaleString()}.` });
+        rep.sales += b.last.revenue + (b.last.extra || 0); rep.upkeep += t.rent;
+        rep.lines.push({ icon: G[b.good].icon, text: `You ran the ${t.name.toLowerCase()} at ${D[b.district].name} yourself: ${b.last.sold} sold for $${Math.round(b.last.revenue).toLocaleString()}${b.last.extra ? ` (+$${Math.round(b.last.extra).toLocaleString()} extras)` : ''}.` });
         continue;
       }
       const mult = b.mult || RETAIL;
-      const demand = Math.floor(unitsPerDay(t.cap, b.good) * (0.55 + 0.6 * luck) * effectMod(s, b.district, b.good) * priceDemand(mult));
+      const demand = Math.floor(unitsPerDay(t.cap, b.good) * (0.55 + 0.6 * luck) * effectMod(s, b.district, b.good) * priceDemand(mult)
+        * WEATHER[weather(s)].crowd * ratingMod(b) * (b.upgrades && b.upgrades.coffee ? 1.12 : 1));
       const sold = Math.min(b.stock, demand);
       const revenue = round2(sold * price(s, b.district, b.good) * mult);
       b.stock -= sold;
@@ -479,7 +530,7 @@
 
   const api = {
     SEASON_DAYS, GOODS, DISTRICTS, STOCKS, STALLS, FACTORIES, VEHICLES, RANKS, PRODUCE_COST, RETAIL, RESALE, PRICE_MIN, PRICE_MAX,
-    willingShare, priceDemand, shopperLimit, shelfPrice, setShelfPrice, shopDayAvailable, startShopDay, shopSale, shelfRoom, refillShelves, effectMod, LOAN_RATE, DEPOSIT_RATE,
+    willingShare, priceDemand, shopperLimit, WEATHER, weather, ratingMod, SHOP_UPGRADES, buyShopUpgrade, shopExtra, shopLoss, shelfPrice, setShelfPrice, shopDayAvailable, startShopDay, shopSale, shelfRoom, refillShelves, effectMod, LOAN_RATE, DEPOSIT_RATE,
     G, D, seeded, newSeed, newGame, price, buyPrice, sellPrice, quote, maxBuy, buy, sell, cargoUsed, cargoCap,
     openBusiness, upgradeBusiness, upgradeCost, sellBusiness, setProduct, restock, collect, unitsPerDay, storageCap,
     buyVehicle, bankMove, maxDebt, trade, maxShares, netWorth, rankFor, coinsFor, endDay,
