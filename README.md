@@ -24,7 +24,11 @@ day yourself (`market/shop.js`). Shoppers walk in off the street, read the price
 the shelves into a basket, queue at the till and leave if you're too slow. Restocking sends a delivery
 van: the courier drops boxes on the stock pile and a stock clerk carries them to the shelves. Tap SERVE (or the shop floor) to serve the
 customer at the front, change the price as you go, and order stock from your cargo or a workshop in the
-same district. Bigger shops come with helpers who serve on their own. Shelf prices you set also drive the
+same district. Bigger shops come with helpers who serve on their own. The shop has packaged goods on 3D shelves, a
+drinks fridge, an itemised till (card or cash, with change and a printed receipt), sliding doors,
+a street with traffic outside, a sky that goes from morning to night, hanging lamps, shoppers who
+browse, compare and chat (some bring a partner or a child), and soft background music
+(`market/shopart.js` draws the packaging and props). Shelf prices you set also drive the
 automatic sales on the other days: a higher price earns more per sale, but fewer shoppers buy.
 
 Challenges: after a season, share a link; your friend plays the same seed (same prices, news and share
