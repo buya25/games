@@ -52,6 +52,14 @@ function signTex(text, opts = {}) {
     g.fillStyle = color; g.fillText(text, w / 2, h * 0.54);
   });
 }
+// a soft round glow, for pools of lamplight and the halo round a neon sign
+let glowCache = null;
+const glowTex = () => glowCache || (glowCache = canvasTex(128, 128, (g) => {
+  const gr = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.4, 'rgba(255,255,255,.45)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+}));
+const glowMat = (color) => new THREE.MeshBasicMaterial({ map: glowTex(), color, transparent: true, opacity: 0, blending: THREE.AdditiveBlending, depthWrite: false });
 // swap a sign's texture, freeing the old one
 function setMap(mesh, tex) { if (mesh.material.map) mesh.material.map.dispose(); mesh.material.map = tex; mesh.material.needsUpdate = true; }
 const box = (w, h, d, m) => new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
@@ -95,16 +103,37 @@ function bakeAll(root, skip) {
 }
 
 // ---------- product shapes (with the 2D pack drawings as their labels) ----------
+// a round pack turned from its outline ([radius, height] from the bottom up), centred like the boxes
+function lathe(pts, seg = 16) {
+  const g = new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), seg);
+  g.translate(0, -pts[pts.length - 1][1] / 2, 0);
+  return g;
+}
+// several parts as one shape (each keeps its label mapping): [geometry, x, y, z, rotX]
+function joinGeos(parts) {
+  const geos = parts.map(([g, x = 0, y = 0, z = 0, rx = 0]) => { const n = g.index ? g.toNonIndexed() : g; if (rx) n.rotateX(rx); n.translate(x, y, z); return n; });
+  const cat = (k, w) => { const out = new Float32Array(geos.reduce((a, g) => a + g.attributes[k].count * w, 0)); let o = 0; for (const g of geos) { out.set(g.attributes[k].array, o); o += g.attributes[k].array.length; } return new THREE.BufferAttribute(out, w); };
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', cat('position', 3)); geo.setAttribute('normal', cat('normal', 3)); geo.setAttribute('uv', cat('uv', 2));
+  return geo;
+}
+// a coffee bag: a box pinched and folded at the top
+function bag() {
+  const g = new THREE.BoxGeometry(1, 1.6, 0.6, 1, 6, 1), p = g.attributes.position;
+  for (let i = 0; i < p.count; i++) { const y = p.getY(i); if (y > 0.35) p.setZ(i, p.getZ(i) * (1 - 0.75 * Math.min(1, (y - 0.35) / 0.35))); }
+  g.computeVertexNormals();
+  return g;
+}
 const SHAPES = {
-  drinks: { geo: () => new THREE.CylinderGeometry(0.5, 0.5, 1.9, 14), w: 1, h: 1.9 },
-  noodles: { geo: () => new THREE.CylinderGeometry(0.62, 0.48, 1.25, 14), w: 1.24, h: 1.25 },
-  coffee: { geo: () => new THREE.BoxGeometry(1, 1.6, 0.6), w: 1, h: 1.6 },
-  vinyl: { geo: () => new THREE.BoxGeometry(1.6, 1.6, 0.12), w: 1.6, h: 1.6 },
-  holo: { geo: () => new THREE.BoxGeometry(1.1, 1.45, 0.7), w: 1.1, h: 1.45 },
-  sneakers: { geo: () => new THREE.BoxGeometry(1.7, 0.8, 1), w: 1.7, h: 0.8 },
-  chips: { geo: () => new THREE.BoxGeometry(0.9, 1.3, 0.15), w: 0.9, h: 1.3 },
+  drinks: { geo: () => lathe([[0, 0], [0.42, 0], [0.5, 0.08], [0.5, 1.72], [0.44, 1.84], [0.4, 1.86], [0.41, 1.9], [0, 1.9]]), w: 1, h: 1.9 },
+  noodles: { geo: () => lathe([[0, 0], [0.47, 0], [0.5, 0.04], [0.62, 1.16], [0.67, 1.19], [0.67, 1.25], [0, 1.25]]), w: 1.24, h: 1.25 },
+  coffee: { geo: bag, w: 1, h: 1.6 },
+  vinyl: { geo: () => joinGeos([[new THREE.BoxGeometry(1.6, 1.6, 0.08)], [new THREE.CylinderGeometry(0.72, 0.72, 0.03, 24), 0.18, 0.12, -0.06, Math.PI / 2]]), w: 1.6, h: 1.6 },
+  holo: { geo: () => joinGeos([[new THREE.BoxGeometry(1.1, 1.3, 0.7), 0, -0.075, 0], [new THREE.BoxGeometry(0.5, 0.15, 0.04), 0, 0.65, -0.2]]), w: 1.1, h: 1.45 },
+  sneakers: { geo: () => joinGeos([[new THREE.BoxGeometry(1.7, 0.62, 1), 0, -0.09, 0], [new THREE.BoxGeometry(1.78, 0.18, 1.08), 0, 0.31, 0]]), w: 1.78, h: 0.8 },
+  chips: { geo: () => joinGeos([[new THREE.BoxGeometry(0.9, 1.3, 0.06)], [new THREE.BoxGeometry(0.5, 0.55, 0.14), 0, -0.12, 0.08], [new THREE.BoxGeometry(0.16, 0.08, 0.04), 0, 0.56, 0]]), w: 0.9, h: 1.3 },
   signs: { geo: () => new THREE.BoxGeometry(1.7, 1.25, 0.15), w: 1.7, h: 1.25 },
-  bottle: { geo: () => new THREE.CylinderGeometry(0.28, 0.4, 1.9, 10), w: 0.8, h: 1.9 },
+  bottle: { geo: () => lathe([[0, 0], [0.38, 0], [0.4, 0.05], [0.4, 1.05], [0.3, 1.35], [0.16, 1.6], [0.16, 1.78], [0.19, 1.8], [0.19, 1.9], [0, 1.9]], 12), w: 0.8, h: 1.9 },
 };
 const packTexCache = new Map();
 function packTex(good, v) {
@@ -134,20 +163,24 @@ function figure(look, opts = {}) {
   g.add(at(box(0.43, 0.06, 0.25, mat(of.stripe)), 0, 1.1, 0));
   g.userData.armL = limb(0.11, 0.62, arms, -0.28, 1.46); g.userData.armR = limb(0.11, 0.62, arms, 0.28, 1.46);
   for (const arm of [g.userData.armL, g.userData.armR]) arm.add(at(box(0.1, 0.1, 0.1, skinM), 0, -0.66, 0));
-  const head = at(new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), skinM), 0, 1.68, 0); g.add(head);
+  // the head turns on its own (to look along a shelf, or at a shopper)
+  const headG = new THREE.Group(); headG.position.set(0, 1.55, 0); g.add(headG); g.userData.head = headG;
+  const hadd = (o, x, y, z) => headG.add(at(o, x, y - 1.55, z));
+  hadd(new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), skinM), 0, 1.68, 0);
+  hadd(box(0.04, 0.03, 0.02, mat('#1a1418')), -0.05, 1.7, 0.14); hadd(box(0.04, 0.03, 0.02, mat('#1a1418')), 0.05, 1.7, 0.14); // eyes
   // hair styles
   const hs = look.hair;
   if (hs !== 'buzz') {
     const cap = new THREE.Mesh(new THREE.SphereGeometry(hs === 'afro' ? 0.21 : 0.16, 10, 6, 0, Math.PI * 2, 0, Math.PI * (hs === 'afro' ? 0.7 : 0.55)), hairM);
-    g.add(at(cap, 0, 1.7, -0.01));
-    if (hs === 'long' || hs === 'locs') g.add(at(box(0.3, 0.32, 0.08, hairM), 0, 1.55, -0.12));
-    if (hs === 'ponytail' || hs === 'bun') g.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), hairM), 0, hs === 'bun' ? 1.84 : 1.6, -0.17));
+    hadd(cap, 0, 1.7, -0.01);
+    if (hs === 'long' || hs === 'locs') hadd(box(0.3, 0.32, 0.08, hairM), 0, 1.55, -0.12);
+    if (hs === 'ponytail' || hs === 'bun') hadd(new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), hairM), 0, hs === 'bun' ? 1.84 : 1.6, -0.17);
   }
-  if (of.acc === 'cap') g.add(at(box(0.32, 0.06, 0.36, mat(of.accColor)), 0, 1.82, 0.05));
-  if (of.acc === 'crown') g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.08, 6), mat(of.accColor)), 0, 1.86, 0));
-  if (of.acc === 'headphones') g.add(at(box(0.36, 0.08, 0.08, mat(of.accColor)), 0, 1.72, 0));
-  if (of.acc === 'headband') g.add(at(box(0.32, 0.05, 0.32, mat(of.accColor)), 0, 1.74, 0));
-  if (of.acc === 'mohawk') g.add(at(box(0.05, 0.14, 0.26, mat(of.accColor)), 0, 1.86, 0));
+  if (of.acc === 'cap') hadd(box(0.32, 0.06, 0.36, mat(of.accColor)), 0, 1.82, 0.05);
+  if (of.acc === 'crown') hadd(new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.08, 6), mat(of.accColor)), 0, 1.86, 0);
+  if (of.acc === 'headphones') hadd(box(0.36, 0.08, 0.08, mat(of.accColor)), 0, 1.72, 0);
+  if (of.acc === 'headband') hadd(box(0.32, 0.05, 0.32, mat(of.accColor)), 0, 1.74, 0);
+  if (of.acc === 'mohawk') hadd(box(0.05, 0.14, 0.26, mat(of.accColor)), 0, 1.86, 0);
   // a soft shadow on the floor
   const sh = new THREE.Mesh(new THREE.CircleGeometry(0.32, 16), new THREE.MeshBasicMaterial({ color: '#000', transparent: true, opacity: 0.28, depthWrite: false }));
   sh.rotation.x = -Math.PI / 2; sh.position.y = 0.01; g.add(sh);
@@ -155,7 +188,8 @@ function figure(look, opts = {}) {
   if (opts.apron) g.add(at(box(0.34, 0.5, 0.02, mat(opts.apron)), 0, 1.12, 0.13));
   if (of.holo) torso.userData.live = true; // its colour shifts every frame
   bakeChildren(g);
-  for (const k of ['legL', 'legR', 'armL', 'armR']) bakeChildren(g.userData[k]);
+  for (const k of ['legL', 'legR', 'armL', 'armR', 'head']) bakeChildren(g.userData[k]);
+  g.traverse((o) => { if (o.isMesh && !o.material.transparent) o.castShadow = true; });
   return g;
 }
 
@@ -183,12 +217,27 @@ function create(canvas) {
     const live = new Set([parts.dynamic, ...parts.doors, parts.drawer, parts.cash, ...(parts.gates || []), ...parts.units]);
     for (const u of parts.units) bakeChildren(u); // shelving stays in its own group, so a drop can find it
     bakeAll(scene, (o) => { for (let p = o; p; p = p.parent) if (live.has(p)) return true; return false; });
+    // what casts and catches shadows: the room's solid things, and the floor
+    scene.traverse((o) => {
+      if (!o.isMesh || o.isInstancedMesh || !o.material || !o.material.isMeshLambertMaterial || o.material.transparent) return;
+      o.castShadow = true; o.receiveShadow = o.material === vcMat;
+    });
+    parts.floor.receiveShadow = true; parts.floor.castShadow = false;
+    setShadows(window.NeonShop.getGfx() !== 'low' && (run.dprCap || 2) >= 1.5);
     canvas.style.display = 'block';
+  }
+  // soft shadows cost a second pass, so they're on only when the phone keeps up
+  let shadowsOn = false;
+  function setShadows(on) {
+    shadowsOn = on;
+    renderer.shadowMap.enabled = on; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    parts.key.castShadow = on;
+    if (scene) scene.traverse((o) => { if (o.material && o.receiveShadow) o.material.needsUpdate = true; });
   }
   function detach() {
     canvas.style.display = 'none';
     // free the day's geometry and textures (shared materials and product labels are kept)
-    const keepMats = new Set(mats.values()), keepTex = new Set(packTexCache.values());
+    const keepMats = new Set(mats.values()), keepTex = new Set([...packTexCache.values(), glowCache]);
     if (scene) scene.traverse((o) => {
       if (o.geometry) o.geometry.dispose();
       for (const m of [].concat(o.material || [])) {
@@ -196,6 +245,7 @@ function create(canvas) {
         if (!keepMats.has(m) && m !== vcMat) m.dispose();
       }
     });
+    if (parts.key) parts.key.shadow.dispose(); // the light's shadow map
     renderer.renderLists.dispose();
     scene = null; run = null; packMatCache = null;
   }
@@ -257,7 +307,14 @@ function create(canvas) {
     for (const [a, b] of wx) { brickPiece(a, b, 0, ROOM.winLo); brickPiece(a, b, ROOM.winHi, ROOM.ceil); }
     brickPiece(dx[0], dx[1], ROOM.doorH, ROOM.ceil);
     // window frames and glass
-    const frameM = mat('#1b1b26'), glassM = new THREE.MeshBasicMaterial({ color: '#8cd2ff', transparent: true, opacity: 0.08, depthWrite: false });
+    const frameM = mat('#1b1b26');
+    // the glass: a faint tint with diagonal streaks of reflected light
+    const glassM = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.55, depthWrite: false, map: canvasTex(128, 128, (g) => {
+      g.fillStyle = 'rgba(140,210,255,.12)'; g.fillRect(0, 0, 128, 128);
+      g.save(); g.translate(64, 64); g.rotate(-0.6); g.translate(-64, -64);
+      for (const [x, w, a] of [[30, 18, 0.22], [56, 6, 0.16], [92, 26, 0.12]]) { const gr = g.createLinearGradient(x, 0, x + w, 0); gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(0.5, `rgba(255,255,255,${a})`); gr.addColorStop(1, 'rgba(255,255,255,0)'); g.fillStyle = gr; g.fillRect(x, -60, w, 260); }
+      g.restore();
+    }) });
     for (const [a, b] of wx) {
       const w = b - a, h = ROOM.winHi - ROOM.winLo, cy = (ROOM.winLo + ROOM.winHi) / 2;
       scene.add(at(new THREE.Mesh(new THREE.PlaneGeometry(w, h), glassM), (a + b) / 2, cy, -0.05));
@@ -277,6 +334,9 @@ function create(canvas) {
       : signTex(label, { w: 1024, h: 112, bg: '#140628', color: sg.rainbow ? '#ffffff' : sg.color, glow: sg.glow });
     parts.nameSign = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 0.6), new THREE.MeshBasicMaterial({ map: nameTex }));
     parts.nameSign.position.set(0, 3.62, 0.02); scene.add(parts.nameSign);
+    // at night a neon sign throws a glow on the wall around it
+    if (r.b.tier > 0) { parts.signGlow = new THREE.Mesh(new THREE.PlaneGeometry(8, 1.8), glowMat(sg.rainbow ? '#ff7ad9' : sg.color)); parts.signGlow.position.set(0, 3.62, 0.012); scene.add(parts.signGlow); }
+    parts.openGlow = new THREE.Mesh(new THREE.PlaneGeometry(1.9, 0.9), glowMat('#ff2a6d')); parts.openGlow.position.copy(parts.openSign.position); parts.openGlow.position.z = 0.012; scene.add(parts.openGlow);
     // marquee bulbs for a megastore, and holiday lights
     if (r.b.tier >= 2) {
       parts.bulbs = new THREE.InstancedMesh(new THREE.SphereGeometry(0.035, 6, 4), new THREE.MeshBasicMaterial({ color: '#ffffff' }), 60);
@@ -396,10 +456,12 @@ function create(canvas) {
       const tag = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.13), new THREE.MeshBasicMaterial({}));
       tag.position.set((gm.x0 + gm.x1) / 2, shelfH(gm, 1) - 0.03, gm.front + 0.012); g.add(tag);
       // a light-box sign on top of an island
-      if (!gm.wall) {
-        const s = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.28), new THREE.MeshBasicMaterial({ map: signTex(`${G.icon} AISLE ${ui - 1}`, { w: 256, h: 60, bg: '#0b0221', color: '#05d9e8', border: '#05d9e8' }) }));
-        s.position.set((gm.x0 + gm.x1) / 2, gm.h + 0.3, gm.front - 0.2); g.add(s);
-      }
+      // a light-box sign naming the line on it: on top of an island, along the top of a wall unit
+      const line = L.unitLine ? L.unitLine[ui] : 0, lc = ['#05d9e8', '#ff2a6d', '#ffd23f'][line];
+      const lname = (L.lines && L.lines[line] || `AISLE ${ui + 1}`).toUpperCase();
+      const s = new THREE.Mesh(new THREE.PlaneGeometry(gm.wall ? Math.min(1.4, gm.w * 0.8) : 1.2, 0.28), new THREE.MeshBasicMaterial({ map: signTex(`${G.icon} ${lname}`, { w: 256, h: 60, bg: '#0b0221', color: lc, border: lc }) }));
+      if (gm.wall) s.position.set((gm.x0 + gm.x1) / 2, gm.h + 0.2, gm.front - 0.05); else s.position.set((gm.x0 + gm.x1) / 2, gm.h + 0.3, gm.front - 0.2);
+      g.add(s);
       // a shelf sign under one spot
       const tk = r.talkers[ui], ts = tk && r.slots[tk.slot];
       if (ts && ts.u === ui) {
@@ -579,12 +641,19 @@ function create(canvas) {
     parts.hemi = new THREE.HemisphereLight('#cfd8ff', '#3a2a50', 1.2); scene.add(parts.hemi);
     parts.amb = new THREE.AmbientLight('#ffffff', 0.35); scene.add(parts.amb);
     parts.sun = new THREE.DirectionalLight('#fff3dd', 1.2); parts.sun.position.set(3, 9, -12); parts.sun.target.position.set(0, 0, 5); scene.add(parts.sun, parts.sun.target);
+    // a soft key light from above the till: it casts the shadows (when graphics allow)
+    parts.key = new THREE.DirectionalLight('#fff1dc', 0); parts.key.position.set(-3, 12, 0.5); parts.key.target.position.set(0.5, 0, 6);
+    const sc = parts.key.shadow.camera; sc.left = -6.5; sc.right = 6.5; sc.top = 7; sc.bottom = -7; sc.near = 1; sc.far = 25;
+    parts.key.shadow.mapSize.set(1024, 1024); parts.key.shadow.bias = -0.0006; parts.key.shadow.normalBias = 0.03; parts.key.shadow.radius = 3;
+    scene.add(parts.key, parts.key.target);
+    parts.pools = [];
     parts.lamps = L.LAMPS.map(([lx, , fy]) => {
       const X = xOf(lx, fy), Z = zOf(fy), g = new THREE.Group();
       // a small brass pendant high up, so it doesn't hide the shop below
       g.add(at(new THREE.Mesh(new THREE.ConeGeometry(0.16, 0.14, 12, 1, true), mat('#c9a24a', { side: THREE.DoubleSide })), 0, ROOM.ceil - 0.3, 0));
       const bulb = at(new THREE.Mesh(new THREE.SphereGeometry(0.07, 10, 8), new THREE.MeshBasicMaterial({ color: '#fff2c4' })), 0, ROOM.ceil - 0.38, 0); g.add(bulb);
       const light = new THREE.PointLight('#ffd9a0', 9, 10, 1.3); light.position.set(0, ROOM.ceil - 0.5, 0); g.add(light);
+      const pool = rotX(at(new THREE.Mesh(new THREE.PlaneGeometry(4.4, 4.4), glowMat('#ffc777')), 0, 0.014, 0), -Math.PI / 2); g.add(pool); parts.pools.push(pool);
       g.position.set(X, 0, Z); scene.add(g);
       return { light, bulb };
     });
@@ -593,13 +662,13 @@ function create(canvas) {
   // ---------- people ----------
   function syncPeople(dt) {
     const r = run, seen = new Set();
-    const all = r.people.concat([r.clerk], r.van && r.van.courier ? [r.van.courier] : []);
+    const all = r.people.concat([r.clerk], r.van && r.van.courier ? [r.van.courier] : [], r.me ? [r.me] : []);
     for (const p of all) {
       if (p.kind === 'clerk' && (p.state === 'till' || (p.state === 'toTill' && p.y > L.L.counter - 0.04))) continue;
       seen.add(p);
       let f = figs.get(p);
       if (!f) {
-        f = figure(p.look, { apron: p.kind === 'clerk' ? r.decor.uniform.color : null });
+        f = figure(p.look, { apron: p.kind === 'clerk' || p.kind === 'me' ? r.decor.uniform.color : null });
         if (p.child) f.scale.setScalar(0.66);
         f.userData.yaw = 0; f.userData.last = null;
         figs.set(p, f); parts.dynamic.add(f);
@@ -620,8 +689,12 @@ function create(canvas) {
       const moving = p.kind === 'passer' || p.moving || p.state === 'street', sw = moving ? Math.sin(p.phase || 0) * 0.55 : 0;
       f.userData.legL.rotation.x = sw; f.userData.legR.rotation.x = -sw;
       f.userData.armL.rotation.x = -sw * 0.8; f.userData.armR.rotation.x = p.hand ? -Math.PI * 0.9 + Math.sin(r.t * 8) * 0.1 : sw * 0.8;
-      const carrying = (p.kind === 'clerk' && p.carry > 0) || (p.kind === 'courier' && p.box > 0);
+      const carrying = ((p.kind === 'clerk' || p.kind === 'me') && p.carry > 0) || (p.kind === 'courier' && p.box > 0);
       if (carrying) { f.userData.armL.rotation.x = f.userData.armR.rotation.x = -1.2; }
+      // looking along the shelf while they browse
+      const head = f.userData.head, browsing = ['look', 'consider', 'wait', 'help', 'pick'].includes(p.state);
+      if (head) head.rotation.y += ((browsing ? Math.sin(r.t * 1.1 + (p.phase || 0)) * 0.6 : 0) - head.rotation.y) * Math.min(1, dt * 4);
+      if (p.state === 'choring') { f.userData.armR.rotation.x = -1.3 + Math.sin(p.phase) * 0.5; f.userData.armL.rotation.x = -0.9 + Math.cos(p.phase) * 0.4; }
       setHeld(f, 'box', carrying, () => { const b = new THREE.Mesh(parts.boxGeo, parts.boxMat); b.position.set(0, 1.15, 0.38); return b; });
       setHeld(f, 'basket', p.basket > 0 && !p.hidden, () => { const b = new THREE.Group(); b.add(at(box(0.36, 0.2, 0.26, mat('#ff2a6d')), 0, 0, 0)); b.add(at(box(0.3, 0.12, 0.2, packMat()), 0, 0.12, 0)); b.position.set(-0.3, 0.75, 0.05); return b; });
       setHeld(f, 'bag', p.bag, () => at(box(0.26, 0.32, 0.12, mat('#f2e3c6')), 0.32, 0.72, 0));
@@ -656,6 +729,10 @@ function create(canvas) {
       const busy = r.people.some((p) => p.state === 'serving' && p.servedBy === s.who);
       const a = busy ? Math.sin(r.t * 14) * 0.6 - 0.8 : 0;
       f.userData.armL.rotation.x = a; f.userData.armR.rotation.x = busy ? -Math.sin(r.t * 14) * 0.6 - 0.8 : 0;
+      // a wave hello when a shopper comes in, and a glance round the shop now and then
+      if (!busy && r.greetT > 0 && (s.who === -1 || (r.away > 0 && s.who === 0))) { f.userData.armR.rotation.x = -2.7; f.userData.armR.rotation.z = Math.sin(r.t * 16) * 0.35; }
+      else f.userData.armR.rotation.z = 0;
+      if (f.userData.head) f.userData.head.rotation.y = Math.sin(r.t * 0.6 + s.x * 3) * 0.35;
     }
     for (const [k, f] of parts.staffMap) if (!keep.has(k)) { parts.dynamic.remove(f); parts.staffMap.delete(k); dropFig(f); }
   }
@@ -671,13 +748,21 @@ function create(canvas) {
     scene.background = sky;
     parts.sun.intensity = 1.6 * (1 - night);
     parts.sun.color.set(k > 0.6 ? '#ffb070' : '#fff3dd');
-    parts.hemi.intensity = (0.8 + 0.7 * (1 - night)) * (0.3 + 0.7 * lights);
-    parts.amb.intensity = 0.3 + 0.45 * lights;
+    parts.hemi.intensity = (0.8 + 0.7 * (1 - night)) * (0.3 + 0.7 * lights) * (shadowsOn ? 0.55 : 1);
+    parts.amb.intensity = (0.3 + 0.45 * lights) * (shadowsOn ? 0.6 : 1);
+    parts.key.intensity = (shadowsOn ? 1.9 : 0.7) * lights;
+    for (const pl of parts.pools) pl.material.opacity = 0.22 * lights * (0.6 + 0.4 * night);
+    if (parts.signGlow) parts.signGlow.material.opacity = (0.08 + 0.5 * night) * (r.power ? 0 : 1);
+    parts.openGlow.material.opacity = !r.closed && r.intro <= 0.3 && !r.power ? 0.12 + 0.45 * night : 0;
     for (const l of parts.lamps) { l.light.intensity = 9 * lights; l.bulb.material.color.set(lights > 0.5 ? '#fff2c4' : '#4a4a40'); }
     for (const wm of parts.winMats) wm.emissiveIntensity = night * 0.9;
     for (const h of parts.streetLamps || []) h.material.color.set(night > 0.1 ? '#fff2c4' : '#8a8a96');
     // doors and shutters
-    for (const d of parts.doors) d.position.x = d.userData.home + d.userData.s * r.doorOpen * d.userData.dw * 0.92;
+    for (const d of parts.doors) { // they slide with a little bounce at the end
+      const u = d.userData; u.k = u.k || 0; u.v = u.v || 0;
+      u.v += ((r.doorOpen - u.k) * 90 - u.v * 11) * Math.min(dt, 0.05); u.k += u.v * Math.min(dt, 0.05);
+      d.position.x = u.home + u.s * clamp(u.k, -0.03, 1.04) * u.dw * 0.92;
+    }
     for (const s of parts.shutters) { const hh = s.userData.h * r.shutter; s.visible = hh > 0.01; s.scale.y = Math.max(0.001, r.shutter); s.position.set(s.userData.x, s.userData.top - hh / 2, 0.06); }
     // signs that change: OPEN / CLOSED, the poster (SALE!), price tags
     const open = !r.closed && r.intro <= 0.3;
@@ -778,13 +863,22 @@ function create(canvas) {
 
   // ---------- camera ----------
   const BASE = { pos: new THREE.Vector3(0, 9.4, 14.4), look: new THREE.Vector3(0, 0, 4.6) };
-  function placeCamera(W, H) {
+  let followK = 0, fx = 0, fz = 4.6;
+  function placeCamera(W, H, dt) {
     camera.aspect = W / H;
     // fit the room's width on a narrow phone screen
     camera.fov = clamp(48 / Math.min(1, (W / H) / 0.75), 40, 64);
     const r = run, tgt = BASE.look.clone().add(new THREE.Vector3(view.tx, 0, view.tz));
     let pos = BASE.pos.clone().add(new THREE.Vector3(view.tx, 0, view.tz));
-    pos = tgt.clone().add(pos.sub(tgt).multiplyScalar(view.dist));
+    let dist = view.dist;
+    // walking the floor: the camera follows you, a little closer in
+    followK += ((r.me ? 1 : 0) - followK) * Math.min(1, dt * 3);
+    if (r.me) { const mx = xOf(r.me.x, r.me.y), mz = zOf(r.me.y); fx += (mx - fx) * Math.min(1, dt * 4); fz += (mz - fz) * Math.min(1, dt * 4); }
+    if (followK > 0.001) {
+      const off = new THREE.Vector3(fx * 0.8, 0, clamp(fz - 1.2, 1, 8) - BASE.look.z).multiplyScalar(followK);
+      tgt.add(off); pos.add(off); dist = dist + (Math.min(dist, 0.62) - dist) * followK;
+    }
+    pos = tgt.clone().add(pos.sub(tgt).multiplyScalar(dist));
     // a camera move on a big sale or the van arriving
     if (r.cam) {
       const z = 1 + (r.cam.z - 1) * Math.sin(Math.PI * clamp(r.cam.t / r.cam.dur, 0, 1));
@@ -802,7 +896,8 @@ function create(canvas) {
     const W = canvas.clientWidth, H = canvas.clientHeight, dpr = Math.min(window.devicePixelRatio || 1, run.dprCap || 2);
     if (!W || !H) return;
     if (W !== lastW || H !== lastH || dpr !== lastDpr) { renderer.setPixelRatio(dpr); renderer.setSize(W, H, false); lastW = W; lastH = H; lastDpr = dpr; }
-    placeCamera(W, H);
+    if (shadowsOn && (run.dprCap || 2) < 1.5) setShadows(false); // the phone's struggling: drop the shadows first
+    placeCamera(W, H, dt);
     updatePacks(); syncPeople(dt); syncStaff(); syncWorld(dt);
     renderer.render(scene, camera);
   }
@@ -849,6 +944,8 @@ function create(canvas) {
   }
   function zoom(f) { view.dist = clamp(view.dist / f, 0.4, 1); if (view.dist > 0.98) { view.tx = 0; view.tz = 0; } }
   const zoomLevel = () => 1 / view.dist;
+  // how much the camera is looking out at the street (for the street noise): near the windows and zoomed in
+  const streetness = () => clamp((3 - (BASE.look.z + view.tz)) / 3, 0, 1) * clamp((1 - view.dist) / 0.4, 0, 1);
   function pan(dx, dy) {
     if (view.dist > 0.98) return;
     const k = 0.012 * view.dist * 2;
@@ -857,7 +954,7 @@ function create(canvas) {
   function resetView() { view.dist = 1; view.tx = 0; view.tz = 0; }
   const zoomed = () => view.dist < 0.98;
 
-  return { info, _mem: () => renderer.info.memory, _scene: () => scene, _camera: camera, attach, detach, render, project, toFlatAt, unitAt, unitRect, slotOnScreen, zoom, zoomLevel, pan, resetView, zoomed, xOf, zOf };
+  return { info, _shadows: () => shadowsOn, _mem: () => renderer.info.memory, _scene: () => scene, _camera: camera, attach, detach, render, project, toFlatAt, unitAt, unitRect, slotOnScreen, zoom, zoomLevel, streetness, pan, resetView, zoomed, xOf, zOf };
 }
 
 window.NeonShop3D = { supported, create };
