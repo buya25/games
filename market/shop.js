@@ -19,12 +19,13 @@ window.NeonShop = (() => {
   // the front wall is a little narrower than the screen, so the side walls show
   const BX = (x) => 0.5 + (x - 0.5) * 0.86;
   // two shelf walls either side of the door, and two shelf islands in the middle of the floor
-  const UNITS = [
+  const UNITS0 = [
     { x0: BX(0.02), x1: BX(0.39), top: L.wall + 0.006, base: L.door, cols: 5, wall: true },
     { x0: BX(0.61), x1: BX(0.79), top: L.wall + 0.006, base: L.door, cols: 3, wall: true },
     { x0: 0.05, x1: 0.37, top: 0.42, base: 0.53, cols: 4 },
     { x0: 0.63, x1: 0.95, top: 0.42, base: 0.53, cols: 4 },
   ];
+  let UNITS = UNITS0; // the islands can be moved: see applyLayout
   const PILE = { x: 0.12, y: 0.665 };     // where deliveries are stacked
   const CLERK_HOME = { x: 0.27, y: 0.68 };
   // shop upgrades on the floor
@@ -42,7 +43,8 @@ window.NeonShop = (() => {
   const VAN_X = 0.76;
   const FRIDGE = { x0: BX(0.805), x1: BX(0.985), top: 0.075, base: 0.27 };   // a drinks fridge against the front wall
   // props on the shop floor: [kind, x, y]
-  const PROPS = [['plant', BX(0.365), 0.315], ['baskets', BX(0.64), 0.325], ['wet', 0.6, 0.395], ['bin', 0.29, 0.795], ['candy', 0.36, 0.78]];
+  const PROPS0 = [['plant', BX(0.365), 0.315], ['baskets', BX(0.64), 0.325], ['wet', 0.6, 0.395], ['bin', 0.29, 0.795], ['candy', 0.36, 0.78]];
+  let PROPS = PROPS0;
   const JUNGLE = [['plant', 0.075, 0.43], ['plant', 0.925, 0.43], ['plant', BX(0.03), 0.3]];
   const TALKS = [['NEW', '#05d9e8'], ['★ BEST SELLER', '#ffd23f'], ['LOCAL FAV', '#4ade80'], ['HOT', '#ff7a00']];
   const LAMPS = [[0.22, 0.335, 0.64], [0.5, 0.37, 0.48], [0.78, 0.335, 0.64]];   // [x, lamp y, floor y below it]
@@ -86,7 +88,8 @@ window.NeonShop = (() => {
   // ---------- sound ----------
   let actx = null;
   const muted = () => { try { return JSON.parse(localStorage.getItem('neonDash.muted') || 'false'); } catch { return false; } };
-  function tone(freq, dur, type = 'square', vol = 0.05, slide = 0, delay = 0) {
+  // pan: -1 (left) to 1 (right), so a sound comes from where it happens on screen
+  function tone(freq, dur, type = 'square', vol = 0.05, slide = 0, delay = 0, pan = 0) {
     if (muted()) return;
     try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); } catch { return; }
     if (actx.state === 'suspended') actx.resume();
@@ -94,7 +97,9 @@ window.NeonShop = (() => {
     o.type = type; o.frequency.setValueAtTime(freq, t);
     if (slide) o.frequency.exponentialRampToValueAtTime(slide, t + dur);
     g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g).connect(actx.destination); o.start(t); o.stop(t + dur);
+    let out = actx.destination;
+    if (pan && actx.createStereoPanner) { const sp = actx.createStereoPanner(); sp.pan.value = clamp(pan, -1, 1); sp.connect(out); out = sp; }
+    o.connect(g).connect(out); o.start(t); o.stop(t + dur);
   }
   const sfx = {
     ching: () => { tone(1568, 0.08, 'square', 0.05); tone(2093, 0.18, 'square', 0.045, 0, 0.07); },
@@ -103,7 +108,8 @@ window.NeonShop = (() => {
     thud: () => tone(110, 0.14, 'sine', 0.09, 45),
     horn: () => { tone(415, 0.1, 'square', 0.03); tone(415, 0.14, 'square', 0.03, 0, 0.16); },
     pop: () => tone(880, 0.05, 'triangle', 0.02, 1200),
-    beep: () => tone(2600, 0.045, 'square', 0.022),
+    beep: (pan = 0) => tone(2600, 0.045, 'square', 0.022, 0, 0, pan),
+    chime: () => { tone(1568, 0.35, 'sine', 0.035); tone(1175, 0.5, 'sine', 0.03, 0, 0.18); },
     approved: () => { tone(1320, 0.07, 'sine', 0.04); tone(1760, 0.12, 'sine', 0.04, 0, 0.08); },
     coins: () => { for (let i = 0; i < 4; i++) tone(2400 + Math.random() * 1600, 0.05, 'triangle', 0.025, 0, 0.05 + i * 0.06); },
     alarm: () => { for (let i = 0; i < 4; i++) tone(i % 2 ? 880 : 1175, 0.14, 'square', 0.035, 0, i * 0.15); },
@@ -112,6 +118,7 @@ window.NeonShop = (() => {
     drum: () => tone(90, 0.12, 'sine', 0.06, 50),
     shutter: () => noiseBurst(1.1, 0.05, 300, 900),
     whoosh: () => noiseBurst(0.45, 0.05, 600, 2400),
+    step: (vol = 0.03, pan = 0) => noiseBurst(0.07, vol, 260, 140, pan),
   };
   function noiseBuffer(sec) {
     const b = actx.createBuffer(1, Math.ceil(actx.sampleRate * sec), actx.sampleRate), d = b.getChannelData(0);
@@ -119,13 +126,15 @@ window.NeonShop = (() => {
     return b;
   }
   // a short filtered hiss: the sliding doors
-  function noiseBurst(dur, vol, f0, f1) {
+  function noiseBurst(dur, vol, f0, f1, pan = 0) {
     if (muted() || !actx) return;
     const t = actx.currentTime, src = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
     src.buffer = noiseBuffer(dur); f.type = 'bandpass'; f.Q.value = 1.2;
     f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(f1, t + dur);
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + dur * 0.3); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    src.connect(f).connect(g).connect(actx.destination); src.start(t); src.stop(t + dur);
+    let out = actx.destination;
+    if (pan && actx.createStereoPanner) { const sp = actx.createStereoPanner(); sp.pan.value = clamp(pan, -1, 1); sp.connect(out); out = sp; }
+    src.connect(f).connect(g).connect(out); src.start(t); src.stop(t + dur);
   }
   // background: soft shop music, and street noise that gets louder when the doors open
   // the shop music: chord loops and a tempo for each style you can pick
@@ -134,6 +143,13 @@ window.NeonShop = (() => {
     synth: { beat: 0.26, wave: 'square', vol: 0.005, bass: 'sawtooth', arp: [0, 2, 1, 3, 0, 2, 1, 3], chords: [[220, 261.6, 329.6, 440], [174.6, 220, 261.6, 349.2], [261.6, 329.6, 392, 523.3], [196, 246.9, 293.7, 392]] },
     jazz: { beat: 0.5, wave: 'triangle', vol: 0.011, swing: true, arp: [0, 2, 1, 3, 2, 0, 3, 1], chords: [[293.7, 349.2, 440, 523.3], [196, 246.9, 293.7, 349.2], [261.6, 329.6, 392, 493.9], [220, 277.2, 329.6, 392]] },
   };
+  // how much you're looking out at the street (zoomed in near the windows): 0 to 1
+  function streetK(r) {
+    if (r.r3d) return r.r3d.streetness();
+    const zm = r.zoom, cv = r.ui.canvas, H = cv.clientHeight || 1;
+    if (zm.z < 1.05) return 0;
+    return clamp((0.4 - (H / 2 - zm.ty) / zm.z / H) / 0.25, 0, 1);
+  }
   const ambience = {
     street: null,
     start() {
@@ -153,7 +169,10 @@ window.NeonShop = (() => {
     },
     // called every frame: the next note of the music, and the street volume
     tick(r, dt) {
-      if (this.street) this.street.g.gain.setTargetAtTime(0.004 + r.doorOpen * 0.03, actx.currentTime, 0.1);
+      if (this.street) this.street.g.gain.setTargetAtTime(0.004 + r.doorOpen * 0.03 + streetK(r) * 0.022, actx.currentTime, 0.15);
+      // shoppers' footsteps, from where they're walking
+      const walkers = r.people.filter((p) => p.moving && p.kind !== 'passer' && p.y > L.wall);
+      if (walkers.length && Math.random() < dt * Math.min(6, walkers.length * 1.2)) { const p = pick(walkers); sfx.step(0.012, panAt(p.x, p.y)); }
       if (this.crowd) {
         const inside = r.people.filter((p) => p.kind !== 'passer' && p.y > L.wall).length;
         this.crowd.g.gain.setTargetAtTime(Math.min(0.014, inside * 0.0012), actx.currentTime, 0.4);
@@ -188,6 +207,201 @@ window.NeonShop = (() => {
   };
   const depthK = (y) => clamp((y - L.street) / (L.counter - L.street), 0, 1);
   const scaleAt = (y, H) => H * (0.035 + 0.075 * depthK(y));
+  // the same shop in metres (seen from above): X across, Z from the front wall to the till (as the 3D view)
+  const sAt = (y) => 0.035 + 0.075 * depthK(y);
+  const SB = sAt(L.door), SC = sAt(L.counter), RW = 9, RD = 9;
+  const zOf = (y) => (RD * (1 / SB - 1 / sAt(y))) / (1 / SB - 1 / SC);
+  const xOf = (x, y) => (x - 0.5) * (RW / 0.86) * (SB / sAt(y));
+  function toFlat(X, Z) {
+    const k = 1 / (1 / SB - (Z * (1 / SB - 1 / SC)) / RD);
+    return [0.5 + X / ((RW / 0.86) * (SB / k)), L.street + ((k - 0.035) / 0.075) * (L.counter - L.street)];
+  }
+  const metres = (a, b) => Math.hypot(xOf(a.x, a.y) - xOf(b.x, b.y), zOf(a.y) - zOf(b.y));
+  // an island's footprint on the floor, in metres (0.85 m deep behind its front edge)
+  const footprint = (u) => ({ X0: xOf(u.x0, u.base), X1: xOf(u.x1, u.base), Z1: zOf(u.base), Z0: zOf(u.base) - 0.85 });
+  function blocked(x, y, pad = 0.25) {
+    const X = xOf(x, y), Z = zOf(y);
+    return UNITS.some((u) => { if (u.wall) return false; const f = footprint(u); return X > f.X0 - pad && X < f.X1 + pad && Z > f.Z0 - pad && Z < f.Z1 + pad; });
+  }
+
+  // ---------- your layout: where the islands and floor props stand, and which line goes on each unit ----------
+  const ISLAND_H = 0.11, ISLAND_W = 0.32, ISLAND_BASE = 0.53;
+  // an island placed with its centre at x and its front edge at base (it keeps its real size in metres)
+  function island(u, cx, base) {
+    const k = sAt(base) / sAt(ISLAND_BASE), w = ISLAND_W * k;
+    return Object.assign({}, u, { x0: cx - w / 2, x1: cx + w / 2, base, top: base - ISLAND_H * k });
+  }
+  // keep an island off the centre aisle (everyone walks down x = 0.5) and inside the walls
+  function clampIsland(i, cx, base) {
+    base = clamp(base, 0.45, 0.62);
+    const w = ISLAND_W * sAt(base) / sAt(ISLAND_BASE), wallX = toFlat(-RW / 2 + 0.25, zOf(base) - 0.85)[0];
+    cx = i === 2 ? clamp(cx, Math.max(wallX, 0.03) + w / 2, 0.47 - w / 2) : clamp(cx, 0.53 + w / 2, Math.min(1 - wallX, 0.97) - w / 2);
+    return [cx, base];
+  }
+  const PROP_KINDS = { plant: '🪴 Plant', baskets: '🧺 Baskets', wet: '⚠️ Wet-floor sign', bin: '🗑️ Bin', candy: '🍬 Sweets stand' };
+  function clampProp(x, y) { return [clamp(x, 0.06, 0.94), clamp(y, L.enter + 0.01, L.counter - 0.015)]; }
+  const layoutUnits = (lay) => UNITS0.map((u, i) => {
+    const m = !u.wall && lay.units && lay.units[i];
+    return m ? island(u, ...clampIsland(i, m.x, m.base)) : Object.assign({}, u);
+  });
+  function applyLayout(b) {
+    const lay = b.layout || {};
+    UNITS = layoutUnits(lay);
+    PROPS = lay.props && lay.props.length === PROPS0.length ? lay.props.map(([k, x, y]) => [k, ...clampProp(x, y)]) : PROPS0;
+    // a prop dragged onto an island goes back where it was
+    PROPS = PROPS.map((pr, i) => (blocked(pr[1], pr[2], 0.05) ? PROPS0[i] : pr));
+  }
+
+  // ---------- the shop seen from above (the Arrange sheet and the closing heat map) ----------
+  // shapes in metres for a layout
+  function planShapes(b, lay = b.layout || {}) {
+    const units = layoutUnits(lay), saved = UNITS;
+    UNITS = units; // so blocked() checks this layout
+    const lines = unitLines(Object.assign({}, b, { layout: lay }));
+    const props = (lay.props && lay.props.length === PROPS0.length ? lay.props : PROPS0).map(([k, x, y], i) => {
+      const [cx, cy] = clampProp(x, y), ok = !blocked(cx, cy, 0.05), [px, py] = ok ? [cx, cy] : [PROPS0[i][1], PROPS0[i][2]];
+      return { kind: k, x: px, y: py, X: xOf(px, py), Z: zOf(py), i };
+    });
+    UNITS = saved;
+    return {
+      units: units.map((u, i) => (u.wall ? { i, wall: true, X0: xOf(u.x0, u.base), X1: xOf(u.x1, u.base), Z0: 0.07, Z1: 0.57, line: lines[i] } : Object.assign({ i, wall: false, line: lines[i], x: (u.x0 + u.x1) / 2, base: u.base }, footprint(u)))),
+      props, lines: lineNames(b), colors: LINE_COLORS,
+      counter: { X0: xOf(0, L.counter) - 0.2, X1: -xOf(0, L.counter) + 0.2, Z0: zOf(L.counter), Z1: zOf(L.counter) + 0.85 },
+      pile: { X: xOf(PILE.x, PILE.y), Z: zOf(PILE.y) }, fridge: { X0: xOf(FRIDGE.x0, L.door), X1: xOf(FRIDGE.x1, L.door) },
+      door: { X0: xOf(FRONT.door[0], L.door), X1: xOf(FRONT.door[1], L.door) }, windows: FRONT.windows.map(([a, c]) => [xOf(a, L.door), xOf(c, L.door)]),
+    };
+  }
+  // fit the plan into a W×H canvas
+  const planView = (W, H) => { const k = Math.min(W / 9.8, H / 10.9); return { k, ox: W / 2, oy: (H - 10.9 * k) / 2 + 0.55 * k }; };
+  const planTo = (W, H, X, Z) => { const v = planView(W, H); return [v.ox + X * v.k, v.oy + Z * v.k]; };
+  const planFrom = (W, H, x, y) => { const v = planView(W, H); return [(x - v.ox) / v.k, (y - v.oy) / v.k]; };
+  // draw the plan: opts.heat paints where shoppers spent their time; opts.pick highlights one item
+  function drawPlan(ctx, W, H, sh, opts = {}) {
+    const P = (X, Z) => planTo(W, H, X, Z), k = planView(W, H).k, dec = window.NeonShopArt.decor();
+    const rect = (X0, Z0, X1, Z1) => { const [a, b] = P(X0, Z0), [c, d] = P(X1, Z1); return [a, b, c - a, d - b]; };
+    ctx.clearRect(0, 0, W, H);
+    // floor, walls, the till
+    ctx.fillStyle = dec.floor.a; ctx.fillRect(...rect(-RW / 2, 0, RW / 2, 10.3));
+    ctx.fillStyle = 'rgba(0,0,0,.12)'; for (let z = 0; z < 10.3; z += 0.6) for (let x = -RW / 2 + ((z / 0.6) % 2) * 0.6; x < RW / 2; x += 1.2) ctx.fillRect(...rect(x, z, Math.min(x + 0.6, RW / 2), Math.min(z + 0.6, 10.3)));
+    if (opts.heat) {
+      const hm = opts.heat, max = Math.max(0.001, ...hm.data);
+      for (let gy = 0; gy < hm.y; gy++) for (let gx = 0; gx < hm.x; gx++) {
+        const v = hm.data[gy * hm.x + gx] / max; if (v < 0.04) continue;
+        ctx.fillStyle = `hsla(${(1 - v) * 220}, 95%, 55%, ${0.25 + v * 0.5})`;
+        ctx.fillRect(...rect(-RW / 2 + (gx * RW) / hm.x, (gy * 9.6) / hm.y, -RW / 2 + ((gx + 1) * RW) / hm.x, ((gy + 1) * 9.6) / hm.y));
+      }
+    }
+    ctx.fillStyle = dec.walls.wall;
+    ctx.fillRect(...rect(-RW / 2 - 0.2, -0.3, -RW / 2, 10.3)); ctx.fillRect(...rect(RW / 2, -0.3, RW / 2 + 0.2, 10.3));
+    ctx.fillStyle = '#5a1f45'; ctx.fillRect(...rect(-RW / 2 - 0.2, -0.3, RW / 2 + 0.2, 0));
+    ctx.fillStyle = '#8cd2ff'; for (const [a, c] of sh.windows) ctx.fillRect(...rect(a, -0.2, c, -0.1));
+    ctx.fillStyle = dec.floor.a; ctx.fillRect(...rect(sh.door.X0, -0.3, sh.door.X1, 0));
+    ctx.fillStyle = '#c4bddc'; ctx.fillRect(...rect(sh.counter.X0, sh.counter.Z0, sh.counter.X1, sh.counter.Z1));
+    ctx.fillStyle = '#e8f6ff'; ctx.fillRect(...rect(sh.fridge.X0, 0.05, sh.fridge.X1, 0.75));
+    ctx.fillStyle = '#a8713a'; ctx.fillRect(...rect(sh.pile.X - 0.6, sh.pile.Z - 0.45, sh.pile.X + 0.6, sh.pile.Z + 0.45));
+    ctx.font = `800 ${Math.max(9, Math.round(k * 0.3))}px system-ui, sans-serif`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#0b0221';
+    ctx.fillText('TILL', ...P(0, (sh.counter.Z0 + sh.counter.Z1) / 2)); ctx.fillText('📦', ...P(sh.pile.X, sh.pile.Z));
+    ctx.fillStyle = '#4ade80'; ctx.fillText('DOOR', ...P((sh.door.X0 + sh.door.X1) / 2, -0.55));
+    // shelving, coloured by the line on it
+    for (const u of sh.units) {
+      const on = opts.pick && opts.pick.type === 'unit' && opts.pick.i === u.i, col = sh.colors[u.line];
+      ctx.fillStyle = '#6a34c8'; ctx.fillRect(...rect(u.X0, u.Z0, u.X1, u.Z1)); ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.lineWidth = 1; ctx.strokeRect(...rect(u.X0, u.Z0, u.X1, u.Z1));
+      ctx.fillStyle = col; ctx.fillRect(...rect(u.X0, u.Z1 - 0.12, u.X1, u.Z1));
+      if (!u.wall) ctx.fillRect(...rect(u.X0, u.Z0, u.X1, u.Z0 + 0.12));
+      if (on) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.setLineDash([5, 4]); ctx.strokeRect(...rect(u.X0 - 0.08, u.Z0 - 0.08, u.X1 + 0.08, u.Z1 + 0.08)); ctx.setLineDash([]); }
+      ctx.fillStyle = '#fff'; ctx.fillText(sh.lines[u.line], ...P((u.X0 + u.X1) / 2, (u.Z0 + u.Z1) / 2));
+    }
+    // floor props
+    ctx.font = `${Math.max(14, Math.round(k * 0.6))}px system-ui, sans-serif`;
+    for (const pr of sh.props) {
+      const [x, y] = P(pr.X, pr.Z);
+      if (opts.pick && opts.pick.type === 'prop' && opts.pick.i === pr.i) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(x, y, k * 0.45, 0, Math.PI * 2); ctx.stroke(); }
+      ctx.fillText(PROP_KINDS[pr.kind].split(' ')[0], x, y);
+    }
+    ctx.textAlign = 'start'; ctx.textBaseline = 'alphabetic';
+  }
+  // what's under a point on the plan: { type: 'unit' | 'prop', i } or null
+  function planHit(W, H, sh, x, y) {
+    const [X, Z] = planFrom(W, H, x, y);
+    const pr = sh.props.slice().sort((a, b) => Math.hypot(a.X - X, a.Z - Z) - Math.hypot(b.X - X, b.Z - Z))[0];
+    if (pr && Math.hypot(pr.X - X, pr.Z - Z) < 0.6) return { type: 'prop', i: pr.i };
+    const u = sh.units.find((v) => X > v.X0 - 0.2 && X < v.X1 + 0.2 && Z > v.Z0 - 0.2 && Z < v.Z1 + 0.2);
+    return u ? { type: 'unit', i: u.i, wall: u.wall } : null;
+  }
+  // move an item on the plan to a point; returns the new layout
+  function planMove(b, lay, pick, W, H, x, y) {
+    const [X, Z] = planFrom(W, H, x, y);
+    lay = JSON.parse(JSON.stringify(lay || {}));
+    if (pick.type === 'unit') {
+      if (UNITS0[pick.i].wall) return lay;
+      const [cx, base] = toFlat(X, clamp(Z + 0.42, 1, 9));
+      const [x2, b2] = clampIsland(pick.i, cx, base);
+      // the two islands can't overlap
+      const other = layoutUnits(lay)[pick.i === 2 ? 3 : 2], me = island(UNITS0[pick.i], x2, b2), f1 = footprint(me), f2 = footprint(other);
+      if (f1.X1 > f2.X0 - 0.3 && f1.X0 < f2.X1 + 0.3 && f1.Z1 > f2.Z0 - 0.3 && f1.Z0 < f2.Z1 + 0.3) return lay;
+      lay.units = lay.units || {}; lay.units[pick.i] = { x: x2, base: b2 };
+    } else {
+      const props = lay.props && lay.props.length === PROPS0.length ? lay.props : PROPS0.map((pr) => pr.slice());
+      const [px, py] = clampProp(...toFlat(X, Z)), saved = UNITS;
+      UNITS = layoutUnits(lay); const bad = blocked(px, py, 0.05); UNITS = saved;
+      if (bad) return lay;
+      props[pick.i] = [props[pick.i][0], px, py]; lay.props = props;
+    }
+    return lay;
+  }
+
+  // ---------- today's goal ----------
+  const GOALS = [
+    { id: 'serve', make: (r) => Math.max(6, Math.round(r.entrants * 0.55)), text: (n) => `Serve ${n} shoppers`, prog: (r) => r.served },
+    { id: 'take', make: (r) => Math.max(20, Math.round((r.entrants * 0.45 * r.qtyMean * T.shelfPrice(r.s, r.b)) / 10) * 10), text: (n) => `Take $${n.toLocaleString()}`, prog: (r) => r.revenue },
+    { id: 'help', make: () => 2, text: (n) => `Help ${n} shoppers who ask`, prog: (r) => r.stats.helped },
+    { id: 'patient', make: () => 0, text: () => 'Nobody walks out of the queue', fail: (r) => r.lostWait > 0 },
+    { id: 'thief', make: () => 0, text: () => 'No shoplifter gets away', fail: (r) => r.stats.stolen > 0 },
+    { id: 'stars', make: () => 4, text: () => 'Earn a 4★ day', end: (r) => (r.stars || 0) >= 4 },
+  ];
+  const pickGoal = (s, b) => ({ id: GOALS[(s.day * 5 + b.id * 3 + (b.tier || 0)) % GOALS.length].id, n: 0 });
+  const goalDef = (g) => GOALS.find((x) => x.id === g.id);
+  // the goal's text and how it's going: { text, prog, done, failed }
+  function goalInfo() {
+    const r = run;
+    if (!r) return null;
+    const g = r.goal, d = goalDef(g);
+    if (!g.n) g.n = d.make(r);
+    const text = d.text(g.n);
+    if (d.fail) { const failed = d.fail(r); return { text, prog: failed ? '✗' : r.closed ? '✓' : 'so far ✓', done: !failed && r.closed, failed }; }
+    if (d.end) return { text, prog: 'at closing', done: false, failed: false };
+    const v = d.prog(r);
+    return { text, prog: d.id === 'take' ? `$${Math.round(v).toLocaleString()}/${g.n.toLocaleString()}` : `${Math.min(v, g.n)}/${g.n}`, done: v >= g.n, failed: false };
+  }
+  // judged at closing: met or not, the coins it pays, and the streak
+  function judgeGoal() {
+    const r = run, b = r.b, d = goalDef(r.goal);
+    if (!r.goal.n) r.goal.n = d.make(r);
+    const met = d.fail ? !d.fail(r) && r.served >= 3 : d.end ? d.end(r) : d.prog(r) >= r.goal.n;
+    b.goalStreak = met ? (b.goalStreak || 0) + 1 : 0;
+    return { text: d.text(r.goal.n), met, streak: b.goalStreak, reward: met ? 15 + 5 * Math.min(5, b.goalStreak) : 0 };
+  }
+
+  // where shoppers spend their time, on a grid over the floor (shown on the closing report)
+  const HEAT_X = 14, HEAT_Y = 12;
+
+  // ---------- product lines: two or three kinds of each good, each on its own shelving ----------
+  const LINES = {
+    drinks: ['Original', 'Zero', 'Mega'], noodles: ['Chicken', 'Spicy', 'Veggie'], coffee: ['House', 'Dark roast', 'Decaf'], vinyl: ['Pop', 'Jazz', 'Rock'],
+    holo: ['Robots', 'Pets', 'Dragons'], sneakers: ['Runners', 'High-tops', 'Slides'], chips: ['Basic', 'Pro', 'Ultra'], signs: ['Small', 'Arrow', 'Custom'],
+  };
+  const LINE_V = [0, 2, 4];            // the pack colourway for each line
+  const LINE_COLORS = ['#05d9e8', '#ff2a6d', '#ffd23f'];
+  const lineCount = (tier) => (tier === 0 ? 2 : 3);
+  const lineNames = (b) => (LINES[b.good] || ['Classic', 'Special', 'Deluxe']).slice(0, lineCount(b.tier));
+  // which line is on each shelving unit (your choice, or a mix by default)
+  function unitLines(b) {
+    const n = lineCount(b.tier), lay = b.layout || {};
+    return UNITS0.map((_, i) => { const l = lay.lines && lay.lines[i]; return Number.isInteger(l) && l < n ? l : [0, 1, 2, 0][i] % n; });
+  }
+  // today's trending line (the same all day; changes from day to day)
+  const trending = (s, b) => (s.day * 7 + b.id * 3) % lineCount(b.tier);
 
   // shelf geometry
   const kick = (u) => (u.base - u.top) * 0.12;
@@ -209,7 +423,7 @@ window.NeonShop = (() => {
   const shelfTotal = () => run.slots.reduce((a, sl) => a + sl.n, 0);
   const unitItems = (ui) => run.slots.reduce((a, sl) => a + (sl.u === ui ? sl.n : 0), 0);
   const unitRoom = (ui) => run.slots.reduce((a, sl) => a + (sl.u === ui ? run.cap - sl.n : 0), 0);
-  const backTotal = () => run.pile + run.incoming + run.clerk.carry;
+  const backTotal = () => run.pile + run.incoming + run.clerk.carry + (run.me ? run.me.carry : 0);
 
   // ---------- open / close ----------
   // ui: { canvas, onTick(run), onEnd(summary) }
@@ -228,7 +442,9 @@ window.NeonShop = (() => {
     // a present owner draws a bigger crowd than the automatic day (35% more shoppers)
     const entrants = Math.max(3, Math.round(Math.min(CUSTOMERS[tier], units * 1.35) * crowd) + Math.floor(b.regulars.length / 2));
     const qtyMean = Math.max(1, (units * 1.35 * crowd) / entrants);
-    const slots = makeSlots();
+    applyLayout(b);
+    const slots = makeSlots(), ul = unitLines(b);
+    for (const sl of slots) { sl.line = ul[sl.u]; sl.v = LINE_V[sl.line]; }
     // how many units one shelf spot holds: enough that a full shop's worth fits on the shelves
     const cap = Math.max(1, Math.ceil(Math.max(units * 3, b.stock) / slots.length));
     run = {
@@ -258,6 +474,9 @@ window.NeonShop = (() => {
       intro: 2.6, outro: 0, lights: 0, shutter: 1,
       floor: [], till2: false, till2Timer: 0, drag: null, away: 0, cam: null, view: null,
       dprCap: startCap(),
+      // walking the floor yourself, today's goal, product lines, where shoppers spent their time
+      me: null, greetT: 0, lines: lineNames(b), unitLine: ul, trend: trending(s, b), lineSold: lineNames(b).map(() => 0),
+      heat: new Float32Array(HEAT_X * HEAT_Y), goal: pickGoal(s, b),
       stats: { waits: [], stolen: 0, caught: 0, helped: 0, extras: 0, good: 0, bad: 0, returns: 0, newRegulars: 0, rewards: 0, reducedSold: 0, knocked: 0, haul: false },
     };
     // wear and tear builds up over the season: scuffs on the floor, smudges on the windows
@@ -271,6 +490,11 @@ window.NeonShop = (() => {
       for (const sl of order) { if (left <= 0) break; sl.n++; left--; }
     }
     run.pile = left;
+    // a basket stand near the door, and sweets by the till, sell a little more
+    const propAt = (k) => PROPS.find((pr) => pr[0] === k);
+    const bk = propAt('baskets'), cd = propAt('candy');
+    run.basketsNear = !!bk && metres({ x: bk[1], y: bk[2] }, { x: 0.5, y: L.enter }) < 3;
+    run.candyNear = !!cd && metres({ x: cd[1], y: cd[2] }, { x: 0.5, y: L.counter - 0.04 }) < 2.6;
     // passers-by who just walk past, so the street feels alive
     for (let i = 0; i < 4; i++) addPasser(Math.random());
     ambience.start();
@@ -305,6 +529,8 @@ window.NeonShop = (() => {
       reducedSold: st.reducedSold, knocked: st.knocked, haul: st.haul, event: r.event, holiday: r.holiday,
       staff: r.staff.map((x) => ({ name: x.m.name, served: x.served, morale: x.m.morale })),
       stars: r.stars, rating: r.b.rating, reviews: r.b.reviews || [],
+      goal: r.goalResult || null, lines: r.lines, lineSold: r.lineSold, trend: r.trend,
+      heat: { x: HEAT_X, y: HEAT_Y, data: Array.from(r.heat) }, plan: planShapes(r.b),
     };
   }
 
@@ -338,6 +564,7 @@ window.NeonShop = (() => {
     b.rating = b.rating ? Math.round((b.rating * 0.6 + stars * 0.4) * 10) / 10 : stars;
     b.reviews = reviews;
     b.usual = mult; // regulars expect this price next time
+    r.goalResult = judgeGoal();
   }
 
   // ---------- people ----------
@@ -364,8 +591,15 @@ window.NeonShop = (() => {
     if (regs.length && Math.random() < Math.min(0.25, 0.04 * r.b.regulars.length)) {
       const g = pick(regs);
       Object.assign(lead, { type: 'regular', badge: '⭐', reg: g, name: g.name, look: g.look });
-    } else for (const [type, chance, badge] of TYPES) { if (roll < chance) { lead.type = type; lead.badge = badge; break; } roll -= chance; }
+    } else for (const [type, chance, badge] of TYPES) { const c = type === 'thief' ? chance * (1 + 0.5 * doorK()) : chance; if (roll < c) { lead.type = type; lead.badge = badge; break; } roll -= c; }
     if (lead.type === 'returner') lead.qty = 1;
+    // which line they're after: a regular always wants the same one; today's trend is more popular
+    if (lead.reg && Number.isInteger(lead.reg.line) && lead.reg.line < r.lines.length) lead.line = lead.reg.line;
+    else {
+      const w = r.lines.map((_, i) => (i === r.trend ? 1.8 : 1)); let k = Math.random() * w.reduce((a, x) => a + x, 0);
+      lead.line = 0; for (let i = 0; i < w.length; i++) { k -= w[i]; if (k <= 0) { lead.line = i; break; } }
+      if (lead.reg) lead.reg.line = lead.line;
+    }
     // some walk a dog, which waits outside
     if (lead.type !== 'thief' && Math.random() < 0.07) r.dogs.push({ owner: lead, x: lead.x - dir * 0.04, y: L.street + 0.003, phase: 0, look: (Math.random() * 3) | 0 });
     const usual = run.b.usual || T.RETAIL;
@@ -410,6 +644,8 @@ window.NeonShop = (() => {
   }
 
   const say = (p, text, sec = 2.2) => { p.bubble = text; p.bubbleT = sec; };
+  // a small face over their head: 😍 a bargain, 💸 too dear, 🤔 thinking, 😤 waiting too long
+  const react = (p, icon) => { p.react = { icon, t: 1.6 }; };
   const pick = (a) => a[(Math.random() * a.length) | 0];
   function leaveShop(p, mood, bubble) {
     if (p.basket) { run.pile += p.basket; p.basket = 0; } // a dropped basket goes back to the stock pile
@@ -418,9 +654,12 @@ window.NeonShop = (() => {
     p.path = routeTo(p, { x: 0.5, y: L.enter }).concat([[0.5, L.street]]);
   }
 
-  // pick a shelf to visit, favouring well-stocked ones
-  function pickUnit() {
-    const w = UNITS.map((_, i) => unitItems(i) + 0.5);
+  const doorPull = (u) => (u.wall ? 0 : clamp((ISLAND_BASE - u.base) / 0.08, -1, 1)); // 0 where islands usually stand, 1 right by the door, -1 at the back
+  const doorK = () => (doorPull(UNITS[2]) + doorPull(UNITS[3])) / 2;
+  const lineItems = (line) => run.slots.reduce((a, sl) => a + (sl.line === line ? sl.n : 0), 0);
+  // pick a shelf to visit: the shopper's line first, well-stocked ones, and islands near the door catch the eye
+  function pickUnit(p) {
+    const w = UNITS.map((u, i) => (unitItems(i) + 0.5) * (p && run.unitLine[i] !== p.line ? 0.25 : 1) * (1 + 0.4 * doorPull(u)));
     let r = Math.random() * w.reduce((a, b) => a + b, 0);
     for (let i = 0; i < w.length; i++) { r -= w[i]; if (r <= 0) return i; }
     return 0;
@@ -429,9 +668,11 @@ window.NeonShop = (() => {
   // take goods off the shelves into the basket; the nearest shelf spots go first
   function takeGoods(p) {
     let need = Math.min(p.qty, shelfTotal()), flies = 0;
+    p.got = p.line;
     while (need > 0) {
-      const mine = run.slots.filter((sl) => sl.n > 0 && sl.u === p.unit);
-      const pool = mine.length ? mine : run.slots.filter((sl) => sl.n > 0);
+      const mine = run.slots.filter((sl) => sl.n > 0 && sl.u === p.unit && sl.line === p.line);
+      const theirs = run.slots.filter((sl) => sl.n > 0 && sl.line === p.line);
+      const pool = mine.length ? mine : theirs.length ? theirs : run.slots.filter((sl) => sl.n > 0);
       pool.sort((a, c) => Math.abs(a.x - p.x) - Math.abs(c.x - p.x) || c.row - a.row);
       const sl = pool[0], t = Math.min(need, sl.n);
       sl.n -= t; need -= t; p.basket += t;
@@ -475,6 +716,7 @@ window.NeonShop = (() => {
     }
     if (r.cam && (r.cam.t += dt) > r.cam.dur) r.cam = null;
     if (r.alarm > 0) r.alarm -= dt;
+    if (r.greetT > 0) r.greetT -= dt;
     if (r.info && (r.info.t -= dt) <= 0) r.info = null;
     if (!r.drag && r.away > 0) r.away -= dt;
     // weather: rain falling outside, clouds drifting
@@ -498,13 +740,18 @@ window.NeonShop = (() => {
     for (const p of r.people) {
       p.moving = false;
       if (p.bubbleT !== undefined) p.bubbleT -= dt;
+      if (p.react && (p.react.t -= dt) <= 0) p.react = null;
+      if (p.kind !== 'passer' && p.y > L.enter - 0.01 && p.y < L.counter) { // the heat map
+        const gx = clamp(Math.floor(((xOf(p.x, p.y) + RW / 2) / RW) * HEAT_X), 0, HEAT_X - 1), gy = clamp(Math.floor((zOf(p.y) / 9.6) * HEAT_Y), 0, HEAT_Y - 1);
+        r.heat[gy * HEAT_X + gx] += dt;
+      }
       if (p.kind === 'passer') { p.x += p.dir * p.speed * dt; p.phase += dt * 8; p.moving = true; continue; }
       switch (p.state) {
         case 'street': // walk along the pavement, turn in at the door
           p.x += p.dir * p.speed * dt; p.phase += dt * 8; p.moving = true;
           if (!open) { p.kind = 'passer'; break; }
           if (Math.abs(p.x - 0.5) < 0.02) {
-            p.x = 0.5; p.state = 'enter'; p.unit = pickUnit();
+            p.x = 0.5; p.state = 'enter'; p.unit = pickUnit(p);
             const spot = unitSpot(UNITS[p.unit]);
             p.path = [[0.5, L.enter]].concat(routeTo({ x: 0.5, y: L.enter }, spot));
           }
@@ -518,7 +765,9 @@ window.NeonShop = (() => {
               break;
             }
             if (!p.greeted) {
-              p.greeted = true;
+              p.greeted = true; r.greetT = 1.2; // the staff wave hello
+              if (r.basketsNear && Math.random() < 0.25) p.qty++;              // grabbed a basket at the door: buys a bit more
+              if (Math.random() < 0.2 * Math.max(0, doorPull(UNITS[p.unit]))) p.qty++;     // something by the door caught their eye
               if (GREET[p.type]) say(p, GREET[p.type], 1.6);
               else if (r.weather === 'rain' && Math.random() < 0.3) say(p, '☔ Wet out there!', 1.6);
               else if (r.weather === 'hot' && Math.random() < 0.3) say(p, '🥵 So hot today!', 1.6);
@@ -562,7 +811,7 @@ window.NeonShop = (() => {
           }
           // some pick a pack up to look at it first, then buy it or put it back
           if (shelfTotal() > 0 && !p.considered && Math.random() < (mult > p.limit ? 0.6 : 0.3)) {
-            p.considered = true; p.state = 'consider'; p.timer = rand(0.9, 1.5); p.hold = true;
+            p.considered = true; p.state = 'consider'; p.timer = rand(0.9, 1.5); p.hold = true; react(p, '🤔');
             break;
           }
           // they can see the rival's prices across the road
@@ -571,13 +820,24 @@ window.NeonShop = (() => {
             break;
           }
           if (mult > p.limit) {
-            r.lostPrice++;
+            r.lostPrice++; react(p, '💸');
             leaveShop(p, 'angry', p.type === 'regular' ? '😤 You raised prices!' : p.type === 'bargain' ? '🏷️ No deals today.' : pick(['😒 Too pricey!', '😒 How much?!', '💸 Nope.']));
             break;
           }
-          if (shelfTotal() > 0) takeGoods(p);
-          else if (backTotal() > 0) { p.state = 'wait'; p.wait = 0; p.mood = 'meh'; say(p, '⏳ Restock, please?', 99); }
-          else { r.lostStock++; leaveShop(p, 'sad', '📦 Out of stock?!'); }
+          if (mult < p.limit * 0.85) react(p, '😍');
+          if (lineItems(p.line) > 0) {
+            if (run.unitLine[p.unit] !== p.line && !p.moved) { // their line is on another shelf: walk over to it
+              p.moved = true; p.unit = run.unitLine.findIndex((l, i) => l === p.line && unitItems(i) > 0);
+              if (p.unit < 0) p.unit = run.unitLine.indexOf(p.line);
+              p.path = routeTo(p, unitSpot(UNITS[p.unit])); p.state = 'enter';
+            } else takeGoods(p);
+          } else if (shelfTotal() > 0 && !p.subbed && Math.random() < 0.55) { // they'll try another line instead
+            p.subbed = true; const was = r.lines[p.line];
+            p.line = r.lines.map((_, i) => i).filter((i) => lineItems(i) > 0).sort((a, b) => lineItems(b) - lineItems(a))[0];
+            say(p, `🤷 No ${was}… I'll try ${r.lines[p.line]}`, 1.8); react(p, '🤷');
+            p.state = 'look'; p.timer = 0.2; p.moved = false;
+          } else if (backTotal() > 0) { p.state = 'wait'; p.wait = 0; p.mood = 'meh'; say(p, `⏳ Any more ${r.lines[p.line]}?`, 99); }
+          else { r.lostStock++; leaveShop(p, 'sad', `📦 No ${r.lines[p.line]} left?!`); }
           break;
         case 'consider': // holding a pack, reading the label
           p.timer -= dt;
@@ -591,8 +851,8 @@ window.NeonShop = (() => {
           break;
         case 'wait': // shelves are empty but there is stock out back
           p.wait += dt;
-          if (shelfTotal() > 0) { p.bubbleT = 0; takeGoods(p); }
-          else if (p.wait > p.patience || backTotal() === 0) { r.lostStock++; leaveShop(p, 'sad', '📦 Out of stock?!'); }
+          if (lineItems(p.line) > 0) { p.bubbleT = 0; takeGoods(p); }
+          else if (p.wait > p.patience || backTotal() === 0) { r.lostStock++; leaveShop(p, 'sad', `📦 No ${r.lines[p.line]} left?!`); }
           break;
         case 'pick':
           p.timer -= dt;
@@ -627,7 +887,7 @@ window.NeonShop = (() => {
         case 'kiosk': {
           p.timer -= dt;
           const scanned = Math.ceil(clamp(1 - p.timer / p.serveDur, 0, 1) * p.basket);
-          if (scanned > (p.scanned || 0)) { p.scanned = scanned; sfx.beep(); }
+          if (scanned > (p.scanned || 0)) { p.scanned = scanned; sfx.beep(panAt(KIOSK.x, KIOSK.y)); }
           if (p.timer <= 0) { r.kioskBusy = null; finishSale(p, 'kiosk'); }
           break;
         }
@@ -636,7 +896,7 @@ window.NeonShop = (() => {
           moveToward(p, spot.x, spot.y, dt, 0.25);
           p.facing = 'front';
           p.wait += dt;
-          if (p.wait > p.patience * 0.6) p.mood = 'meh';
+          if (p.wait > p.patience * 0.6) { p.mood = 'meh'; if (!p.fumed) { p.fumed = true; react(p, '😤'); } }
           if (p.wait > p.patience) { r.lostWait++; leaveShop(p, 'angry', pick(['😠 Too slow!', '😠 Forget it!'])); sfx.huff(); }
           break;
         }
@@ -648,7 +908,7 @@ window.NeonShop = (() => {
           p.timer -= dt;
           // the scanner beeps for each item
           const scanned = Math.ceil(clamp(1 - p.timer / p.serveDur, 0, 1) * p.basket);
-          if (scanned > (p.scanned || 0)) { p.scanned = scanned; sfx.beep(); }
+          if (scanned > (p.scanned || 0)) { p.scanned = scanned; sfx.beep(panAt(0.45, L.counter)); }
           if (p.timer <= 0) finishSale(p);
           break;
         }
@@ -703,6 +963,7 @@ window.NeonShop = (() => {
     if (r.power) r.doorOpen = 1; // the automatic doors stay open in a power cut
     if (r.police && (r.police.x += 0.55 * dt) > 1.4) r.police = null;
     stepClerk(dt);
+    stepMe(dt);
     stepVan(dt);
     ambience.tick(r, dt);
     // traffic on the road
@@ -715,7 +976,10 @@ window.NeonShop = (() => {
     // the doors open for anyone walking in or out
     const nearDoor = (p) => p && Math.abs(p.x - 0.5) < 0.1 && p.y > L.street - 0.01 && p.y < L.enter + 0.06;
     const wantOpen = r.people.some((p) => ((p.kind === 'shopper' && (p.state === 'enter' || p.state === 'leaving' || p.state === 'sneak')) || (p.kind === 'companion' && p.y > L.street + 0.005)) && nearDoor(p)) || nearDoor(r.van && r.van.courier);
-    if (wantOpen && r.doorOpen === 0) sfx.whoosh();
+    if (wantOpen && r.doorOpen === 0) {
+      sfx.whoosh();
+      if (r.people.some((p) => p.kind === 'shopper' && p.state === 'enter' && nearDoor(p))) sfx.chime(); // ding-dong: someone's come in
+    }
     if (!r.power) r.doorOpen = clamp(r.doorOpen + (wantOpen ? 4 : -2.5) * dt, 0, 1);
     // helpers at the till serve the front of the queue on their own
     r.staff.forEach((st, i) => {
@@ -795,7 +1059,8 @@ window.NeonShop = (() => {
         let best = -1, score = 0;
         UNITS.forEach((_, i) => {
           if (unitRoom(i) <= 0) return;
-          const sc = unitRoom(i) - unitItems(i) * 0.2;
+          const waiting = r.people.some((p) => p.state === 'wait' && p.line === r.unitLine[i]);
+          const sc = unitRoom(i) - unitItems(i) * 0.2 + (waiting ? 1000 : 0);
           if (best < 0 || sc > score) { best = i; score = sc; }
         });
         if (best < 0) break;
@@ -984,6 +1249,150 @@ window.NeonShop = (() => {
     return r.till2;
   }
 
+  // where a spot in the shop is on screen, left (-1) to right (1): sounds come from there
+  function panAt(x, y) {
+    const r = run, cv = r.ui.canvas, W = cv.clientWidth || 1;
+    if (r.r3d) return clamp((r.r3d.project(x, y, 1)[0] / W) * 2 - 1, -1, 1) * 0.7;
+    const zm = r.zoom; return clamp(((x * W * zm.z + zm.tx) / W) * 2 - 1, -1, 1) * 0.7;
+  }
+
+  // ---------- walking the floor yourself, while someone else looks after the till ----------
+  const TILL_SPOT = { x: 0.6, y: L.counter - 0.02 };
+  const covered = () => !!run && ((run.till2 && run.clerk.state === 'till') || run.staff.some((st) => !(st.brk > 0)));
+  const canWalk = () => !!run && run.intro <= 0 && !run.ending && (!!run.me || covered());
+  // a path across the floor that goes around the islands (along the front of them, or the aisle by the wall shelves)
+  function clearLine(a, b) {
+    for (let i = 1; i <= 16; i++) { const k = i / 16; if (blocked(a.x + (b.x - a.x) * k, a.y + (b.y - a.y) * k, 0.2)) return false; }
+    return true;
+  }
+  function planPath(from, to) {
+    if (clearLine(from, to)) return [[to.x, to.y]];
+    const front = Math.max(...UNITS.filter((u) => !u.wall).map((u) => u.base)) + 0.07, rows = [front, L.enter + 0.015];
+    for (const y of rows) {
+      const a = { x: from.x, y }, b = { x: to.x, y };
+      if (clearLine(from, a) && clearLine(a, b) && clearLine(b, to)) return [[a.x, a.y], [b.x, b.y], [to.x, to.y]];
+    }
+    for (const y of rows) { // across to the centre aisle first
+      const a = { x: 0.5, y: from.y }, b = { x: 0.5, y }, c = { x: to.x, y };
+      if (clearLine(from, a) && clearLine(b, c) && clearLine(c, to)) return [[a.x, a.y], [b.x, b.y], [c.x, c.y], [to.x, to.y]];
+    }
+    return routeTo(from, to);
+  }
+  // a free spot on the floor near (x, y): off the islands, inside the walls, in front of the till
+  function floorSpot(x, y) {
+    [x, y] = clampProp(x, y);
+    y = Math.min(y, L.counter - 0.03);
+    if (!blocked(x, y, 0.2)) return { x, y };
+    const u = UNITS.find((v) => !v.wall && blocked(x, y, 0.2) && x > v.x0 - 0.08 && x < v.x1 + 0.08) || UNITS[2];
+    return { x: clamp(x, u.x0 + 0.02, u.x1 - 0.02), y: u.base + 0.065 };
+  }
+  // step out from behind the counter, or go back to it
+  function toggleWalk() {
+    const r = run;
+    if (!r || r.intro > 0 || r.ending) return 'no';
+    if (r.me) { goBack(); return 'back'; }
+    if (!covered()) return 'nocover';
+    r.me = { kind: 'me', look: r.sellerLook, x: TILL_SPOT.x, y: TILL_SPOT.y, phase: 0, facing: 'back', carry: 0, state: 'walk', path: [], goal: null };
+    r.away = 1; sfx.pop();
+    return 'walking';
+  }
+  function goBack() {
+    const me = run.me;
+    if (!me || me.state === 'return') return;
+    me.goal = null; me.state = 'return'; me.path = planPath(me, TILL_SPOT);
+  }
+  // walk to a point on the floor, or to someone you tapped (you deal with them when you get there)
+  function walkTo(x, y, goal) {
+    const me = run.me;
+    if (!me || me.state === 'return' || me.state === 'choring') return;
+    const t = goal && goal.p ? floorSpot(goal.p.x, goal.p.y + 0.02) : floorSpot(x, y);
+    me.goal = goal || null; me.path = planPath(me, t); me.state = 'walk';
+  }
+  // what you can do where you're standing
+  function nearby() {
+    const r = run, me = r && r.me;
+    if (!me || me.state !== 'walk') return [];
+    const acts = [], d = (o) => metres(me, o);
+    const thief = r.people.find((p) => p.state === 'sneak' && d(p) < 1.8);
+    if (thief) acts.push({ id: 'catch', label: '🚨 Stop thief!', p: thief });
+    const hand = r.people.find((p) => p.state === 'help' && d(p) < 1.6);
+    if (hand) acts.push({ id: 'help', label: '🙋 Help', p: hand });
+    if (me.carry > 0) {
+      const ui = UNITS.findIndex((u) => unitRoom(UNITS.indexOf(u)) > 0 && d(unitSpot0(u)) < 1.7);
+      if (ui >= 0) acts.push({ id: 'stock', label: `🧺 Stock ${r.lines[r.unitLine[ui]]}`, ui });
+      if (d({ x: PILE.x, y: PILE.y }) < 1.8) acts.push({ id: 'drop', label: '↩️ Put box back' });
+    } else if (r.pile > 0 && d({ x: PILE.x, y: PILE.y }) < 1.8) acts.push({ id: 'box', label: '📦 Grab a box' });
+    const fl = r.floor.find((f) => d(f) < 1.4);
+    if (fl) acts.push({ id: 'floor', label: '🫳 Pick up', f: fl });
+    const sc = r.b.wear.scuffs.find((w) => d({ x: w[0], y: w[1] }) < 1.2);
+    if (sc) acts.push({ id: 'mop', label: '🧽 Mop', w: sc });
+    if (me.y < L.enter + 0.06) {
+      const sm = r.b.wear.smudges.find((w) => { const [a, b] = FRONT.windows[w[0]]; return Math.abs(me.x - (a + (b - a) * w[1])) < 0.12; });
+      if (sm) acts.push({ id: 'wipe', label: '🪟 Wipe window', w: sm });
+    }
+    const reg = r.people.find((p) => p.reg && !p.chatted && p.y > L.wall && !['leaving', 'sneak'].includes(p.state) && d(p) < 1.6);
+    if (reg) acts.push({ id: 'chat', label: `💬 Chat to ${reg.name}`, p: reg });
+    return acts.slice(0, 3);
+  }
+  // where you stand to reach a unit (in front of an island, or the aisle by the wall shelves)
+  const unitSpot0 = (u) => ({ x: (u.x0 + u.x1) / 2, y: u.wall ? L.enter : u.base + 0.065 });
+  function doAction(id) {
+    const r = run, me = r && r.me;
+    if (!me || me.state !== 'walk') return false;
+    const a = nearby().find((x) => x.id === id);
+    if (!a) return false;
+    if (id === 'catch') catchThief(a.p, false);
+    else if (id === 'help') helpShopper(a.p);
+    else if (id === 'box') { me.carry = Math.min(r.pile, r.cap * 8); r.pile -= me.carry; sfx.thud(); }
+    else if (id === 'drop') { r.pile += me.carry; me.carry = 0; sfx.thud(); }
+    else if (id === 'stock') {
+      let n = Math.min(me.carry, unitRoom(a.ui));
+      me.carry -= n;
+      while (n > 0) {
+        const sl = r.slots.filter((x) => x.u === a.ui && x.n < r.cap).sort((p, q) => p.n - q.n || p.row - q.row)[0];
+        const add = Math.min(n, r.cap - sl.n, Math.max(1, Math.ceil(r.cap / 3)));
+        sl.n += add; n -= add; sl.pop = 0.3;
+      }
+      me.state = 'choring'; me.chore = 'stock'; me.timer = 0.6; me.facing = 'back'; sfx.pop();
+    } else if (id === 'floor') { r.floor.splice(r.floor.indexOf(a.f), 1); me.carry += a.f.n; sfx.pop(); }
+    else if (id === 'mop' || id === 'wipe') {
+      me.state = 'choring'; me.chore = id; me.timer = 1.1; me.target = a.w; me.facing = id === 'wipe' ? 'back' : 'front';
+    } else if (id === 'chat') { // a chat with a regular: happier, more patient, and they might buy one more
+      const p = a.p; p.chatted = true; p.mood = 'happy'; p.patience *= 1.5;
+      if (Math.random() < 0.5) p.qty++;
+      say(p, pick(['😊 Always nice to see you!', '😄 How\'s business?', '💜 Best shop in town!']), 1.8); say(me, '👋 Hi ' + p.name + '!', 1.4);
+      react(p, '💜'); r.stats.chats = (r.stats.chats || 0) + 1;
+    }
+    try { navigator.vibrate && navigator.vibrate(10); } catch { /* ignore */ }
+    return true;
+  }
+  function stepMe(dt) {
+    const r = run, me = r.me;
+    if (!me) return;
+    me.moving = false; r.away = 1;
+    if (me.bubbleT !== undefined) me.bubbleT -= dt;
+    if (r.ending && me.state !== 'return') goBack();
+    if (me.state === 'choring') {
+      me.timer -= dt; me.phase += dt * 16;
+      if (me.timer <= 0) {
+        if (me.chore === 'mop' || me.chore === 'wipe') { const list = me.chore === 'wipe' ? r.b.wear.smudges : r.b.wear.scuffs, i = list.indexOf(me.target); if (i >= 0) list.splice(i, 1); }
+        me.state = 'walk';
+      }
+      return;
+    }
+    const step = Math.floor(me.phase / 3);
+    const arrived = walk(me, dt, 0.3);
+    if (Math.floor(me.phase / 3) !== step) sfx.step(0.03, panAt(me.x, me.y));
+    if (me.state === 'return') { if (arrived) { r.pile += me.carry; me.carry = 0; r.me = null; r.away = 0.3; } return; }
+    // someone you tapped: keep after them (a shoplifter keeps moving), and deal with them when close
+    const g = me.goal;
+    if (g && g.p) {
+      if (!r.people.includes(g.p) || !['sneak', 'help'].includes(g.p.state) && g.kind !== 'chat') { me.goal = null; return; }
+      if (metres(me, g.p) < (g.kind === 'catch' ? 1.8 : 1.5)) { me.goal = null; doAction(g.kind); }
+      else if ((g.re = (g.re || 0) - dt) <= 0) { g.re = 0.35; me.path = planPath(me, floorSpot(g.p.x, g.p.y + 0.02)); }
+    }
+  }
+
   // who: -1 for you, or the helper's index
   function startServe(p, time, who = -1) {
     if (p.type === 'returner') { // a return, not a sale
@@ -1003,6 +1412,9 @@ window.NeonShop = (() => {
     const avg = r.served ? r.revenue / r.served : 0;
     r.served++; r.sold += res.qty; r.revenue += res.revenue;
     r.stats.waits.push(p.wait || 0);
+    if (Number.isInteger(p.got) && r.lineSold[p.got] !== undefined) r.lineSold[p.got] += res.qty;
+    if ((p.wait || 0) < 2.5 && via !== 'kiosk') react(p, '⚡');
+    if (r.candyNear && Math.random() < 0.15) { p.extra += 1.5; r.effects.push({ kind: 'text', text: '🍬 +$1.50', x: p.x - 0.08, y: L.counter - 0.16, t: 0, color: '#ff8fcf' }); }
     p.bag = true;
     // extras: a cold drink from the fridge, and a coffee from the coffee corner
     if (r.up.coffee && Math.random() < 0.25) { p.extra += 3; r.effects.push({ kind: 'text', text: '☕ +$3', x: p.x + 0.08, y: L.counter - 0.16, t: 0 }); }
@@ -1063,7 +1475,7 @@ window.NeonShop = (() => {
   // a finger down on the stock pile picks up a box to carry
   function pointerDown(x, y) {
     const r = run;
-    if (!r || r.intro > 0 || r.ending) return 'none';
+    if (!r || r.intro > 0 || r.ending || r.me) return 'none';
     const W = r.ui.canvas.clientWidth, H = r.ui.canvas.clientHeight, [wx, wy] = toWorld(x, y);
     if (r.r3d) {
       const [px, py, ppm] = r.r3d.project(PILE.x, PILE.y, 0.4);
@@ -1082,6 +1494,15 @@ window.NeonShop = (() => {
     const r = run;
     if (!r || r.intro > 0 || r.ending) return 'none';
     const W = r.ui.canvas.clientWidth, H = r.ui.canvas.clientHeight, [wx, wy] = toWorld(x, y);
+    if (r.me) { // out on the floor: tap someone to go to them, or anywhere to walk there
+      const thief = personAt(wx, wy, W, H, (p) => p.state === 'sneak'), asker = personAt(wx, wy, W, H, (p) => p.state === 'help');
+      const reg = personAt(wx, wy, W, H, (p) => p.reg && !p.chatted && p.y > L.wall);
+      const who = thief || asker || reg;
+      if (who) { walkTo(0, 0, { p: who, kind: thief ? 'catch' : asker ? 'help' : 'chat' }); return 'walk'; }
+      const f = r.r3d ? r.r3d.toFlatAt(x, y) : [wx / W, wy / H];
+      if (f && f[1] > L.wall) { walkTo(f[0], f[1]); return 'walk'; }
+      return 'none';
+    }
     const thief = personAt(wx, wy, W, H, (p) => p.state === 'sneak');
     if (thief) { catchThief(thief, false); return 'caught'; }
     const asker = personAt(wx, wy, W, H, (p) => p.state === 'help');
@@ -1225,6 +1646,7 @@ window.NeonShop = (() => {
     for (const f of r.floor) items.push({ y: f.y, draw: () => { ctx.save(); ctx.translate(f.x * W, f.y * H); ctx.rotate(f.rot); art.pack(ctx, r.b.good, 0, 2, scaleAt(f.y, H) * 0.3, 0, dpr); ctx.restore(); } });
     for (const p of r.people) if (!outside(p)) items.push({ y: p.y, draw: () => drawPerson(ctx, p, W, H, G) });
     items.push({ y: r.clerk.y, draw: () => drawPerson(ctx, r.clerk, W, H, G) });
+    if (r.me) items.push({ y: r.me.y, draw: () => drawPerson(ctx, r.me, W, H, G) });
     if (courier && !outside(courier)) items.push({ y: courier.y, draw: () => drawPerson(ctx, courier, W, H, G) });
     items.sort((a, b) => a.y - b.y).forEach((it) => it.draw());
 
@@ -1334,7 +1756,7 @@ window.NeonShop = (() => {
       ctx.beginPath(); ctx.ellipse(x, y, s * 0.5, s * 0.16, 0, 0, Math.PI * 2); ctx.stroke();
     }
     // badges, patience bars and speech bubbles; the clerk's STAFF tag
-    const all = r.people.concat([r.clerk]);
+    const all = r.people.concat([r.clerk], r.me ? [r.me] : []);
     for (const p of all.sort((a, b) => a.y - b.y)) {
       const [x, y, s, vis] = onScreen(p);
       if (!vis || x < -40 || x > W + 40) continue;
@@ -1913,7 +2335,7 @@ window.NeonShop = (() => {
     const kinds = { regular: `⭐ Regular · ${p.reg ? p.reg.stamps || 0 : 0}/5 stamps`, rushed: '⏱️ In a hurry', bargain: '🏷️ Bargain hunter', tourist: '📸 Tourist', influencer: '📱 Influencer', returner: '🔁 Bringing something back' };
     const doing = { look: 'Browsing', consider: 'Reading the label', pick: 'Picking up', queue: 'In the queue', toQueue: 'Heading to the till', wait: 'Waiting for stock', help: 'Wants help', fridge: 'Getting a drink', enter: 'Walking round', leaving: 'Leaving', sneak: 'Heading for the door' }[p.state] || 'Shopping';
     const moodTxt = { happy: '😊 Happy', meh: '😐 So-so', angry: '😠 Annoyed', sad: '😢 Unhappy' }[p.mood] || '🙂 Fine';
-    const lines = [`${p.name || 'Shopper'}`, kinds[p.type] || '🛍️ Shopper', `${doing} · ${moodTxt}`, `Wants ${p.qty}× ${G.icon}${p.basket ? ` · has ${p.basket}` : ''}`];
+    const lines = [`${p.name || 'Shopper'}`, kinds[p.type] || '🛍️ Shopper', `${doing} · ${moodTxt}`, `Wants ${p.qty}× ${G.icon} ${r.lines[p.line] || ''}${p.basket ? ` · has ${p.basket}` : ''}`];
     const s = scaleAt(p.y, H), hd = head ? head(p) : [(p.x + (p.ox || 0)) * W, p.y * H - s * 2.3], x = clamp(hd[0], W * 0.22, W * 0.78), y = hd[1];
     ctx.font = '700 11px system-ui, sans-serif';
     const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16, hh = lines.length * 14 + 10;
@@ -2119,6 +2541,15 @@ window.NeonShop = (() => {
     ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 1; ctx.stroke();
     // top cap
     ctx.fillStyle = '#5b2bb5'; poly(ctx, [[x0, top], [x1, top], P(x1, top), P(x0, top)]); ctx.fill();
+    // which line this unit carries, in the line's colour
+    if (u.wall && r.lines && r.lines.length > 1) { // on the plinth of a wall unit (islands get a sign on top)
+      const ln = r.unitLine[ui], fs = Math.max(7, Math.round(kk * 0.75)), txt = `${r.lines[ln]}`.toUpperCase();
+      ctx.font = `900 ${fs}px system-ui, sans-serif`;
+      const tw = ctx.measureText(txt).width + fs, ty = base - kk / 2 - fs * 0.62;
+      ctx.fillStyle = '#0b0221'; roundRect(ctx, cx - tw / 2, ty, tw, fs * 1.25, 3); ctx.fill();
+      ctx.strokeStyle = LINE_COLORS[ln]; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.fillStyle = LINE_COLORS[ln]; ctx.textAlign = 'center'; ctx.fillText(txt, cx, ty + fs * 0.98);
+    }
     // back panel with pegboard holes
     g = ctx.createLinearGradient(0, top, 0, base);
     g.addColorStop(0, '#24094f'); g.addColorStop(1, '#3a1774');
@@ -2204,9 +2635,10 @@ window.NeonShop = (() => {
       const sw = (x1 - x0) * 0.62, sh = H * 0.026, sy = top - sh - H * 0.012;
       ctx.fillStyle = '#7446d8'; ctx.fillRect(cx - sw * 0.3, sy + sh, 2, top - sy - sh); ctx.fillRect(cx + sw * 0.3, sy + sh, 2, top - sy - sh);
       ctx.fillStyle = '#0b0221'; roundRect(ctx, cx - sw / 2, sy, sw, sh, 4); ctx.fill();
-      ctx.strokeStyle = '#05d9e8'; ctx.lineWidth = 1.5; ctx.stroke();
-      ctx.font = `800 ${Math.round(sh * 0.58)}px system-ui, sans-serif`; ctx.fillStyle = '#05d9e8';
-      ctx.fillText(`${G.icon} AISLE ${ui - 1}`, cx, sy + sh * 0.72);
+      const lc = r.lines && r.lines.length > 1 ? LINE_COLORS[r.unitLine[ui]] : '#05d9e8';
+      ctx.strokeStyle = lc; ctx.lineWidth = 1.5; ctx.stroke();
+      ctx.font = `800 ${Math.round(sh * 0.58)}px system-ui, sans-serif`; ctx.fillStyle = lc;
+      ctx.fillText(fit(ctx, `${G.icon} ${r.lines && r.lines.length > 1 ? r.lines[r.unitLine[ui]].toUpperCase() : `AISLE ${ui - 1}`}`, sw - 6), cx, sy + sh * 0.72);
     }
   }
 
@@ -2272,7 +2704,7 @@ window.NeonShop = (() => {
       ctx.fillStyle = SKIN[p.look.skin] || '#c68642'; ctx.beginPath(); ctx.arc(hx, hy, Math.max(2.5, s * 0.08), 0, Math.PI * 2); ctx.fill();
     }
     // the clerk's cloth or mop while cleaning
-    if (p.kind === 'clerk' && p.state === 'choring') {
+    if ((p.kind === 'clerk' || p.kind === 'me') && p.state === 'choring' && p.chore !== 'stock') {
       if (p.chore === 'wipe') {
         const wx = px + Math.sin(p.phase) * s * 0.25, wy = py - s * 1.6 + Math.cos(p.phase) * s * 0.1;
         ctx.fillStyle = '#05d9e8'; ctx.fillRect(wx - 3, wy - 3, 6, 6);
@@ -2284,12 +2716,12 @@ window.NeonShop = (() => {
       }
     }
     // the clerk wears the staff apron
-    if (p.kind === 'clerk') {
+    if (p.kind === 'clerk' || p.kind === 'me') {
       ctx.fillStyle = r.decor.uniform.color; roundRect(ctx, px - s * 0.18, py - s * 1.26, s * 0.36, s * 0.52, s * 0.06); ctx.fill();
       if (front) { ctx.fillStyle = '#0b0221'; ctx.font = `800 ${Math.round(Math.max(6, s * 0.09))}px system-ui, sans-serif`; ctx.fillText('STAFF', px, py - s * 1.08); }
     }
     // a box in their arms (clerk and courier)
-    if ((p.kind === 'clerk' && p.carry > 0) || (p.kind === 'courier' && p.box > 0)) drawBox(ctx, px, py - s * 0.62, s * 0.55, G);
+    if (((p.kind === 'clerk' || p.kind === 'me') && p.carry > 0) || (p.kind === 'courier' && p.box > 0)) drawBox(ctx, px, py - s * 0.62, s * 0.55, G);
     // a pack held up to read the label
     if (p.hold) art.pack(ctx, r.b.good, px + s * 0.3, py - s * 1.15, s * 0.32, 0, r.dpr);
     // shopping basket, held at the side (a shoplifter has hidden theirs)
@@ -2307,6 +2739,28 @@ window.NeonShop = (() => {
 
   // name badges, the queue's patience bars and speech bubbles, over a person (both views)
   function drawTags(ctx, p, px, py, s, W, G) {
+    const r = run;
+    // you, out on the shop floor
+    if (p.kind === 'me') {
+      const bob = Math.sin(r.t * 5) * 2;
+      ctx.fillStyle = '#ffd23f'; ctx.font = `900 ${Math.round(Math.max(11, s * 0.24))}px system-ui, sans-serif`;
+      ctx.fillText('▼ YOU', px, py - s * 2.15 + bob);
+      ctx.strokeStyle = 'rgba(255,210,63,.8)'; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(px, py, s * 0.42, s * 0.13, 0, 0, Math.PI * 2); ctx.stroke();
+      // where you're heading
+      if (p.path && p.path.length && p.state === 'walk' && r.r3d) {
+        const end = p.path[p.path.length - 1], [ex, ey] = r.r3d.project(end[0], end[1], 0);
+        ctx.strokeStyle = 'rgba(255,210,63,.6)'; ctx.beginPath(); ctx.ellipse(ex, ey, s * 0.25, s * 0.08, 0, 0, Math.PI * 2); ctx.stroke();
+      }
+    }
+    // a little face: 😍 a bargain, 💸 too dear, 🤔 thinking it over, 😤 waiting too long
+    if (p.react) {
+      const k = 1 - p.react.t / 1.6;
+      ctx.globalAlpha = Math.min(1, p.react.t / 0.4);
+      ctx.font = `${Math.round(Math.max(14, s * 0.38))}px system-ui, sans-serif`;
+      ctx.fillText(p.react.icon, px + s * 0.42, py - s * (2.0 + k * 0.5));
+      ctx.globalAlpha = 1;
+    }
     // what kind of shopper (a small badge) when they're inside
     if (p.badge && p.y > L.wall && p.state !== 'leaving' && !(p.bubble && p.bubbleT > 0)) {
       ctx.font = `${p.reg ? 800 : 400} ${Math.round(Math.max(10, s * (p.reg ? 0.18 : 0.24)))}px system-ui, sans-serif`; ctx.fillStyle = p.reg ? '#ffd23f' : '#fff';
@@ -2538,13 +2992,14 @@ window.NeonShop = (() => {
     if (!run) return null;
     const baskets = run.people.reduce((a, p) => a + (p.basket || 0), 0);
     const floor = run.floor.reduce((a, f) => a + f.n, 0);
-    return { shelves: shelfTotal(), pile: run.pile, incoming: run.incoming, clerk: run.clerk.carry, baskets: baskets + floor, total: run.b.stock };
+    return { shelves: shelfTotal(), pile: run.pile, incoming: run.incoming, clerk: run.clerk.carry + (run.me ? run.me.carry : 0), baskets: baskets + floor, total: run.b.stock };
   };
 
   return {
     getGfx, setGfx, open, serve, refill, order, setPrice, closeEarly, clock, frontWaiting, stockInfo, pointerDown, pointerMove, pointerUp, tap, zoomBy, panBy, resetZoom,
-    getView, setView, has3D,
-    layout: () => ({ L, UNITS, ROWS, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
+    getView, setView, has3D, toggleWalk, canWalk, walking: () => !!(run && run.me), actions: () => nearby().map(({ id, label }) => ({ id, label })), act: doAction, goal: goalInfo,
+    plan: { trend: trending, shapes: planShapes, draw: drawPlan, hit: planHit, move: planMove, lineNames, unitLines, PROP_KINDS, colors: LINE_COLORS },
+    layout: () => ({ L, UNITS, ROWS, unitLine: run && run.unitLine, lines: run && run.lines, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
     _drawPOS: (...a) => drawPOS(...a),
     toggleTill2, resolveReturn, pendingReturn: () => !!(run && run.pendingReturn), active: () => !!run, current: () => run,
   };

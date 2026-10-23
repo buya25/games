@@ -272,6 +272,7 @@
         ${b.kind === 'stall' ? `<button class="btn" data-act="supgs:${b.id}">🛠️ Shop upgrades${b.upgrades ? ` (${Object.keys(b.upgrades).length})` : ''}</button>` : ''}
         ${b.kind === 'stall' ? `<button class="btn" data-act="staff:${b.id}">👥 Staff (${T.staffOf(b).length}/${T.STAFF_SLOTS[b.tier]})</button>` : ''}
         ${b.kind === 'stall' ? `<button class="btn" data-act="supply:${b.id}">📦 Order stock</button>` : ''}
+        ${b.kind === 'stall' ? `<button class="btn" data-act="arrange:${b.id}">🧱 Arrange shop</button>` : ''}
         ${here && b.kind === 'stall' ? `<button class="btn cyan" data-act="restock:${b.id}">Restock from cargo (${s.cargo[b.good] || 0})</button>` : ''}
         ${here && b.stock > 0 ? `<button class="btn" data-act="collect:${b.id}">Load into cargo</button>` : ''}
         ${up ? `<button class="btn primary" data-act="upgrade:${b.id}">Upgrade to ${nextName} · ${money(up)}</button>` : ''}
@@ -408,6 +409,7 @@
     else if (act === 'supgs') openUpgrades(b);
     else if (act === 'staff') openStaff(b);
     else if (act === 'supply') openSupplies(b);
+    else if (act === 'arrange') openArrange(b);
     else if (act === 'upgrade') result(T.upgradeBusiness(s, id), 'Upgraded!');
     else if (act === 'product') openProductPicker('Change product', (g) => { if (result(T.setProduct(s, id, g), `Now ${b.kind === 'stall' ? 'selling' : 'making'} ${T.G[g].name}`)) closeSheet(); }, b.kind);
     else if (act === 'sellbiz') {
@@ -449,7 +451,9 @@
     const hud = (run) => {
       if (run) takings = run.revenue;
       const si = NeonShop.stockInfo();
-      const key = [NeonShop.clock(), Math.round(takings), b.stock, si && si.shelves, b.mult, NeonShop.frontWaiting(), run && run.till2, NeonShop.pendingReturn(), run && run.zoom.z > 1.01].join('|');
+      const acts = NeonShop.actions(), goal = NeonShop.goal();
+      const key = [NeonShop.clock(), Math.round(takings), b.stock, si && si.shelves, b.mult, NeonShop.frontWaiting(), run && run.till2, NeonShop.pendingReturn(), run && run.zoom.z > 1.01,
+        NeonShop.walking(), NeonShop.canWalk(), acts.map((a) => a.id + a.label).join(), goal && goal.prog + goal.done + goal.failed].join('|');
       if (key === lastKey) return;
       lastKey = key;
       $('shopClock').textContent = NeonShop.clock();
@@ -460,6 +464,18 @@
       $('shopTill').classList.toggle('on', !!(run && run.till2));
       $('shopReturn').classList.toggle('hidden', !NeonShop.pendingReturn());
       $('shopZoom').classList.toggle('hidden', !(run && run.zoom.z > 1.01));
+      // out on the floor: what you can do here, and the button back to the till
+      const walking = NeonShop.walking();
+      $('shopWalk').textContent = walking ? '🛎️ Till' : '🚶 Walk';
+      $('shopWalk').classList.toggle('on', walking);
+      $('shopWalk').disabled = !NeonShop.canWalk();
+      $('shopServe').classList.toggle('away', walking);
+      $('shopActs').classList.toggle('hidden', !acts.length);
+      $('shopActs').innerHTML = acts.map((a) => `<button class="btn" data-do="${a.id}">${esc(a.label)}</button>`).join('');
+      if (goal) {
+        $('shopGoal').textContent = `${goal.done ? '✅' : goal.failed ? '❌' : '🎯'} ${goal.text} · ${goal.prog}`;
+        $('shopGoal').className = `goalpill${goal.done ? ' done' : goal.failed ? ' failed' : ''}`;
+      }
       $('cash').textContent = compact(s.cash);
     };
     const res = NeonShop.open(s, b.id, {
@@ -489,10 +505,14 @@
     if (m.event === 'power') tips.push('⚡ There was a power cut today: card payments and the self-checkout were down.');
     if (m.staff && m.staff.some((x) => x.morale < 30)) tips.push('😫 Some of your staff are worn out. A bonus or a quieter day helps, or they may quit.');
     if (m.stolen) tips.push(`🚨 ${m.stolen} went out the door unpaid. Tap shoplifters (👀) before they reach the door, or fit security gates.`);
+    const g = m.goal;
+    if (g && g.met) store.set('neonDash.wallet', store.get('neonDash.wallet', 0) + g.reward);
     openSheet(`<h2>🌙 Closing time</h2>
       <p class="big-num">${money(m.revenue + (m.extras || 0))}</p>
+      ${g ? `<div class="goalline${g.met ? '' : ' miss'}">${g.met ? `✅ Goal done: ${esc(g.text)} · +${g.reward} 🪙${g.streak > 1 ? ` · 🔥 ${g.streak}-day streak` : ''}` : `❌ Goal missed: ${esc(g.text)}. Your streak starts again.`}</div>` : ''}
       <div class="kv"><span>Weather</span><span>${wx.icon} ${wx.name}</span><span>Shoppers who came in</span><span>${m.entrants}</span><span>Served</span><span>${m.served}</span>
         <span>${T.G[b.good].icon} sold</span><span>${m.sold} · ${money(m.revenue)}</span>
+        ${m.lines && m.lines.length > 1 ? `<span>By line</span><span>${m.lines.map((n, i) => `${i === m.trend ? '🔥' : ''}${esc(n)} ${m.lineSold[i]}`).join(' · ')}</span>` : ''}
         ${m.extras ? `<span>Tips, drinks, coffee${m.returns || m.rewards ? ', refunds and stamp-card freebies' : ''}</span><span>${money(m.extras)}</span>` : ''}
         ${m.helped ? `<span>Shoppers you helped</span><span>${m.helped}</span>` : ''}
         ${m.caught || m.stolen ? `<span>Shoplifters</span><span>${m.caught} caught · ${m.stolen} stolen</span>` : ''}
@@ -506,8 +526,52 @@
         <div class="news">${m.reviews.map((rv) => `<div><span class="stars">${starStr(rv.stars)}</span><span>${esc(rv.text)}</span></div>`).join('')}</div>
         <p class="muted">Shop rating: ${m.rating.toFixed(1)} ★. A better rating brings more shoppers, even on days you don't run it.</p>` : ''}
       ${tips.length ? `<div class="news">${tips.map((x) => `<div><span>${x.slice(0, 2)}</span><span>${esc(x.slice(2).trim())}</span></div>`).join('')}</div>` : ''}
+      ${m.heat ? '<p class="section-title">🔥 Where shoppers spent their time</p><canvas class="plan" id="heatCv" aria-label="Heat map of the shop floor"></canvas><p class="muted">Hot spots are busy. Cold corners could use a shelf or a display: try 🧱 Arrange shop.</p>' : ''}
       <p class="muted">Rent is paid when the day ends. Automatic sales are skipped at this shop today.</p>
       <button class="btn primary" data-close>Done</button>`);
+    if (m.heat && $('heatCv')) drawPlanCanvas($('heatCv'), m.plan, { heat: m.heat });
+  }
+
+  // a plan of the shop from above, sharp on the screen
+  function drawPlanCanvas(cv, shapes, opts) {
+    const dpr = Math.min(2, window.devicePixelRatio || 1), W = cv.clientWidth, H = cv.clientHeight;
+    cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
+    const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    NeonShop.plan.draw(ctx, W, H, shapes, opts);
+  }
+
+  // arrange the shop: drag the islands and floor props, choose the line on each shelving unit
+  function openArrange(b) {
+    const P = NeonShop.plan, names = P.lineNames(b), UNIT_NAMES = ['Left wall shelves', 'Right wall shelves', 'Left island', 'Right island'];
+    let lay = JSON.parse(JSON.stringify(b.layout || {})), pick = null;
+    const trend = P.trend(s, b);
+    openSheet(`<h2>🧱 Arrange your shop<button class="close" data-close>✕</button></h2>
+      <p class="muted">Drag the islands and things on the floor. Tap a shelf to choose which line goes on it.</p>
+      <canvas class="plan" id="planCv" aria-label="Your shop from above"></canvas>
+      <div id="planInfo"></div>
+      <p class="muted">${names.length > 1 ? `You sell ${names.map((n, i) => `<b style="color:${P.colors[i]}">${esc(n)}</b>`).join(', ')}. 🔥 Trending today: <b>${esc(names[trend])}</b>. ` : ''}Islands near the door get more impulse buys, but more shoplifters. 🧺 Baskets by the door make shoppers buy a bit more, and 🍬 sweets by the till sell at the counter.</p>
+      <div class="btns"><button class="btn" id="planReset">↺ Reset</button><button class="btn primary" id="planSave">Save layout</button></div>`);
+    const cv = $('planCv');
+    const draw = () => drawPlanCanvas(cv, P.shapes(b, lay), { pick });
+    const info = () => {
+      if (!pick) { $('planInfo').innerHTML = ''; return; }
+      if (pick.type === 'prop') { $('planInfo').innerHTML = `<p class="muted">${P.PROP_KINDS[P.shapes(b, lay).props[pick.i].kind]}: drag it anywhere on the floor.</p>`; return; }
+      const cur = P.unitLines(Object.assign({}, b, { layout: lay }))[pick.i];
+      $('planInfo').innerHTML = `<p class="section-title">${UNIT_NAMES[pick.i]}${pick.i < 2 ? '' : ' (drag to move)'}</p>
+        <div class="linechips">${names.map((n, i) => `<button data-line="${i}" class="${i === cur ? 'on' : ''}" style="border-color:${P.colors[i]};${i === cur ? `background:${P.colors[i]}33` : ''}">${esc(n)}${i === trend ? ' 🔥' : ''}</button>`).join('')}</div>`;
+      for (const el of document.querySelectorAll('[data-line]')) el.onclick = () => {
+        lay.lines = P.unitLines(Object.assign({}, b, { layout: lay })); lay.lines[pick.i] = +el.dataset.line; draw(); info();
+      };
+    };
+    let down = null;
+    const at = (e) => { const rc = cv.getBoundingClientRect(); return [e.clientX - rc.left, e.clientY - rc.top]; };
+    cv.addEventListener('pointerdown', (e) => { try { cv.setPointerCapture(e.pointerId); } catch { /* ignore */ } const [x, y] = at(e); pick = P.hit(cv.clientWidth, cv.clientHeight, P.shapes(b, lay), x, y); down = pick; draw(); info(); });
+    cv.addEventListener('pointermove', (e) => { if (!down) return; const [x, y] = at(e); lay = P.move(b, lay, down, cv.clientWidth, cv.clientHeight, x, y); draw(); });
+    const up = () => { down = null; };
+    cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
+    $('planReset').onclick = () => { lay = {}; pick = null; draw(); info(); };
+    $('planSave').onclick = () => { b.layout = lay; save(); closeSheet(); toast('🧱 Layout saved: you\'ll see it next time you open the shop'); };
+    draw();
   }
   $('shopServe').addEventListener('click', () => NeonShop.serve());
   {
@@ -541,6 +605,12 @@
     cv.addEventListener('pointercancel', end);
   }
   $('shopZoom').onclick = () => NeonShop.resetZoom();
+  $('shopWalk').onclick = () => {
+    const res = NeonShop.toggleWalk();
+    if (res === 'nocover') toast('🧾 Open Till 2 or hire a cashier first, so someone serves while you walk the floor.');
+    else if (res === 'walking') toast('🚶 Tap the floor to walk. Tap a shopper to go to them.');
+  };
+  $('shopActs').addEventListener('click', (e) => { const el = e.target.closest('[data-do]'); if (el) NeonShop.act(el.dataset.do); });
   for (const el of document.querySelectorAll('[data-ret]')) el.onclick = () => NeonShop.resolveReturn(el.dataset.ret);
   $('shopTill').onclick = () => { const on = NeonShop.toggleTill2(); toast(on ? '🧾 The clerk opens till 2' : 'Till 2 closed: the clerk is back on the shop floor'); };
   $('shopUp').onclick = () => { const r = NeonShop.current(); if (r) nudgePrice(r.b, 0.05); };

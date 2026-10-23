@@ -179,3 +179,24 @@ body.noscroll { overflow: hidden; }
 .returnrow .btn { padding: 8px 10px; font-size: 13px; }
 .row .px .btn { padding: 6px 8px; font-size: 12px; }
 div.row { cursor: default; }
+
+/* walking the floor, today's goal, arranging the shop */
+.goalpill { position: absolute; left: 8px; top: 8px; max-width: calc(100% - 16px); padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 800;
+  color: #fff; background: rgba(11, 2, 33, .78); border: 1px solid rgba(255, 210, 63, .6); pointer-events: none; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.goalpill.done { border-color: #4ade80; color: #4ade80; }
+.goalpill.failed { border-color: #ff6b6b; color: #ffb4b4; }
+.goalpill:empty { display: none; }
+.actrow { display: flex; gap: 8px; }
+.actrow .btn { flex: 1; padding: 10px 6px; font-weight: 800; background: rgba(255, 210, 63, .15); border-color: var(--gold); }
+.shopbtns #shopWalk.on { color: var(--bg); background: var(--gold); border-color: var(--gold); }
+.shopbtns #shopWalk[disabled] { opacity: .45; }
+.serve.away { opacity: .4; }
+.plan { width: 100%; aspect-ratio: 9.8 / 10.9; max-height: 52vh; display: block; margin: 8px auto; touch-action: none; border-radius: 12px; background: #0b0221; }
+.linechips { display: flex; gap: 6px; flex-wrap: wrap; margin: 4px 0 10px; }
+.linechips button { padding: 6px 10px; border-radius: 999px; border: 1px solid var(--line); background: var(--card); color: #fff; font-weight: 700; }
+.linechips button.on { border-width: 2px; }
+.goalline { padding: 8px 10px; border-radius: 10px; margin: 8px 0; background: rgba(74, 222, 128, .12); border: 1px solid #4ade80; }
+.goalline.miss { background: rgba(255, 107, 107, .1); border-color: #ff6b6b; }
+.shopbtns { gap: 8px; }
+.shopbtns .btn { padding-left: 10px; padding-right: 10px; }
+.shopbtns .serve { letter-spacing: 1px; font-size: 16px; white-space: nowrap; padding: 12px 8px; }

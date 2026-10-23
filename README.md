@@ -54,7 +54,19 @@ The shop is drawn in real 3D with [three.js](https://threejs.org/) (`market/shop
 shelving with rows of packs several deep, the fridge, the till with its live screen, staff and shoppers as
 little 3D figures, and the street, van, parade and weather outside. The simulation in `shop.js` is shared
 by both views, and speech bubbles, patience bars and labels are drawn over the 3D scene. Pinch to zoom,
-drag to look around. Phones without WebGL (or anyone who picks 🖼️ Classic under Decorate → Shop view)
+drag to look around. Shadows (on Sharp/Auto graphics), lamplight pooling on the floor, glass with a sheen,
+neon that glows at night, shoppers turning their heads along the shelves and staff waving hello.
+
+When Till 2 or a cashier is covering, **🚶 Walk** lets you step out onto the shop floor: tap to walk (the
+camera follows you), tap a shopper to go to them, and do what's near you: carry a box from the pile to a
+shelf, help, stop a shoplifter, pick up dropped packs, mop, wipe a window or chat to a regular. Each shop
+sells two or three **product lines** (one per shelf, one trending each day); shoppers want a particular
+line and may switch or leave if it's out. **🧱 Arrange shop** is a top-down plan where you drag the islands
+and floor displays and choose the line on each shelf: islands near the door get more impulse buys and more
+shoplifters, baskets by the door and sweets by the till sell a bit more. Every shop day has a **🎯 goal**
+that pays arcade coins (more on a streak), shoppers show little reactions (😍 💸 🤔 😤), and the closing
+report has a heat map of where people spent their time. Sounds come from where things happen: the
+scanner, the door chime, footsteps, and the street getting louder when you zoom toward the windows. Phones without WebGL (or anyone who picks 🖼️ Classic under Decorate → Shop view)
 get the drawn 2D shop.
 
 Challenges: after a season, share a link; your friend plays the same seed (same prices, news and share
