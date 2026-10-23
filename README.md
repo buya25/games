@@ -65,7 +65,18 @@ line and may switch or leave if it's out. **🧱 Arrange shop** is a top-down pl
 and floor displays and choose the line on each shelf: islands near the door get more impulse buys and more
 shoplifters, baskets by the door and sweets by the till sell a bit more. Every shop day has a **🎯 goal**
 that pays arcade coins (more on a streak), shoppers show little reactions (😍 💸 🤔 😤), and the closing
-report has a heat map of where people spent their time. Sounds come from where things happen: the
+report has a heat map of where people spent their time.
+
+The shop also has a **stockroom** (a bay per line, with a light that goes red when a line runs out); deliveries
+come by van to the **back door** and are wheeled in on a trolley. Tap **👥** to give each helper a **job**
+(till, restock, guard the door, break), with energy and mood bars; tired helpers are slow and fumble packs.
+**Regulars place orders** ("4× Zero by day 12"): accept, and they pay a third more when they collect; miss it
+and they stop coming. Each **line can be priced** on its own. **Promotions** (a poster, a 2-for-1 sign, a tasting
+stand) are bought and placed in Arrange. A **megastore** knocks through into an **annex**, with stairs up to a
+**Level 2** that shoppers and you walk up to. After closing there's an optional **🧹 night shift** (mop, face
+the shelves, empty the bin) that lifts the rating, and **📊 Report** charts your last seven shop days (sold by
+line, busiest hours, thefts, goals, layout changes). In 3D you can **turn the shop all the way round** (the walls
+facing you are cut away), and **📷 photo mode** saves or shares a picture. Sounds come from where things happen: the
 scanner, the door chime, footsteps, and the street getting louder when you zoom toward the windows. Phones without WebGL (or anyone who picks 🖼️ Classic under Decorate → Shop view)
 get the drawn 2D shop.
 

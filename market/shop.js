@@ -26,6 +26,15 @@ window.NeonShop = (() => {
     { x0: 0.63, x1: 0.95, top: 0.42, base: 0.53, cols: 4 },
   ];
   let UNITS = UNITS0; // the islands can be moved: see applyLayout
+  // a megastore knocks through the right-hand wall into an annex, with stairs up to Level 2.
+  // They're laid out in metres (X across, Z back from the front wall); Level 2 is kept 20 m off to the side
+  // in the shop's own coordinates (LEVEL2_DX), and the 3D view lifts it up above the annex.
+  const LEVEL2_DX = 20, LEVEL2_Y = 3.0;
+  const ANNEX = { X0: 4.5, X1: 9, Z0: 1, Z1: 9.5, arch: [6.6, 8.4], l2: [1, 3.8], stair: { X: 8.6, Z0: 6.6, Z1: 3.8 } };
+  const MUNITS = [
+    { zone: 'annex', m: { X0: 5.2, X1: 8.0, Z: 5.6, wall: false }, cols: 4, tier: 2 },
+    { zone: 'up', m: { X0: 5.0, X1: 8.0, Z: 1.5, wall: true, stand: 2.3 }, cols: 4, tier: 2 },
+  ];
   const PILE = { x: 0.2069, y: 0.6405 };  // the stockroom bays: where you stand to grab a box (bays at X -2.25 to -0.95 m, Z 8.15 m)
   const CLERK_HOME = { x: 0.27, y: 0.68 };
   // shop upgrades on the floor
@@ -257,9 +266,16 @@ window.NeonShop = (() => {
     const m = !u.wall && lay.units && lay.units[i];
     return m ? island(u, ...clampIsland(i, m.x, m.base)) : Object.assign({}, u);
   });
+  // the annex and Level 2 units as flat shop coordinates (only in a megastore)
+  function bigUnits(tier) {
+    return MUNITS.filter((u) => tier >= u.tier).map((u) => {
+      const dx = u.zone === 'up' ? LEVEL2_DX : 0, [x0, base] = toFlat(u.m.X0 + dx, u.m.Z), [x1] = toFlat(u.m.X1 + dx, u.m.Z);
+      return { x0, x1, base, top: base - ISLAND_H, cols: u.cols, wall: u.m.wall, zone: u.zone, m: u.m, dx };
+    });
+  }
   function applyLayout(b) {
     const lay = b.layout || {};
-    UNITS = layoutUnits(lay);
+    UNITS = layoutUnits(lay).concat(bigUnits(b.tier));
     PROPS = lay.props && lay.props.length === PROPS0.length ? lay.props.map(([k, x, y]) => [k, ...clampProp(x, y)]) : PROPS0;
     // a prop dragged onto an island goes back where it was
     PROPS = PROPS.map((pr, i) => (blocked(pr[1], pr[2], 0.05) ? PROPS0[i] : pr));
@@ -276,8 +292,10 @@ window.NeonShop = (() => {
       return { kind: k, x: px, y: py, X: xOf(px, py), Z: zOf(py), i };
     });
     UNITS = saved;
+    const big = bigUnits(b.tier).map((u, k) => ({ i: UNITS0.length + k, wall: u.wall, X0: u.m.X0, X1: u.m.X1, Z0: u.m.Z - (u.wall ? 0.5 : 0.85), Z1: u.m.Z, line: lines[UNITS0.length + k], zone: u.zone, fixed: true }));
     return {
-      units: units.map((u, i) => (u.wall ? { i, wall: true, X0: xOf(u.x0, u.base), X1: xOf(u.x1, u.base), Z0: 0.07, Z1: 0.57, line: lines[i] } : Object.assign({ i, wall: false, line: lines[i], x: (u.x0 + u.x1) / 2, base: u.base }, footprint(u)))),
+      annex: b.tier >= 2 ? ANNEX : null,
+      units: big.concat(units.map((u, i) => (u.wall ? { i, wall: true, X0: xOf(u.x0, u.base), X1: xOf(u.x1, u.base), Z0: 0.07, Z1: 0.57, line: lines[i] } : Object.assign({ i, wall: false, line: lines[i], x: (u.x0 + u.x1) / 2, base: u.base }, footprint(u))))),
       props, lines: lineNames(b), colors: LINE_COLORS,
       promos: promosOf(b, lay).map((pr) => Object.assign(pr, { X: xOf(pr.x, pr.y), Z: zOf(pr.y) })),
       counter: { X0: xOf(0, L.counter) - 0.2, X1: -xOf(0, L.counter) + 0.2, Z0: zOf(L.counter), Z1: zOf(L.counter) + 0.85 },
@@ -286,11 +304,14 @@ window.NeonShop = (() => {
     };
   }
   // fit the plan into a W×H canvas
-  const planView = (W, H) => { const k = Math.min(W / 9.8, H / 10.9); return { k, ox: W / 2, oy: (H - 10.9 * k) / 2 + 0.55 * k }; };
+  // (wider for a megastore, to show the annex)
+  let planWide = false;
+  const planView = (W, H) => { const w = planWide ? 14.4 : 9.8, k = Math.min(W / w, H / 10.9); return { k, ox: W / 2 - (planWide ? 2.3 * k : 0), oy: (H - 10.9 * k) / 2 + 0.55 * k }; };
   const planTo = (W, H, X, Z) => { const v = planView(W, H); return [v.ox + X * v.k, v.oy + Z * v.k]; };
   const planFrom = (W, H, x, y) => { const v = planView(W, H); return [(x - v.ox) / v.k, (y - v.oy) / v.k]; };
   // draw the plan: opts.heat paints where shoppers spent their time; opts.pick highlights one item
   function drawPlan(ctx, W, H, sh, opts = {}) {
+    planWide = !!sh.annex;
     const P = (X, Z) => planTo(W, H, X, Z), k = planView(W, H).k, dec = window.NeonShopArt.decor();
     const rect = (X0, Z0, X1, Z1) => { const [a, b] = P(X0, Z0), [c, d] = P(X1, Z1); return [a, b, c - a, d - b]; };
     ctx.clearRect(0, 0, W, H);
@@ -305,8 +326,16 @@ window.NeonShop = (() => {
         ctx.fillRect(...rect(-RW / 2 + (gx * RW) / hm.x, (gy * 9.6) / hm.y, -RW / 2 + ((gx + 1) * RW) / hm.x, ((gy + 1) * 9.6) / hm.y));
       }
     }
+    if (sh.annex) { // the annex through the arch, Level 2 dashed over its front, and the stairs
+      const a = sh.annex;
+      ctx.fillStyle = dec.floor.b; ctx.fillRect(...rect(a.X0, a.Z0, a.X1, a.Z1));
+      ctx.fillStyle = dec.walls.wall; ctx.fillRect(...rect(a.X1, a.Z0 - 0.2, a.X1 + 0.2, a.Z1 + 0.2)); ctx.fillRect(...rect(a.X0, a.Z0 - 0.2, a.X1, a.Z0)); ctx.fillRect(...rect(a.X0, a.Z1, a.X1 + 0.2, a.Z1 + 0.2));
+      ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.setLineDash([4, 4]); ctx.lineWidth = 1.5; ctx.strokeRect(...rect(a.X0 + 0.1, a.l2[0], a.X1 - 0.1, a.l2[1])); ctx.setLineDash([]);
+      ctx.fillStyle = '#9aa0b5'; ctx.fillRect(...rect(a.stair.X - 0.35, a.stair.Z1, a.stair.X + 0.35, a.stair.Z0));
+    }
     ctx.fillStyle = dec.walls.wall;
-    ctx.fillRect(...rect(-RW / 2 - 0.2, -0.3, -RW / 2, 10.3)); ctx.fillRect(...rect(RW / 2, -0.3, RW / 2 + 0.2, 10.3));
+    ctx.fillRect(...rect(-RW / 2 - 0.2, -0.3, -RW / 2, 10.3));
+    if (sh.annex) { ctx.fillRect(...rect(RW / 2, -0.3, RW / 2 + 0.2, sh.annex.arch[0])); ctx.fillRect(...rect(RW / 2, sh.annex.arch[1], RW / 2 + 0.2, 10.3)); } else ctx.fillRect(...rect(RW / 2, -0.3, RW / 2 + 0.2, 10.3));
     ctx.fillStyle = '#5a1f45'; ctx.fillRect(...rect(-RW / 2 - 0.2, -0.3, RW / 2 + 0.2, 0));
     ctx.fillStyle = '#8cd2ff'; for (const [a, c] of sh.windows) ctx.fillRect(...rect(a, -0.2, c, -0.1));
     ctx.fillStyle = dec.floor.a; ctx.fillRect(...rect(sh.door.X0, -0.3, sh.door.X1, 0));
@@ -324,7 +353,7 @@ window.NeonShop = (() => {
       ctx.fillStyle = col; ctx.fillRect(...rect(u.X0, u.Z1 - 0.12, u.X1, u.Z1));
       if (!u.wall) ctx.fillRect(...rect(u.X0, u.Z0, u.X1, u.Z0 + 0.12));
       if (on) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.setLineDash([5, 4]); ctx.strokeRect(...rect(u.X0 - 0.08, u.Z0 - 0.08, u.X1 + 0.08, u.Z1 + 0.08)); ctx.setLineDash([]); }
-      ctx.fillStyle = '#fff'; ctx.fillText(sh.lines[u.line], ...P((u.X0 + u.X1) / 2, (u.Z0 + u.Z1) / 2));
+      ctx.fillStyle = '#fff'; ctx.fillText(`${u.zone === 'up' ? 'L2 · ' : ''}${sh.lines[u.line]}`, ...P((u.X0 + u.X1) / 2, (u.Z0 + u.Z1) / 2));
     }
     // promotions: a ring in their line's colour
     for (const pr of sh.promos || []) {
@@ -357,7 +386,7 @@ window.NeonShop = (() => {
     const [X, Z] = planFrom(W, H, x, y);
     lay = JSON.parse(JSON.stringify(lay || {}));
     if (pick.type === 'unit') {
-      if (UNITS0[pick.i].wall) return lay;
+      if (!UNITS0[pick.i] || UNITS0[pick.i].wall) return lay; // wall shelves, the annex and Level 2 stay put
       const [cx, base] = toFlat(X, clamp(Z + 0.42, 1, 9));
       const [x2, b2] = clampIsland(pick.i, cx, base);
       // the two islands can't overlap
@@ -394,6 +423,7 @@ window.NeonShop = (() => {
   function goalInfo() {
     const r = run;
     if (!r) return null;
+    if (r.night) { const left = nightLeft(); return { night: true, text: 'Night shift', prog: `${r.night.total - left}/${r.night.total} done · ${Math.ceil(r.night.t)}s`, done: left === 0, failed: false }; }
     const g = r.goal, d = goalDef(g);
     if (!g.n) g.n = d.make(r);
     const text = d.text(g.n);
@@ -450,7 +480,7 @@ window.NeonShop = (() => {
   // which line is on each shelving unit (your choice, or a mix by default)
   function unitLines(b) {
     const n = lineCount(b.tier), lay = b.layout || {};
-    return UNITS0.map((_, i) => { const l = lay.lines && lay.lines[i]; return Number.isInteger(l) && l < n ? l : [0, 1, 2, 0][i] % n; });
+    return UNITS0.concat(MUNITS).map((_, i) => { const l = lay.lines && lay.lines[i]; return Number.isInteger(l) && l < n ? l : [0, 1, 2, 0, 1, 2][i] % n; });
   }
   // today's trending line (the same all day; changes from day to day)
   // a price for each line, as a share of the shop's shelf price (1 = the same; 0.8 = 20% off)
@@ -467,7 +497,9 @@ window.NeonShop = (() => {
   const kick = (u) => (u.base - u.top) * 0.12;
   const rowH = (u) => (u.base - u.top - kick(u)) / ROWS;
   const shelfY = (u, row) => u.base - kick(u) - row * rowH(u);   // where row `row` (0 = bottom) sits
-  const unitSpot = (u) => ({ x: rand(u.x0 + 0.05, u.x1 - 0.05), y: u.wall ? L.enter : u.base + 0.065 });
+  const unitSpot = (u) => (u.m ? mSpot(u, rand(u.m.X0 + 0.4, u.m.X1 - 0.4)) : { x: rand(u.x0 + 0.05, u.x1 - 0.05), y: u.wall ? L.enter : u.base + 0.065 });
+  // in front of an annex or Level 2 unit, at X metres across
+  const mSpot = (u, X) => { const [x, y] = toFlat(X + u.dx, u.m.stand || u.m.Z + 0.75); return { x, y }; };
 
   function makeSlots() {
     const slots = [];
@@ -537,7 +569,7 @@ window.NeonShop = (() => {
       dprCap: startCap(),
       // walking the floor yourself, today's goal, product lines, where shoppers spent their time
       me: null, greetT: 0, lines: lineNames(b), unitLine: ul, trend: trending(s, b), lineSold: lineNames(b).map(() => 0),
-      heat: new Float32Array(HEAT_X * HEAT_Y), goal: pickGoal(s, b),
+      heat: new Float32Array(HEAT_X * HEAT_Y), goal: pickGoal(s, b), hourSold: Array(12).fill(0),
       stats: { waits: [], stolen: 0, caught: 0, helped: 0, extras: 0, good: 0, bad: 0, returns: 0, newRegulars: 0, rewards: 0, reducedSold: 0, knocked: 0, haul: false },
     };
     // wear and tear builds up over the season: scuffs on the floor, smudges on the windows
@@ -597,7 +629,7 @@ window.NeonShop = (() => {
       reducedSold: st.reducedSold, knocked: st.knocked, haul: st.haul, event: r.event, holiday: r.holiday,
       staff: r.staff.map((x) => ({ name: x.m.name, served: x.served, morale: x.m.morale })),
       stars: r.stars, rating: r.b.rating, reviews: r.b.reviews || [],
-      goal: r.goalResult || null, orders: r.stats.orders || 0, ordersLost: r.ordersLost, openOrders: (r.b.requests || []).map((x) => ({ ...x, lineName: r.lines[x.line] })), lines: r.lines, lineSold: r.lineSold, trend: r.trend,
+      goal: r.goalResult || null, tidy: r.stats.tidy, nightDone: r.stats.nightDone, nightTotal: r.stats.nightTotal, orders: r.stats.orders || 0, ordersLost: r.ordersLost, openOrders: (r.b.requests || []).map((x) => ({ ...x, lineName: r.lines[x.line] })), lines: r.lines, lineSold: r.lineSold, trend: r.trend,
       heat: { x: HEAT_X, y: HEAT_Y, data: Array.from(r.heat) }, plan: planShapes(r.b),
     };
   }
@@ -626,13 +658,20 @@ window.NeonShop = (() => {
     if (st.rewards) notes.push('Love my stamp card!');
     if (r.decor.floor.cost || r.decor.plants.id === 'jungle' || r.decor.sign.cost) notes.push('Lovely decor!');
     if (r.up.coffee) notes.push('The coffee corner is great.');
+    if (st.tidy >= 0.8) notes.unshift('Spotless when I came in!');
     while (notes.length < 3) notes.push(pick(good));
     const reviews = notes.slice(0, 3).map((text) => ({ stars: clamp(Math.round((stars + rand(-0.6, 0.6)) * 2) / 2, 1, 5), text }));
-    r.stars = stars;
+    r.stars = stars = Math.min(5, stars + 0.4 * (st.tidy || 0)); // the night shift's tidy-up
     b.rating = b.rating ? Math.round((b.rating * 0.6 + stars * 0.4) * 10) / 10 : stars;
     b.reviews = reviews;
     b.usual = mult; // regulars expect this price next time
     r.goalResult = judgeGoal();
+    // the shop's diary: one line per day you ran it (the last 14), for the weekly report
+    b.history = (b.history || []).concat([{
+      day: r.s.day, sold: r.sold, revenue: Math.round(r.revenue + st.extras), lines: r.lines.slice(), lineSold: r.lineSold.slice(), hours: r.hourSold.slice(),
+      stolen: st.stolen, caught: st.caught, goal: r.goalResult.met, streak: r.goalResult.streak, orders: st.orders || 0, stars: r.stars,
+      layout: JSON.stringify([b.layout || {}, b.promos || {}, b.linePrice || []]),
+    }]).slice(-14);
     for (const rq of (b.requests || []).filter((x) => x.due <= r.s.day && x.made < r.s.day)) loseOrder(rq);
   }
 
@@ -699,12 +738,47 @@ window.NeonShop = (() => {
   }
   // follow p.path (a list of [x, y] points); true once at the end
   function walk(p, dt, speed) {
+    if (p.climb) { // on the stairs
+      p.climb.t += dt / 1.6; p.phase += dt * 9; p.moving = true;
+      if (p.climb.t < 1) return false;
+      p.climb = null;
+    }
     if (!p.path || !p.path.length) return true;
+    if (p.path[0][2] === 'climb') { // step onto the stairs: arrive at the other end after the climb
+      const [x, y] = p.path.shift(); p.climb = { t: 0, from: [p.x, p.y], up: x > p.x };
+      p.x = x; p.y = y; return false;
+    }
     if (moveToward(p, p.path[0][0], p.path[0][1], dt, speed)) p.path.shift();
     return !p.path.length;
   }
   // routes through the shop: the centre aisle (x = 0.5) joins everything
+  // which part of the shop a point is in: the main shop, the annex, or Level 2
+  const zoneOf = (p) => { const X = xOf(p.x, p.y); return X > LEVEL2_DX / 2 ? 'up' : X > ANNEX.X0 - 0.05 ? 'annex' : 'main'; };
+  const fl = (X, Z) => toFlat(X, Z);
+  const ARCH_Z = (ANNEX.arch[0] + ANNEX.arch[1]) / 2;
+  // the way between zones: [points...]; a point with 'climb' is the other end of the stairs
+  function between(a, b) {
+    const inside = fl(ANNEX.X0 - 0.7, ARCH_Z), outside = fl(ANNEX.X0 + 0.6, ARCH_Z);
+    const bottom = fl(ANNEX.stair.X, ANNEX.stair.Z0 + 0.3), top = fl(ANNEX.stair.X + LEVEL2_DX, ANNEX.stair.Z1 - 0.3);
+    if (a === 'main' && b === 'annex') return [inside, outside];
+    if (a === 'annex' && b === 'main') return [outside, inside];
+    if (a === 'annex' && b === 'up') return [bottom, [...top, 'climb']];
+    if (a === 'up' && b === 'annex') return [top, [...bottom, 'climb']];
+    if (a === 'main' && b === 'up') return between('main', 'annex').concat(between('annex', 'up'));
+    if (a === 'up' && b === 'main') return between('up', 'annex').concat(between('annex', 'main'));
+    return [];
+  }
   function routeTo(from, to) {
+    const za = zoneOf(from), zb = zoneOf(to);
+    if (za !== 'main' || zb !== 'main') { // through the arch, and up or down the stairs
+      if (za === zb) return [[to.x, to.y]];
+      const via = between(za, zb), first = { x: via[0][0], y: via[0][1] };
+      const start = za === 'main' ? routeTo0(from, first) : [[first.x, first.y]];
+      return start.concat(via.slice(1)).concat([[to.x, to.y]]);
+    }
+    return routeTo0(from, to);
+  }
+  function routeTo0(from, to) {
     const pts = [];
     if (Math.abs(from.x - 0.5) > 0.01) pts.push([0.5, from.y]);
     if (Math.abs(to.y - from.y) > 0.005) pts.push([0.5, to.y]);
@@ -712,6 +786,8 @@ window.NeonShop = (() => {
     return pts;
   }
 
+  // back to the centre aisle (from wherever they are)
+  const toAisle = (p) => (zoneOf(p) === 'main' ? [[0.5, p.y]] : routeTo(p, { x: 0.5, y: fl(ANNEX.X0 - 0.7, ARCH_Z)[1] }));
   const say = (p, text, sec = 2.2) => { p.bubble = text; p.bubbleT = sec; };
   // a small face over their head: 😍 a bargain, 💸 too dear, 🤔 thinking, 😤 waiting too long
   const react = (p, icon) => { p.react = { icon, t: 1.6 }; };
@@ -776,8 +852,8 @@ window.NeonShop = (() => {
       if (before > 2.3 && r.intro <= 2.3) sfx.shutter();
       if (before > 0.3 && r.intro <= 0.3) sfx.click();
     } else r.t += dt;
-    r.shutter = opening ? clamp((r.intro - 0.9) / 1.4, 0, 1) : r.ending ? clamp((3.2 - r.outro - 0.8) / 1.2, 0, 1) : 0;
-    r.lights = opening ? clamp((0.9 - r.intro) / 0.6, 0, 1) * (r.intro > 0.3 && Math.random() < 0.2 ? 0.4 : 1)
+    r.shutter = opening ? clamp((r.intro - 0.9) / 1.4, 0, 1) : r.night || r.nightOffer ? Math.min(1, (r.shutter || 0) + dt) : r.ending ? clamp((3.2 - r.outro - 0.8) / 1.2, 0, 1) : 0;
+    r.lights = r.night ? 0.8 : opening ? clamp((0.9 - r.intro) / 0.6, 0, 1) * (r.intro > 0.3 && Math.random() < 0.2 ? 0.4 : 1)
       : r.ending ? clamp(0.35 + ((r.outro - 2.4) / 0.8) * 0.65, 0.35, 1) : 1;
     if (r.ending) {
       const before = r.outro;
@@ -845,7 +921,7 @@ window.NeonShop = (() => {
           if (walk(p, dt, 0.2)) {
             p.state = 'look'; p.timer = rand(0.7, 1.4); p.facing = 'back';
             if (p.type === 'returner' && !p.greeted) { // straight to the till with something to bring back
-              p.greeted = true; p.hold = true; p.state = 'toQueue'; p.path = [[0.5, p.y]];
+              p.greeted = true; p.hold = true; p.state = 'toQueue'; p.path = toAisle(p);
               say(p, pick(['🔁 It\'s broken!', '🔁 Wrong size!', '🔁 It doesn\'t work!']), 2);
               break;
             }
@@ -946,7 +1022,7 @@ window.NeonShop = (() => {
             p.state = 'sneak'; p.hidden = true; say(p, '👀', 1.2); p.exitDir = Math.random() < 0.5 ? -1 : 1;
             p.path = routeTo(p, { x: 0.5, y: L.enter }).concat([[0.5, L.street]]);
           } else if (p.timer <= 0) {
-            p.state = 'toQueue'; p.path = [[0.5, p.y]];
+            p.state = 'toQueue'; p.path = toAisle(p);
             say(p, mult * linePrice(r.b, p.line) < p.limit * 0.8 ? pick(['😍 Bargain!', '😍 So cheap!']) : pick(['🙂 Nice.', '🙂 Just what I need.']), 1.4); p.mood = 'happy';
           }
           break;
@@ -1014,6 +1090,8 @@ window.NeonShop = (() => {
       if (!r.people.includes(l)) { c.x = 9; continue; } // their leader has gone
       c.moving = false;
       const atShelf = ['look', 'consider', 'pick', 'wait'].includes(l.state);
+      if (zoneOf(c) !== zoneOf(l) || l.climb) { c.x = l.x; c.y = l.y + 0.004; c.climb = l.climb; continue; } // through the arch, up the stairs: right behind them
+      c.climb = null;
       moveToward(c, l.x + c.side * (atShelf ? 0.06 : 0.045), l.y + (l.y < L.wall ? 0 : 0.012), dt, 0.32);
       if (!c.moving) c.facing = l.facing;
       c.mood = l.mood;
@@ -1103,7 +1181,7 @@ window.NeonShop = (() => {
     for (const fx of r.effects) { fx.t += dt; if (fx.kind === 'text') fx.y -= dt * 0.08; }
     r.effects = r.effects.filter((fx) => (fx.kind === 'text' ? fx.t < 1.1 : fx.t < fx.dur));
     stepBoxes(dt);
-    r.people = r.people.filter((p) => p.x > -0.2 && p.x < 1.2);
+    r.people = r.people.filter((p) => (p.x > -0.2 && p.x < 1.2) || p.y > L.wall + 0.01); // off along the street (the annex is inside, off to the right)
     // the day ends at closing time once the shop is empty (or 10 s after closing)
     if (r.t >= DAY_SECONDS && !r.closed) { r.closed = true; for (const p of r.people) if (p.state === 'street') p.kind = 'passer'; }
     const inside = r.people.some((p) => p.kind === 'shopper' && p.state !== 'leaving');
@@ -1115,11 +1193,51 @@ window.NeonShop = (() => {
         leaveShop(p, 'meh', '🚪 Closing already?'); // their basket goes back to the stock pile
       }
       if (r.kioskBusy) r.kioskBusy = null;
+      // before going home: the night shift, if you want it (the offer goes after a few seconds)
+      if (!r.nightDone) {
+        if (r.night) stepNight(dt);
+        else if (!r.nightOffer) r.nightOffer = { t: 6 };
+        else if ((r.nightOffer.t -= dt) <= 0) { r.nightOffer = null; r.nightDone = true; }
+        return;
+      }
       // closing down: lights dim, shutters come down, the takings are counted
       r.ending = true; r.outro = 3.2;
       finishDay();
     }
   }
+
+  // ---------- the night shift: a quick tidy after closing, for a better rating tomorrow ----------
+  const NIGHT_SECONDS = 30;
+  function nightShift(yes) {
+    const r = run;
+    if (!r || !r.nightOffer) return false;
+    r.nightOffer = null;
+    if (!yes) { r.nightDone = true; return true; }
+    r.night = { t: NIGHT_SECONDS, faced: new Set(), bin: false };
+    if (!r.me) r.me = { kind: 'me', look: r.sellerLook, x: TILL_SPOT.x, y: TILL_SPOT.y, phase: 0, facing: 'back', carry: 0, state: 'walk', path: [], goal: null };
+    r.night.total = nightLeft();
+    sfx.pop();
+    return true;
+  }
+  // jobs still to do: scuffs, smudges, dropped packs, shelves to face, the bin
+  function nightLeft() {
+    const r = run, w = r.b.wear;
+    return w.scuffs.length + w.smudges.length + r.floor.length + UNITS.filter((u, i) => !u.m && unitItems(i) > 0 && !r.night.faced.has(i)).length + (r.night.bin ? 0 : 1);
+  }
+  function stepNight(dt) {
+    const r = run, n = r.night;
+    if ((n.t -= dt) <= 0 || nightLeft() === 0) endNight();
+  }
+  function endNight() {
+    const r = run, n = r.night;
+    if (!n) return;
+    n.tidy = n.total ? clamp(1 - nightLeft() / n.total, 0, 1) : 1;
+    r.stats.tidy = n.tidy; r.stats.nightDone = n.total - nightLeft(); r.stats.nightTotal = n.total;
+    if (r.me) { pileIn(r.me.carry, r.me.carryLine); r.me.carry = 0; r.me = null; }
+    r.night = null; r.nightDone = true; r.away = 0;
+    sfx.ching();
+  }
+  const nightInfo = () => { const r = run; if (!r) return null; if (r.nightOffer) return { offer: true }; if (r.night) return { active: true, left: nightLeft(), total: r.night.total, t: Math.ceil(r.night.t) }; return null; };
 
   // the stock clerk carries boxes from the pile to the emptiest shelves
   function stepClerk(dt, c = run.clerk) {
@@ -1363,6 +1481,7 @@ window.NeonShop = (() => {
     return true;
   }
   function planPath(from, to) {
+    if (zoneOf(from) !== 'main' || zoneOf(to) !== 'main') return routeTo(from, to);
     if (clearLine(from, to)) return [[to.x, to.y]];
     const front = Math.max(...UNITS.filter((u) => !u.wall).map((u) => u.base)) + 0.07, rows = [front, L.enter + 0.015];
     for (const y of rows) {
@@ -1377,6 +1496,10 @@ window.NeonShop = (() => {
   }
   // a free spot on the floor near (x, y): off the islands, inside the walls, in front of the till
   function floorSpot(x, y) {
+    if (zoneOf({ x, y }) !== 'main') { // in the annex or upstairs: keep inside its walls
+      const up = zoneOf({ x, y }) === 'up', dx = up ? LEVEL2_DX : 0, X = clamp(xOf(x, y) - dx, ANNEX.X0 + 0.3, ANNEX.X1 - 0.3), Z = clamp(zOf(y), (up ? ANNEX.l2[0] : ANNEX.l2[1]) + 0.3, (up ? ANNEX.l2[1] : ANNEX.Z1) - 0.3);
+      const [fx, fy] = fl(X + dx, Z); return { x: fx, y: fy };
+    }
     [x, y] = clampProp(x, y);
     y = Math.min(y, L.counter - 0.03);
     if (!blocked(x, y, 0.2)) return { x, y };
@@ -1431,12 +1554,18 @@ window.NeonShop = (() => {
       const sm = r.b.wear.smudges.find((w) => { const [a, b] = FRONT.windows[w[0]]; return Math.abs(me.x - (a + (b - a) * w[1])) < 0.12; });
       if (sm) acts.push({ id: 'wipe', label: '🪟 Wipe window', w: sm });
     }
+    if (r.night) { // the night shift: face the shelves, empty the bin
+      const ui = UNITS.findIndex((u, i) => !u.m && unitItems(i) > 0 && !r.night.faced.has(i) && d(unitSpot0(u)) < 1.7);
+      if (ui >= 0) acts.unshift({ id: 'face', label: '✨ Face the shelf', ui });
+      const bin = PROPS.find((pr) => pr[0] === 'bin');
+      if (bin && !r.night.bin && d({ x: bin[1], y: bin[2] }) < 1.4) acts.unshift({ id: 'bin', label: '🗑️ Empty the bin' });
+    }
     const reg = r.people.find((p) => p.reg && !p.chatted && p.y > L.wall && !['leaving', 'sneak'].includes(p.state) && d(p) < 1.6);
     if (reg) acts.push({ id: 'chat', label: `💬 Chat to ${reg.name}`, p: reg });
     return acts.slice(0, 3);
   }
   // where you stand to reach a unit (in front of an island, or the aisle by the wall shelves)
-  const unitSpot0 = (u) => ({ x: (u.x0 + u.x1) / 2, y: u.wall ? L.enter : u.base + 0.065 });
+  const unitSpot0 = (u) => (u.m ? mSpot(u, (u.m.X0 + u.m.X1) / 2) : { x: (u.x0 + u.x1) / 2, y: u.wall ? L.enter : u.base + 0.065 });
   function doAction(id) {
     const r = run, me = r && r.me;
     if (!me || me.state !== 'walk') return false;
@@ -1460,8 +1589,10 @@ window.NeonShop = (() => {
       r.floor.splice(r.floor.indexOf(a.f), 1);
       if (me.carry > 0 && me.carryLine !== a.f.line) pileIn(a.f.n, a.f.line); else { me.carry += a.f.n; me.carryLine = a.f.line; }
       sfx.pop();
-    }
-    else if (id === 'mop' || id === 'wipe') {
+    } else if (id === 'face' || id === 'bin') { // tidy the packs to the front, or empty the bin
+      me.state = 'choring'; me.chore = 'wipe'; me.timer = 0.9; me.facing = 'back'; me.task = { id, ui: a.ui };
+      if (id === 'face') for (const sl of r.slots) if (sl.u === a.ui && sl.n > 0) sl.pop = 0.25;
+    } else if (id === 'mop' || id === 'wipe') {
       me.state = 'choring'; me.chore = id; me.timer = 1.1; me.target = a.w; me.facing = id === 'wipe' ? 'back' : 'front';
     } else if (id === 'chat') { // a chat with a regular: happier, more patient, and they might buy one more
       const p = a.p; p.chatted = true; p.mood = 'happy'; p.patience *= 1.5;
@@ -1478,10 +1609,12 @@ window.NeonShop = (() => {
     me.moving = false; r.away = 1;
     if (me.bubbleT !== undefined) me.bubbleT -= dt;
     if (r.ending && me.state !== 'return') goBack();
+    if (r.night) r.away = 0;
     if (me.state === 'choring') {
       me.timer -= dt; me.phase += dt * 16;
       if (me.timer <= 0) {
-        if (me.chore === 'mop' || me.chore === 'wipe') { const list = me.chore === 'wipe' ? r.b.wear.smudges : r.b.wear.scuffs, i = list.indexOf(me.target); if (i >= 0) list.splice(i, 1); }
+        if (me.task) { if (r.night) { if (me.task.id === 'face') r.night.faced.add(me.task.ui); else r.night.bin = true; } me.task = null; }
+        else if (me.chore === 'mop' || me.chore === 'wipe') { const list = me.chore === 'wipe' ? r.b.wear.smudges : r.b.wear.scuffs, i = list.indexOf(me.target); if (i >= 0) list.splice(i, 1); }
         me.state = 'walk';
       }
       return;
@@ -1595,6 +1728,7 @@ window.NeonShop = (() => {
     r.served++; r.sold += res.qty; r.revenue += res.revenue;
     r.stats.waits.push(p.wait || 0);
     if (Number.isInteger(p.got) && r.lineSold[p.got] !== undefined) r.lineSold[p.got] += res.qty;
+    r.hourSold[clamp(Math.floor(dayK() * 12), 0, 11)] += res.qty; // 9:00 to 21:00, by the hour
     if (p.bogo && p.got === p.line && res.qty > 1) { // the free ones
       const free = Math.floor(res.qty / 2), off = -Math.round((res.revenue / res.qty) * free * 100) / 100;
       T.shopExtra(r.s, r.b.id, off); r.revenue += off; res.revenue += off; r.stats.bogo = (r.stats.bogo || 0) + free;
@@ -1711,16 +1845,26 @@ window.NeonShop = (() => {
   // pinch to zoom (1x to 2.4x) and drag to look around
   function zoomBy(f, sx, sy) {
     const r = run; if (!r) return;
-    if (r.r3d) { r.r3d.zoom(f, sx, sy); r.zoom.z = r.r3d.zoomLevel(); return; }
+    if (r.r3d) { r.r3d.zoom(f, sx, sy); viewMoved(); return; }
     const W = r.ui.canvas.clientWidth, H = r.ui.canvas.clientHeight, zm = r.zoom, z2 = clamp(zm.z * f, 1, 2.4);
     zm.tx = sx - ((sx - zm.tx) / zm.z) * z2; zm.ty = sy - ((sy - zm.ty) / zm.z) * z2; zm.z = z2;
     panBy(0, 0, W, H);
   }
   function panBy(dx, dy) {
     const r = run; if (!r) return;
-    if (r.r3d) { r.r3d.pan(dx, dy); return; }
+    if (r.r3d) { r.r3d.pan(dx, dy); viewMoved(); return; }
     const W = r.ui.canvas.clientWidth, H = r.ui.canvas.clientHeight, zm = r.zoom;
     zm.tx = clamp(zm.tx + dx, W - W * zm.z, 0); zm.ty = clamp(zm.ty + dy, H - H * zm.z, 0);
+  }
+  // the 3D view turned or zoomed: the HUD shows a reset button
+  const viewMoved = () => { const r3 = run.r3d; run.zoom.z = Math.max(r3.zoomLevel(), r3.rotated() ? 1.02 : 1); };
+  // one finger turns the 3D shop round (all the way); in the drawn shop it slides the zoomed view
+  function orbit(dx, dy) { const r = run; if (!r) return; if (r.r3d) { r.r3d.orbit(dx, dy); viewMoved(); } else panBy(dx, dy); }
+  // photo mode: a picture of the shop as it is
+  function snapshot() {
+    const r = run; if (!r) return null;
+    if (r.r3d) return r.r3d.snapshot();
+    draw(); return r.ui.canvas.toDataURL('image/jpeg', 0.92);
   }
   function resetZoom() { if (run) { run.zoom = { z: 1, tx: 0, ty: 0 }; if (run.r3d) run.r3d.resetView(); } }
   function pointerMove(x, y) { if (run && run.drag) { const [wx, wy] = toWorld(x, y); run.drag.x = wx; run.drag.y = wy; } }
@@ -1816,7 +1960,7 @@ window.NeonShop = (() => {
         (g) => { drawStorefront(g, W, H, G, 'static'); drawFloor(g, W, H); }, [0, 0, W, L.counter * H + 2]));
       drawStorefront(ctx, W, H, G, 'live');
     } else { drawStorefront(ctx, W, H, G); drawFloor(ctx, W, H); }
-    UNITS.forEach((u, i) => { if (u.wall) drawUnitCached(ctx, u, i, W, H, G, cache); });
+    UNITS.forEach((u, i) => { if (u.wall && !u.m) drawUnitCached(ctx, u, i, W, H, G, cache); });
     if (cache) blit(ctx, layer('fridge', K, (g) => drawFridge(g, W, H), [(FRIDGE.x0 - 0.06) * W, (FRIDGE.top - 0.02) * H, (FRIDGE.x1 - FRIDGE.x0 + 0.1) * W, (FRIDGE.base - FRIDGE.top + 0.04) * H]));
     else drawFridge(ctx, W, H);
     drawDoor(ctx, W, H);
@@ -1827,7 +1971,7 @@ window.NeonShop = (() => {
 
     // inside: shelf islands, the stock pile and people, far to near
     const items = [];
-    UNITS.forEach((u, i) => { if (!u.wall) items.push({ y: u.base, draw: () => drawUnitCached(ctx, u, i, W, H, G, cache) }); });
+    UNITS.forEach((u, i) => { if (!u.wall && !u.m) items.push({ y: u.base, draw: () => drawUnitCached(ctx, u, i, W, H, G, cache) }); });
     items.push({ y: bayAt(0).y, draw: () => drawPile(ctx, W, H, G) });
     const plants = r.decor.plants.id;
     for (const [kind, x, y] of holidayProps()) items.push({ y, draw: () => drawHolidayProp(ctx, kind, x, y, W, H) });
@@ -3240,9 +3384,12 @@ window.NeonShop = (() => {
 
   return {
     getGfx, setGfx, open, serve, refill, order, setPrice, closeEarly, clock, frontWaiting, stockInfo, pointerDown, pointerMove, pointerUp, tap, zoomBy, panBy, resetZoom,
+    _route: (a, b) => routeTo(a, b), _spot: (ui) => unitSpot(UNITS[ui]), _zone: (p) => zoneOf(p),
+    orbit, snapshot, is3D: () => !!(run && run.r3d),
+    nightShift, night: nightInfo, endNight: () => { if (run && run.night) endNight(); },
     getView, setView, has3D, nudgeLine, linePrice, answerRequest, request: requestInfo, team, setJob, JOBS, toggleWalk, canWalk, walking: () => !!(run && run.me), actions: () => nearby().map(({ id, label }) => ({ id, label })), act: doAction, goal: goalInfo,
     plan: { PROMOS, trend: trending, shapes: planShapes, draw: drawPlan, hit: planHit, move: planMove, lineNames, unitLines, PROP_KINDS, colors: LINE_COLORS },
-    layout: () => ({ BAY_X, BAY_Z, L, UNITS, ROWS, unitLine: run && run.unitLine, lines: run && run.lines, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
+    layout: () => ({ ANNEX, LEVEL2_DX, LEVEL2_Y, BAY_X, BAY_Z, L, UNITS, ROWS, unitLine: run && run.unitLine, lines: run && run.lines, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
     _drawPOS: (...a) => drawPOS(...a),
     toggleTill2, resolveReturn, pendingReturn: () => !!(run && run.pendingReturn), active: () => !!run, current: () => run,
   };

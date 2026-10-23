@@ -36,7 +36,10 @@
         <li><b>Walk the floor:</b> once Till 2 or a cashier is serving, tap 🚶 Walk and step out from behind the counter. Tap the floor to walk; tap a shopper to go to them. Near something, buttons appear: grab a box and stock a shelf, help, stop a shoplifter, pick up dropped packs, mop, wipe a window, or chat to a regular. 🛎️ Till takes you back.</li>
         <li><b>Product lines:</b> each shop sells two or three kinds of its good (a megastore three), one line per shelf. Shoppers want a particular one, and one line trends each day. Tap 🧱 Arrange shop to choose what goes on each shelf, move the islands and the floor displays. Islands near the door catch the eye (and shoplifters), baskets by the door and sweets by the till sell a little more.</li>
         <li><b>Daily goal:</b> every shop day has a 🎯 goal. Meet it for arcade coins, more for a streak. The closing report shows a heat map of where shoppers spent their time.</li>
-        <li><b>3D shop:</b> your shop is built in 3D. Pinch to zoom in on the shelves and drag to look around. Prefer the drawn look? Pick 🖼️ Classic under 🎨 Decorate → Shop view.</li>
+        <li><b>Your team and stockroom:</b> tap 👥 to give each helper a job (till, restock, guard the door, break); tired helpers fumble. Deliveries come in the back door and are sorted into a stockroom bay per line; a red light means a line's run out.</li>
+        <li><b>Prices, promotions, orders:</b> pick a line above the price to price it on its own. Buy a promo poster, 2-for-1 sign or tasting stand in 🧱 Arrange shop. Regulars sometimes ask you to have an order ready by a day: accept, and have it in when they come.</li>
+        <li><b>After closing:</b> take the 🧹 night shift (30 s) to mop, face the shelves and empty the bin for a better rating. 📊 Report on the shop card shows your last seven shop days.</li>
+        <li><b>3D shop:</b> your shop is built in 3D. Drag to turn it all the way round (360°), two fingers to slide, pinch to zoom; 📷 hides the buttons for a photo. A megastore opens an annex through the right-hand wall, with stairs up to Level 2. Prefer the drawn look? Pick 🖼️ Classic under 🎨 Decorate → Shop view.</li>
         <li><b>Exchange:</b> buy shares in Neon City companies; news moves them.</li>
         <li><b>Bank:</b> the loan costs 0.5% a day; savings earn 0.1% and are safe from pickpockets.</li>
         <li>After 120 days your net worth sets your rank and pays arcade coins into your wallet.</li>
@@ -73,12 +76,13 @@
       <div class="stat"><small>Time</small><b id="shopClock"></b></div>
       <div class="stat grow"><small id="shopTitle"></small><b id="shopTake">$0</b></div>
       <div class="stat"><small>Shelf · back</small><b id="shopStock"></b></div>
-      <button id="shopTeam" class="btn hidden" aria-label="Your team">👥</button><button id="shopZoom" class="btn hidden">🔍 1×</button><button id="shopClose" class="btn">Close</button>
+      <button id="shopPhoto" class="btn" aria-label="Photo mode">📷</button><button id="shopTeam" class="btn hidden" aria-label="Your team">👥</button><button id="shopZoom" class="btn hidden">🔍 1×</button><button id="shopClose" class="btn">Close</button>
     </div>
-    <div id="shopStage"><canvas id="shop3d" aria-hidden="true"></canvas><canvas id="shopCanvas"></canvas><div id="shopGoal" class="goalpill"></div></div>
+    <div id="shopStage"><canvas id="shop3d" aria-hidden="true"></canvas><canvas id="shopCanvas"></canvas><div id="shopGoal" class="goalpill"></div><div class="photobar"><button class="btn" id="photoDone">✕ Done</button><button class="btn primary" id="photoSnap">📸 Save picture</button></div></div>
     <div class="shopbar">
       <div id="shopReturn" class="returnrow hidden"><span>🔁 A return:</span><button class="btn" data-ret="refund">💵 Refund</button><button class="btn" data-ret="swap">🔄 Swap</button><button class="btn danger" data-ret="refuse">✋ Refuse</button></div>
       <div id="shopRequest" class="returnrow hidden"><span id="reqText"></span><button class="btn" data-req="yes">✅ Accept</button><button class="btn" data-req="no">✋ No</button></div>
+      <div id="shopNight" class="returnrow hidden"><span>🌙 Closed for the day.</span><button class="btn primary" data-night="yes">🧹 Night shift (30s)</button><button class="btn" data-night="no">🏠 Go home</button></div>
       <div id="shopActs" class="actrow hidden"></div>
       <div id="lineChips" class="linechips hidden"></div>
       <div class="pricer"><button class="btn" id="shopDown" aria-label="Lower price">−</button><div id="shopPrice"></div><button class="btn" id="shopUp" aria-label="Raise price">+</button></div>
