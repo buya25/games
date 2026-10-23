@@ -26,7 +26,7 @@ window.NeonShop = (() => {
     { x0: 0.63, x1: 0.95, top: 0.42, base: 0.53, cols: 4 },
   ];
   let UNITS = UNITS0; // the islands can be moved: see applyLayout
-  const PILE = { x: 0.12, y: 0.665 };     // where deliveries are stacked
+  const PILE = { x: 0.2069, y: 0.6405 };  // the stockroom bays: where you stand to grab a box (bays at X -2.25 to -0.95 m, Z 8.15 m)
   const CLERK_HOME = { x: 0.27, y: 0.68 };
   // shop upgrades on the floor
   const KIOSK = { x: 0.955, y: 0.77 }, KIOSK_SPOT = { x: 0.89, y: 0.75 };
@@ -208,7 +208,7 @@ window.NeonShop = (() => {
   const depthK = (y) => clamp((y - L.street) / (L.counter - L.street), 0, 1);
   const scaleAt = (y, H) => H * (0.035 + 0.075 * depthK(y));
   // the same shop in metres (seen from above): X across, Z from the front wall to the till (as the 3D view)
-  const sAt = (y) => 0.035 + 0.075 * depthK(y);
+  const sAt = (y) => 0.035 + 0.075 * clamp((y - L.street) / (L.counter - L.street), 0, 1.7); // past the counter too (the back door)
   const SB = sAt(L.door), SC = sAt(L.counter), RW = 9, RD = 9;
   const zOf = (y) => (RD * (1 / SB - 1 / sAt(y))) / (1 / SB - 1 / SC);
   const xOf = (x, y) => (x - 0.5) * (RW / 0.86) * (SB / sAt(y));
@@ -238,6 +238,19 @@ window.NeonShop = (() => {
     cx = i === 2 ? clamp(cx, Math.max(wallX, 0.03) + w / 2, 0.47 - w / 2) : clamp(cx, 0.53 + w / 2, Math.min(1 - wallX, 0.97) - w / 2);
     return [cx, base];
   }
+  // promotions you buy once and place on the floor, each for one line
+  const PROMOS = {
+    poster: { name: '🖼️ Promo poster', cost: 400, desc: 'More shoppers come in for its line (more still near the door).', at: [0.32, 0.36] },
+    bogo: { name: '🏷️ 2-for-1 sign', cost: 600, desc: 'Shoppers buying its line take more, and every second one is free. Clears a slow line.', at: [0.5, 0.47] },
+    tasting: { name: '🍽️ Tasting stand', cost: 1500, desc: 'Shoppers walking past try a sample ($0.50) and may switch to its line.', at: [0.62, 0.62] },
+  };
+  // the promotions this shop owns, where they stand and which line they push
+  function promosOf(b, lay = b.layout || {}) {
+    return Object.keys(PROMOS).filter((id) => b.promos && b.promos[id]).map((id) => {
+      const m = (lay.promos && lay.promos[id]) || {}, [x, y] = clampProp(m.x ?? PROMOS[id].at[0], m.y ?? PROMOS[id].at[1]);
+      return { id, x, y, line: Number.isInteger(m.line) && m.line < lineCount(b.tier) ? m.line : 0 };
+    });
+  }
   const PROP_KINDS = { plant: '🪴 Plant', baskets: '🧺 Baskets', wet: '⚠️ Wet-floor sign', bin: '🗑️ Bin', candy: '🍬 Sweets stand' };
   function clampProp(x, y) { return [clamp(x, 0.06, 0.94), clamp(y, L.enter + 0.01, L.counter - 0.015)]; }
   const layoutUnits = (lay) => UNITS0.map((u, i) => {
@@ -266,6 +279,7 @@ window.NeonShop = (() => {
     return {
       units: units.map((u, i) => (u.wall ? { i, wall: true, X0: xOf(u.x0, u.base), X1: xOf(u.x1, u.base), Z0: 0.07, Z1: 0.57, line: lines[i] } : Object.assign({ i, wall: false, line: lines[i], x: (u.x0 + u.x1) / 2, base: u.base }, footprint(u)))),
       props, lines: lineNames(b), colors: LINE_COLORS,
+      promos: promosOf(b, lay).map((pr) => Object.assign(pr, { X: xOf(pr.x, pr.y), Z: zOf(pr.y) })),
       counter: { X0: xOf(0, L.counter) - 0.2, X1: -xOf(0, L.counter) + 0.2, Z0: zOf(L.counter), Z1: zOf(L.counter) + 0.85 },
       pile: { X: xOf(PILE.x, PILE.y), Z: zOf(PILE.y) }, fridge: { X0: xOf(FRIDGE.x0, L.door), X1: xOf(FRIDGE.x1, L.door) },
       door: { X0: xOf(FRONT.door[0], L.door), X1: xOf(FRONT.door[1], L.door) }, windows: FRONT.windows.map(([a, c]) => [xOf(a, L.door), xOf(c, L.door)]),
@@ -312,6 +326,13 @@ window.NeonShop = (() => {
       if (on) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 3; ctx.setLineDash([5, 4]); ctx.strokeRect(...rect(u.X0 - 0.08, u.Z0 - 0.08, u.X1 + 0.08, u.Z1 + 0.08)); ctx.setLineDash([]); }
       ctx.fillStyle = '#fff'; ctx.fillText(sh.lines[u.line], ...P((u.X0 + u.X1) / 2, (u.Z0 + u.Z1) / 2));
     }
+    // promotions: a ring in their line's colour
+    for (const pr of sh.promos || []) {
+      const [x, y] = P(pr.X, pr.Z);
+      ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.beginPath(); ctx.arc(x, y, k * 0.42, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = sh.colors[pr.line]; ctx.lineWidth = opts.pick && opts.pick.type === 'promo' && opts.pick.id === pr.id ? 4 : 2; ctx.stroke();
+      ctx.font = `${Math.max(13, Math.round(k * 0.5))}px system-ui, sans-serif`; ctx.fillText(PROMOS[pr.id].name.split(' ')[0], x, y);
+    }
     // floor props
     ctx.font = `${Math.max(14, Math.round(k * 0.6))}px system-ui, sans-serif`;
     for (const pr of sh.props) {
@@ -324,6 +345,8 @@ window.NeonShop = (() => {
   // what's under a point on the plan: { type: 'unit' | 'prop', i } or null
   function planHit(W, H, sh, x, y) {
     const [X, Z] = planFrom(W, H, x, y);
+    const pm = (sh.promos || []).find((q) => Math.hypot(q.X - X, q.Z - Z) < 0.6);
+    if (pm) return { type: 'promo', id: pm.id };
     const pr = sh.props.slice().sort((a, b) => Math.hypot(a.X - X, a.Z - Z) - Math.hypot(b.X - X, b.Z - Z))[0];
     if (pr && Math.hypot(pr.X - X, pr.Z - Z) < 0.6) return { type: 'prop', i: pr.i };
     const u = sh.units.find((v) => X > v.X0 - 0.2 && X < v.X1 + 0.2 && Z > v.Z0 - 0.2 && Z < v.Z1 + 0.2);
@@ -341,6 +364,11 @@ window.NeonShop = (() => {
       const other = layoutUnits(lay)[pick.i === 2 ? 3 : 2], me = island(UNITS0[pick.i], x2, b2), f1 = footprint(me), f2 = footprint(other);
       if (f1.X1 > f2.X0 - 0.3 && f1.X0 < f2.X1 + 0.3 && f1.Z1 > f2.Z0 - 0.3 && f1.Z0 < f2.Z1 + 0.3) return lay;
       lay.units = lay.units || {}; lay.units[pick.i] = { x: x2, base: b2 };
+    } else if (pick.type === 'promo') {
+      const [px, py] = clampProp(...toFlat(X, Z)), saved = UNITS;
+      UNITS = layoutUnits(lay); const bad = blocked(px, py, 0.05); UNITS = saved;
+      if (bad) return lay;
+      lay.promos = lay.promos || {}; lay.promos[pick.id] = Object.assign({}, lay.promos[pick.id], { x: px, y: py });
     } else {
       const props = lay.props && lay.props.length === PROPS0.length ? lay.props : PROPS0.map((pr) => pr.slice());
       const [px, py] = clampProp(...toFlat(X, Z)), saved = UNITS;
@@ -383,6 +411,30 @@ window.NeonShop = (() => {
     return { text: d.text(r.goal.n), met, streak: b.goalStreak, reward: met ? 15 + 5 * Math.min(5, b.goalStreak) : 0 };
   }
 
+  // ---------- the stockroom: a bay of boxes for each line, by the left island ----------
+  const BAY_X = [-2.25, -1.6, -0.95], BAY_Z = 8.15;
+  const bayAt = (line) => { const [x, y] = toFlat(BAY_X[line], BAY_Z); return { x, y }; };
+  // deliveries come in at the back door, behind the counter
+  const BACK_PATH = [[-4, 11], [-3.6, 10.1], [-3.3, 9.3]];
+  // goods into the stockroom: into one line's bay, or (a delivery) sorted by how much shelf each line has
+  function pileIn(n, line) {
+    const r = run;
+    if (!(n > 0)) return;
+    r.pile += n;
+    if (Number.isInteger(line) && line < r.bay.length) { r.bay[line] += n; return; }
+    const room = r.bay.map((_, i) => r.slots.filter((sl) => sl.line === i).length), tot = room.reduce((a, x) => a + x, 0) || 1;
+    let left = n;
+    r.bay.forEach((_, i) => { const add = Math.floor((n * room[i]) / tot); r.bay[i] += add; left -= add; });
+    r.bay[room.indexOf(Math.max(...room))] += left;
+  }
+  // take up to n out of a line's bay; returns how many
+  function pileOut(n, line) {
+    const r = run, t = Math.max(0, Math.min(n, r.bay[line] || 0));
+    r.bay[line] -= t; r.pile -= t;
+    return t;
+  }
+  const bayLow = (line) => run.bay[line] < run.cap * 3;
+
   // where shoppers spend their time, on a grid over the floor (shown on the closing report)
   const HEAT_X = 14, HEAT_Y = 12;
 
@@ -401,6 +453,14 @@ window.NeonShop = (() => {
     return UNITS0.map((_, i) => { const l = lay.lines && lay.lines[i]; return Number.isInteger(l) && l < n ? l : [0, 1, 2, 0][i] % n; });
   }
   // today's trending line (the same all day; changes from day to day)
+  // a price for each line, as a share of the shop's shelf price (1 = the same; 0.8 = 20% off)
+  const linePrice = (b, line) => (b.linePrice && b.linePrice[line] > 0 ? b.linePrice[line] : 1);
+  function nudgeLine(line, d) {
+    const r = run, b = r.b;
+    b.linePrice = lineNames(b).map((_, i) => linePrice(b, i));
+    b.linePrice[line] = clamp(Math.round((b.linePrice[line] + d) * 20) / 20, 0.6, 1.6);
+    return b.linePrice[line];
+  }
   const trending = (s, b) => (s.day * 7 + b.id * 3) % lineCount(b.tier);
 
   // shelf geometry
@@ -423,7 +483,8 @@ window.NeonShop = (() => {
   const shelfTotal = () => run.slots.reduce((a, sl) => a + sl.n, 0);
   const unitItems = (ui) => run.slots.reduce((a, sl) => a + (sl.u === ui ? sl.n : 0), 0);
   const unitRoom = (ui) => run.slots.reduce((a, sl) => a + (sl.u === ui ? run.cap - sl.n : 0), 0);
-  const backTotal = () => run.pile + run.incoming + run.clerk.carry + (run.me ? run.me.carry : 0);
+  const carried = () => run.clerk.carry + (run.me ? run.me.carry : 0) + run.staff.reduce((a, st) => a + (st.body ? st.body.carry : 0), 0);
+  const backTotal = () => run.pile + run.incoming + carried();
 
   // ---------- open / close ----------
   // ui: { canvas, onTick(run), onEnd(summary) }
@@ -452,7 +513,7 @@ window.NeonShop = (() => {
       pile: 0, incoming: 0, deliveries: [], van: null,
       people: [], effects: [], boxes: [], dust: [],
       // your staff at the tills: each has a skill, gets tired, and takes a break when worn out
-      staff: staff.map((m, i) => ({ m, timer: 1 + i * 1.3, energy: 100, brk: 0, served: 0, look: lookFor(m.look || i * 7919 + b.id) })),
+      staff: staff.map((m, i) => ({ m, timer: 1 + i * 1.3, energy: 100, brk: 0, served: 0, look: lookFor(m.look || i * 7919 + b.id), job: 'till', body: null })),
       served: 0, sold: 0, revenue: 0, lostPrice: 0, lostWait: 0, lostStock: 0, closed: false, last: performance.now(), raf: 0,
       sellerLook: (() => { try { return Object.assign({ outfit: 'classic', skin: 2, hair: 'short', hairColor: 0 }, JSON.parse(localStorage.getItem('neonDash.look') || '{}')); } catch { return {}; } })(),
       rival: T.rival(s, b), holiday: T.holiday(s.day), season: T.season(s.day), event, eventAt: rand(18, 48), eventT: 0,
@@ -489,7 +550,14 @@ window.NeonShop = (() => {
     for (let pass = 0; left > 0 && pass < cap; pass++) {
       for (const sl of order) { if (left <= 0) break; sl.n++; left--; }
     }
-    run.pile = left;
+    run.pile = 0; run.bay = run.lines.map(() => 0);
+    pileIn(left);
+    // orders regulars asked for: due ones come in to collect; missed ones cost you the regular
+    b.requests = b.requests || [];
+    run.ordersLost = [];
+    for (const rq of b.requests.filter((x) => x.due < s.day)) loseOrder(rq);
+    run.collect = b.requests.filter((x) => x.made < s.day).map((rq, i) => ({ rq, at: rand(6, 14) + i * 9 }));
+    run.promos = promosOf(b);
     // a basket stand near the door, and sweets by the till, sell a little more
     const propAt = (k) => PROPS.find((pr) => pr[0] === k);
     const bk = propAt('baskets'), cd = propAt('candy');
@@ -529,7 +597,7 @@ window.NeonShop = (() => {
       reducedSold: st.reducedSold, knocked: st.knocked, haul: st.haul, event: r.event, holiday: r.holiday,
       staff: r.staff.map((x) => ({ name: x.m.name, served: x.served, morale: x.m.morale })),
       stars: r.stars, rating: r.b.rating, reviews: r.b.reviews || [],
-      goal: r.goalResult || null, lines: r.lines, lineSold: r.lineSold, trend: r.trend,
+      goal: r.goalResult || null, orders: r.stats.orders || 0, ordersLost: r.ordersLost, openOrders: (r.b.requests || []).map((x) => ({ ...x, lineName: r.lines[x.line] })), lines: r.lines, lineSold: r.lineSold, trend: r.trend,
       heat: { x: HEAT_X, y: HEAT_Y, data: Array.from(r.heat) }, plan: planShapes(r.b),
     };
   }
@@ -565,6 +633,7 @@ window.NeonShop = (() => {
     b.reviews = reviews;
     b.usual = mult; // regulars expect this price next time
     r.goalResult = judgeGoal();
+    for (const rq of (b.requests || []).filter((x) => x.due <= r.s.day && x.made < r.s.day)) loseOrder(rq);
   }
 
   // ---------- people ----------
@@ -591,12 +660,12 @@ window.NeonShop = (() => {
     if (regs.length && Math.random() < Math.min(0.25, 0.04 * r.b.regulars.length)) {
       const g = pick(regs);
       Object.assign(lead, { type: 'regular', badge: '⭐', reg: g, name: g.name, look: g.look });
-    } else for (const [type, chance, badge] of TYPES) { const c = type === 'thief' ? chance * (1 + 0.5 * doorK()) : chance; if (roll < c) { lead.type = type; lead.badge = badge; break; } roll -= c; }
+    } else for (const [type, chance, badge] of TYPES) { const c = type === 'thief' ? chance * (1 + 0.5 * doorK()) * (guard() ? 0.6 : 1) : chance; if (roll < c) { lead.type = type; lead.badge = badge; break; } roll -= c; }
     if (lead.type === 'returner') lead.qty = 1;
     // which line they're after: a regular always wants the same one; today's trend is more popular
     if (lead.reg && Number.isInteger(lead.reg.line) && lead.reg.line < r.lines.length) lead.line = lead.reg.line;
     else {
-      const w = r.lines.map((_, i) => (i === r.trend ? 1.8 : 1)); let k = Math.random() * w.reduce((a, x) => a + x, 0);
+      const w = r.lines.map((_, i) => (i === r.trend ? 1.8 : 1) * r.promos.reduce((a, pr) => a * (pr.id === 'poster' && pr.line === i ? (metres(pr, { x: 0.5, y: L.enter }) < 3 ? 1.7 : 1.35) : 1), 1)); let k = Math.random() * w.reduce((a, x) => a + x, 0);
       lead.line = 0; for (let i = 0; i < w.length; i++) { k -= w[i]; if (k <= 0) { lead.line = i; break; } }
       if (lead.reg) lead.reg.line = lead.line;
     }
@@ -648,7 +717,7 @@ window.NeonShop = (() => {
   const react = (p, icon) => { p.react = { icon, t: 1.6 }; };
   const pick = (a) => a[(Math.random() * a.length) | 0];
   function leaveShop(p, mood, bubble) {
-    if (p.basket) { run.pile += p.basket; p.basket = 0; } // a dropped basket goes back to the stock pile
+    if (p.basket) { pileIn(p.basket, Number.isInteger(p.got) ? p.got : p.line); p.basket = 0; } // a dropped basket goes back to the stockroom
     p.state = 'leaving'; p.mood = mood; p.hold = false; say(p, bubble);
     p.exitDir = Math.random() < 0.5 ? -1 : 1;
     p.path = routeTo(p, { x: 0.5, y: L.enter }).concat([[0.5, L.street]]);
@@ -667,6 +736,8 @@ window.NeonShop = (() => {
 
   // take goods off the shelves into the basket; the nearest shelf spots go first
   function takeGoods(p) {
+    const bogo = run.promos.find((pr) => pr.id === 'bogo' && pr.line === p.line);
+    if (bogo && !p.bogo) { p.bogo = true; p.qty = Math.max(2, p.qty + Math.ceil(p.qty / 2)); react(p, '🏷️'); }
     let need = Math.min(p.qty, shelfTotal()), flies = 0;
     p.got = p.line;
     while (need > 0) {
@@ -684,7 +755,7 @@ window.NeonShop = (() => {
     // now and then a pack slips and lands on the floor, until the clerk picks it up
     if (p.basket > 1 && Math.random() < 0.06) {
       p.basket--;
-      run.floor.push({ x: p.x + rand(-0.03, 0.03), y: p.y + 0.012, n: 1, rot: rand(-1.2, 1.2) });
+      run.floor.push({ x: p.x + rand(-0.03, 0.03), y: p.y + 0.012, n: 1, rot: rand(-1.2, 1.2), line: p.got });
       say(p, '😬 Oops!', 1.2);
     }
   }
@@ -717,6 +788,7 @@ window.NeonShop = (() => {
     if (r.cam && (r.cam.t += dt) > r.cam.dur) r.cam = null;
     if (r.alarm > 0) r.alarm -= dt;
     if (r.greetT > 0) r.greetT -= dt;
+    if (r.pendingRequest && (r.pendingRequest.t -= dt) <= 0) answerRequest(false);
     if (r.info && (r.info.t -= dt) <= 0) r.info = null;
     if (!r.drag && r.away > 0) r.away -= dt;
     // weather: rain falling outside, clouds drifting
@@ -729,6 +801,8 @@ window.NeonShop = (() => {
     for (const c of r.clouds) { c.x += dt * 0.006; if (c.x > 1.2) c.x = -0.3; }
     const open = !opening && r.t < DAY_SECONDS;
     // shoppers arrive spread over the day
+    // a regular coming to collect their order
+    if (open && r.collect.length && r.t >= r.collect[0].at) addCollector(r.collect.shift().rq);
     if (open && r.spawned < r.entrants && r.t >= r.nextSpawn) {
       addShopper();
       const gap = (DAY_SECONDS * 0.9) / r.entrants / (rushRate(dayK()) / RUSH_AVG); // busier at rush hour
@@ -741,6 +815,17 @@ window.NeonShop = (() => {
       p.moving = false;
       if (p.bubbleT !== undefined) p.bubbleT -= dt;
       if (p.react && (p.react.t -= dt) <= 0) p.react = null;
+      if (p.kind === 'shopper' && !p.tasted && (p.state === 'enter' || p.state === 'look')) {
+        const ts = r.promos.find((pr) => pr.id === 'tasting');
+        if (ts && metres(p, ts) < 1.8) {
+          p.tasted = true;
+          if (Math.random() < 0.45) {
+            T.shopExtra(r.s, r.b.id, -0.5); r.stats.extras -= 0.5; r.stats.samples = (r.stats.samples || 0) + 1;
+            p.patience *= 1.15; react(p, '😋');
+            if (p.line !== ts.line && !p.order && Math.random() < 0.6) { p.line = ts.line; say(p, `😋 Ooh, I'll get ${r.lines[ts.line]}!`, 1.6); }
+          }
+        }
+      }
       if (p.kind !== 'passer' && p.y > L.enter - 0.01 && p.y < L.counter) { // the heat map
         const gx = clamp(Math.floor(((xOf(p.x, p.y) + RW / 2) / RW) * HEAT_X), 0, HEAT_X - 1), gy = clamp(Math.floor((zOf(p.y) / 9.6) * HEAT_Y), 0, HEAT_Y - 1);
         r.heat[gy * HEAT_X + gx] += dt;
@@ -810,21 +895,22 @@ window.NeonShop = (() => {
             break;
           }
           // some pick a pack up to look at it first, then buy it or put it back
-          if (shelfTotal() > 0 && !p.considered && Math.random() < (mult > p.limit ? 0.6 : 0.3)) {
+          const pm = mult * linePrice(r.b, p.line); // the price of the line they want
+          if (shelfTotal() > 0 && !p.considered && Math.random() < (pm > p.limit ? 0.6 : 0.3)) {
             p.considered = true; p.state = 'consider'; p.timer = rand(0.9, 1.5); p.hold = true; react(p, '🤔');
             break;
           }
           // they can see the rival's prices across the road
-          if (r.rival && p.compares && p.type !== 'regular' && mult > r.rival.mult * 1.05) {
+          if (r.rival && p.compares && p.type !== 'regular' && pm > r.rival.mult * 1.05) {
             r.lostPrice++; leaveShop(p, 'angry', `😒 Cheaper at ${r.rival.name}!`);
             break;
           }
-          if (mult > p.limit) {
+          if (pm > p.limit) {
             r.lostPrice++; react(p, '💸');
             leaveShop(p, 'angry', p.type === 'regular' ? '😤 You raised prices!' : p.type === 'bargain' ? '🏷️ No deals today.' : pick(['😒 Too pricey!', '😒 How much?!', '💸 Nope.']));
             break;
           }
-          if (mult < p.limit * 0.85) react(p, '😍');
+          if (pm < p.limit * 0.85) react(p, '😍');
           if (lineItems(p.line) > 0) {
             if (run.unitLine[p.unit] !== p.line && !p.moved) { // their line is on another shelf: walk over to it
               p.moved = true; p.unit = run.unitLine.findIndex((l, i) => l === p.line && unitItems(i) > 0);
@@ -843,7 +929,7 @@ window.NeonShop = (() => {
           p.timer -= dt;
           if (p.timer > 0) break;
           p.hold = false;
-          if (mult > p.limit) { // puts it back
+          if (mult * linePrice(r.b, p.line) > p.limit) { // puts it back
             const sl = run.slots.filter((x) => x.u === p.unit && x.n > 0).sort((a, b) => Math.abs(a.x - p.x) - Math.abs(b.x - p.x))[0];
             if (sl) sl.pop = 0.2;
             r.lostPrice++; leaveShop(p, 'angry', pick(['😒 Too pricey!', '🤔 Not at that price.']));
@@ -861,11 +947,16 @@ window.NeonShop = (() => {
             p.path = routeTo(p, { x: 0.5, y: L.enter }).concat([[0.5, L.street]]);
           } else if (p.timer <= 0) {
             p.state = 'toQueue'; p.path = [[0.5, p.y]];
-            say(p, mult < p.limit * 0.8 ? pick(['😍 Bargain!', '😍 So cheap!']) : pick(['🙂 Nice.', '🙂 Just what I need.']), 1.4); p.mood = 'happy';
+            say(p, mult * linePrice(r.b, p.line) < p.limit * 0.8 ? pick(['😍 Bargain!', '😍 So cheap!']) : pick(['🙂 Nice.', '🙂 Just what I need.']), 1.4); p.mood = 'happy';
           }
           break;
         case 'sneak':
           if (r.up.gates && p.y < L.enter + 0.015) { catchThief(p, true); break; }
+          const gd = guard();
+          if (gd && !p.guardTried && metres(p, gd.body) < 1.6) {
+            p.guardTried = true;
+            if (Math.random() < 0.75 * (gd.energy < 30 ? 0.6 : 1)) { catchThief(p, false); say(gd.body, '✋ Not so fast!', 1.6); break; }
+          }
           if (walk(p, dt, 0.26)) { // got away with it
             const res = T.shopLoss(r.s, r.b.id, p.basket);
             r.stats.stolen += res.qty || 0; p.basket = 0; p.hidden = false; p.state = 'leaving'; p.path = [];
@@ -929,7 +1020,7 @@ window.NeonShop = (() => {
       if (c.child && atShelf && !c.knocked && Math.random() < dt * 0.05) { // crash! packs all over the floor
         c.knocked = true;
         const near = r.slots.filter((sl) => sl.u === l.unit && sl.n > 0).sort((a, b) => Math.abs(a.x - c.x) - Math.abs(b.x - c.x)).slice(0, 3);
-        for (const sl of near) { sl.n--; r.floor.push({ x: sl.x + rand(-0.02, 0.02), y: UNITS[sl.u].wall ? L.enter + rand(0.01, 0.03) : UNITS[sl.u].base + rand(0.02, 0.05), n: 1, rot: rand(-1.4, 1.4) }); r.stats.knocked++; }
+        for (const sl of near) { sl.n--; r.floor.push({ x: sl.x + rand(-0.02, 0.02), y: UNITS[sl.u].wall ? L.enter + rand(0.01, 0.03) : UNITS[sl.u].base + rand(0.02, 0.05), n: 1, rot: rand(-1.4, 1.4), line: sl.line }); r.stats.knocked++; }
         if (near.length) { say(c, '💥 Oops!', 1.6); say(l, '😳 Sorry about that!', 1.6); sfx.thud(); }
       }
     }
@@ -983,12 +1074,18 @@ window.NeonShop = (() => {
     if (!r.power) r.doorOpen = clamp(r.doorOpen + (wantOpen ? 4 : -2.5) * dt, 0, 1);
     // helpers at the till serve the front of the queue on their own
     r.staff.forEach((st, i) => {
+      if (st.job !== 'till') return stepStaffJob(st, i, dt);
       if (st.brk > 0) { if ((st.brk -= dt) <= 0) st.energy = 70; return; } // back from a break
       if ((st.timer -= dt) > 0) return;
       const p = queue().find(atTill);
       if (!p) { st.timer = 0.3; return; }
       startServe(p, 0.8, i);
       st.served++; st.energy -= 7;
+      // worn out, they fumble: a pack slips off the counter
+      if (st.energy < 35 && p.basket > 1 && Math.random() < 0.2) {
+        p.basket--; r.floor.push({ x: 0.5 + rand(-0.08, 0.08), y: L.counter - 0.025, n: 1, rot: rand(-1.2, 1.2), line: p.got });
+        say(p, `😬 ${st.m.name} dropped one!`, 1.4); r.stats.fumbles = (r.stats.fumbles || 0) + 1;
+      }
       st.timer = (st.m.skill === 'cashier' ? 3 : STAFF_SERVE) * (st.energy < 40 ? 1.4 : 1) * (0.8 + Math.random() * 0.4);
       if (st.energy < 25) { // worn out: a short break
         st.brk = 8; st.timer = 8.5;
@@ -1025,8 +1122,8 @@ window.NeonShop = (() => {
   }
 
   // the stock clerk carries boxes from the pile to the emptiest shelves
-  function stepClerk(dt) {
-    const r = run, c = r.clerk;
+  function stepClerk(dt, c = run.clerk) {
+    const r = run;
     c.moving = false;
     switch (c.state) {
       case 'idle': {
@@ -1035,7 +1132,14 @@ window.NeonShop = (() => {
           c.target = r.floor[0]; c.state = 'fetch'; c.path = routeTo(c, { x: c.target.x, y: c.target.y - 0.004 });
           break;
         }
-        if (!r.pile) {
+        let best = -1, score = 0;
+        UNITS.forEach((_, i) => {
+          if (unitRoom(i) <= 0 || !(r.bay[r.unitLine[i]] > 0)) return;
+          const waiting = r.people.some((p) => p.state === 'wait' && p.line === r.unitLine[i]);
+          const sc = unitRoom(i) - unitItems(i) * 0.2 + (waiting ? 1000 : 0);
+          if (best < 0 || sc > score) { best = i; score = sc; }
+        });
+        if (best < 0) {
           // otherwise, wipe a smudged window or mop a scuff now and then
           const w = r.b.wear;
           if (w.smudges.length && Math.random() < dt * 0.08) {
@@ -1056,18 +1160,9 @@ window.NeonShop = (() => {
           moveToward(c, CLERK_HOME.x, CLERK_HOME.y, dt, 0.2); if (!c.moving) c.facing = 'front'; break;
         }
         c.tidy = false;
-        let best = -1, score = 0;
-        UNITS.forEach((_, i) => {
-          if (unitRoom(i) <= 0) return;
-          const waiting = r.people.some((p) => p.state === 'wait' && p.line === r.unitLine[i]);
-          const sc = unitRoom(i) - unitItems(i) * 0.2 + (waiting ? 1000 : 0);
-          if (best < 0 || sc > score) { best = i; score = sc; }
-        });
-        if (best < 0) break;
-        // pick up a box from the pile
-        c.unit = best;
-        c.carry = Math.min(r.pile, unitRoom(best), r.cap * UNITS[best].cols * 2);
-        r.pile -= c.carry;
+        // pick up a box from that line's bay
+        c.unit = best; c.carryLine = r.unitLine[best];
+        c.carry = pileOut(Math.min(unitRoom(best), r.cap * UNITS[best].cols * 2), c.carryLine);
         const from = { x: PILE.x + 0.08, y: PILE.y - 0.03 };
         c.path = [[from.x, from.y]].concat(routeTo(from, unitSpot(UNITS[best])));
         c.state = 'toShelf';
@@ -1079,7 +1174,7 @@ window.NeonShop = (() => {
       case 'fetch':
         if (walk(c, dt, 0.3)) {
           const i = r.floor.indexOf(c.target);
-          if (i >= 0) { c.carry += r.floor[i].n; r.floor.splice(i, 1); sfx.pop(); }
+          if (i >= 0) { c.carry += r.floor[i].n; c.carryLine = r.floor[i].line; r.floor.splice(i, 1); sfx.pop(); }
           c.state = 'back'; c.path = routeTo(c, { x: PILE.x + 0.08, y: PILE.y - 0.03 });
         }
         break;
@@ -1121,7 +1216,7 @@ window.NeonShop = (() => {
         break;
       }
       case 'back':
-        if (walk(c, dt, 0.28 * r.clerkSpeed)) { r.pile += c.carry; c.carry = 0; c.state = 'idle'; }
+        if (walk(c, dt, 0.28 * r.clerkSpeed)) { pileIn(c.carry, c.carryLine); c.carry = 0; c.state = 'idle'; }
         break;
     }
   }
@@ -1138,7 +1233,7 @@ window.NeonShop = (() => {
     if (!v) return;
     if (v.state === 'in') {
       v.x -= Math.max(0.08, (v.x - VAN_X) * 2.6) * dt;
-      if (v.x <= VAN_X) { v.x = VAN_X; v.state = 'parked'; sfx.horn(); r.cam = { x: VAN_X - 0.05, y: 0.14, z: 1.1, t: 0, dur: 1.4 }; }
+      if (v.x <= VAN_X) { v.x = VAN_X; v.state = 'parked'; sfx.horn(); r.effects.push({ kind: 'text', text: '🚚 Delivery at the back door', x: 0.5, y: 0.5, t: 0, color: '#7fe9ff' }); }
     } else if (v.state === 'parked') {
       if (r.deliveries.length) v.trips.push(...r.deliveries.splice(0));
       const c = v.courier;
@@ -1147,17 +1242,19 @@ window.NeonShop = (() => {
           v.wait = 0;
           v.courier = {
             kind: 'courier', look: { outfit: 'sunset', skin: (Math.random() * 5) | 0, hair: 'buzz', hairColor: 1 },
-            x: v.x - 0.16, y: L.street, phase: 0, facing: 'front', box: v.trips.shift(), state: 'carry',
-            path: [[0.5, L.street + 0.004], [0.5, L.enter], [0.5, PILE.y - 0.06], [PILE.x + 0.12, PILE.y]],
+            ...(() => { const [x, y] = toFlat(...BACK_PATH[0]); return { x, y }; })(), phase: 0, facing: 'back', box: v.trips.shift(), state: 'carry', trolley: true,
+            // in at the back door, round the end of the counter, to the stockroom bays
+            path: BACK_PATH.slice(1).map(([X, Z]) => toFlat(X, Z)).concat([[PILE.x, PILE.y + 0.035]]),
           };
         } else if ((v.wait += dt) > 0.6) v.state = 'out';
       } else {
         c.moving = false;
         if (c.state === 'carry' && walk(c, dt, 0.34)) {
           // drop the box onto the pile
-          r.boxes.push({ x: PILE.x + rand(-0.03, 0.03), y: c.y - 0.06, vy: -0.15, ty: PILE.y, units: c.box, bounced: false });
+          // unload the trolley onto the bays
+          r.boxes.push({ x: bayAt((Math.random() * r.bay.length) | 0).x, y: c.y - 0.06, vy: -0.15, ty: bayAt(0).y, units: c.box, bounced: false });
           c.box = 0; c.state = 'return';
-          c.path = [[0.5, PILE.y - 0.06], [0.5, L.enter], [0.5, L.street + 0.004], [v.x - 0.16, L.street]];
+          c.path = BACK_PATH.slice().reverse().map(([X, Z]) => toFlat(X, Z));
         } else if (c.state === 'return' && walk(c, dt, 0.34)) {
           v.courier = null;
         }
@@ -1175,7 +1272,7 @@ window.NeonShop = (() => {
       if (bx.y >= bx.ty) {
         bx.y = bx.ty;
         if (!bx.bounced) { bx.bounced = true; bx.vy = -0.35; sfx.thud(); puff(bx.x, bx.ty); }
-        else { bx.done = true; r.incoming -= bx.units; r.pile += bx.units; }
+        else { bx.done = true; r.incoming -= bx.units; pileIn(bx.units); } // sorted into the bays
       }
     }
     r.boxes = r.boxes.filter((bx) => !bx.done);
@@ -1241,7 +1338,7 @@ window.NeonShop = (() => {
     const c = r.clerk;
     if (!r.till2) {
       r.till2 = true; r.till2Timer = 1.2;
-      r.pile += c.carry; c.carry = 0; c.tidy = false;
+      pileIn(c.carry, c.carryLine); c.carry = 0; c.tidy = false;
       c.state = 'toTill'; c.path = routeTo(c, { x: 0.72, y: L.counter - 0.02 });
     } else {
       r.till2 = false; c.state = 'idle'; c.x = 0.72; c.y = L.counter - 0.02;
@@ -1258,7 +1355,7 @@ window.NeonShop = (() => {
 
   // ---------- walking the floor yourself, while someone else looks after the till ----------
   const TILL_SPOT = { x: 0.6, y: L.counter - 0.02 };
-  const covered = () => !!run && ((run.till2 && run.clerk.state === 'till') || run.staff.some((st) => !(st.brk > 0)));
+  const covered = () => !!run && ((run.till2 && run.clerk.state === 'till') || run.staff.some((st) => st.job === 'till' && !(st.brk > 0)));
   const canWalk = () => !!run && run.intro <= 0 && !run.ending && (!!run.me || covered());
   // a path across the floor that goes around the islands (along the front of them, or the aisle by the wall shelves)
   function clearLine(a, b) {
@@ -1318,10 +1415,14 @@ window.NeonShop = (() => {
     const hand = r.people.find((p) => p.state === 'help' && d(p) < 1.6);
     if (hand) acts.push({ id: 'help', label: '🙋 Help', p: hand });
     if (me.carry > 0) {
-      const ui = UNITS.findIndex((u) => unitRoom(UNITS.indexOf(u)) > 0 && d(unitSpot0(u)) < 1.7);
+      const ui = UNITS.findIndex((u, i) => r.unitLine[i] === me.carryLine && unitRoom(i) > 0 && d(unitSpot0(u)) < 1.7);
       if (ui >= 0) acts.push({ id: 'stock', label: `🧺 Stock ${r.lines[r.unitLine[ui]]}`, ui });
       if (d({ x: PILE.x, y: PILE.y }) < 1.8) acts.push({ id: 'drop', label: '↩️ Put box back' });
-    } else if (r.pile > 0 && d({ x: PILE.x, y: PILE.y }) < 1.8) acts.push({ id: 'box', label: '📦 Grab a box' });
+    } else if (r.pile > 0 && d({ x: PILE.x, y: PILE.y }) < 1.8) {
+      // the lines that need it most first
+      const need = r.lines.map((_, i) => i).filter((i) => r.bay[i] > 0).sort((a, b) => lineItems(a) - lineItems(b));
+      for (const l of need.slice(0, 2)) acts.push({ id: 'box' + l, label: `📦 Grab ${r.lines[l]}` });
+    }
     const fl = r.floor.find((f) => d(f) < 1.4);
     if (fl) acts.push({ id: 'floor', label: '🫳 Pick up', f: fl });
     const sc = r.b.wear.scuffs.find((w) => d({ x: w[0], y: w[1] }) < 1.2);
@@ -1339,12 +1440,13 @@ window.NeonShop = (() => {
   function doAction(id) {
     const r = run, me = r && r.me;
     if (!me || me.state !== 'walk') return false;
+    if (id === 'box') id = nearby().map((x) => x.id).find((x) => x.startsWith('box')) || id; // any line
     const a = nearby().find((x) => x.id === id);
     if (!a) return false;
     if (id === 'catch') catchThief(a.p, false);
     else if (id === 'help') helpShopper(a.p);
-    else if (id === 'box') { me.carry = Math.min(r.pile, r.cap * 8); r.pile -= me.carry; sfx.thud(); }
-    else if (id === 'drop') { r.pile += me.carry; me.carry = 0; sfx.thud(); }
+    else if (id.startsWith('box')) { me.carryLine = +id.slice(3); me.carry = pileOut(r.cap * 8, me.carryLine); sfx.thud(); }
+    else if (id === 'drop') { pileIn(me.carry, me.carryLine); me.carry = 0; sfx.thud(); }
     else if (id === 'stock') {
       let n = Math.min(me.carry, unitRoom(a.ui));
       me.carry -= n;
@@ -1354,7 +1456,11 @@ window.NeonShop = (() => {
         sl.n += add; n -= add; sl.pop = 0.3;
       }
       me.state = 'choring'; me.chore = 'stock'; me.timer = 0.6; me.facing = 'back'; sfx.pop();
-    } else if (id === 'floor') { r.floor.splice(r.floor.indexOf(a.f), 1); me.carry += a.f.n; sfx.pop(); }
+    } else if (id === 'floor') { // into your box if it's the same line, otherwise tucked back into the stockroom
+      r.floor.splice(r.floor.indexOf(a.f), 1);
+      if (me.carry > 0 && me.carryLine !== a.f.line) pileIn(a.f.n, a.f.line); else { me.carry += a.f.n; me.carryLine = a.f.line; }
+      sfx.pop();
+    }
     else if (id === 'mop' || id === 'wipe') {
       me.state = 'choring'; me.chore = id; me.timer = 1.1; me.target = a.w; me.facing = id === 'wipe' ? 'back' : 'front';
     } else if (id === 'chat') { // a chat with a regular: happier, more patient, and they might buy one more
@@ -1383,7 +1489,7 @@ window.NeonShop = (() => {
     const step = Math.floor(me.phase / 3);
     const arrived = walk(me, dt, 0.3);
     if (Math.floor(me.phase / 3) !== step) sfx.step(0.03, panAt(me.x, me.y));
-    if (me.state === 'return') { if (arrived) { r.pile += me.carry; me.carry = 0; r.me = null; r.away = 0.3; } return; }
+    if (me.state === 'return') { if (arrived) { pileIn(me.carry, me.carryLine); me.carry = 0; r.me = null; r.away = 0.3; } return; }
     // someone you tapped: keep after them (a shoplifter keeps moving), and deal with them when close
     const g = me.goal;
     if (g && g.p) {
@@ -1392,6 +1498,82 @@ window.NeonShop = (() => {
       else if ((g.re = (g.re || 0) - dt) <= 0) { g.re = 0.35; me.path = planPath(me, floorSpot(g.p.x, g.p.y + 0.02)); }
     }
   }
+
+  // ---------- orders: a regular asks you to have some of a line ready by a day ----------
+  function loseOrder(rq) {
+    const r = run, b = r.b;
+    b.requests = b.requests.filter((x) => x !== rq);
+    b.regulars = b.regulars.filter((g) => g.name !== rq.name); // they won't be back
+    r.ordersLost.push(rq.name);
+  }
+  // they come in, go to their line's shelf, and take the whole order to the till
+  function addCollector(rq) {
+    const r = run;
+    addShopper();
+    const p = r.people.filter((x) => x.kind === 'shopper').at(-1), g = r.b.regulars.find((x) => x.name === rq.name);
+    Object.assign(p, { type: 'regular', badge: '📝', name: rq.name, reg: g || null, look: g ? g.look : p.look, line: rq.line, qty: rq.qty, limit: T.RETAIL * 9, order: rq, patience: p.patience * 1.6 });
+  }
+  // after a sale, a regular may ask for an order
+  function maybeAsk(p) {
+    const r = run, b = r.b;
+    if (!p.reg || p.order || r.pendingRequest || b.requests.length >= 3 || b.requests.some((x) => x.name === p.name) || Math.random() > 0.3) return;
+    const line = (Math.random() * r.lines.length) | 0, qty = Math.max(3, Math.round(r.qtyMean * rand(2.5, 4))), days = 2 + ((Math.random() * 3) | 0);
+    r.pendingRequest = { p, line, qty, due: r.s.day + days, t: 10 };
+    say(p, `📝 Could you get ${qty}× ${r.lines[line]} by day ${r.s.day + days}?`, 4);
+  }
+  function answerRequest(yes) {
+    const r = run, q = r && r.pendingRequest;
+    if (!q) return false;
+    r.pendingRequest = null;
+    if (yes) {
+      r.b.requests.push({ name: q.p.name, line: q.line, qty: q.qty, due: q.due, made: r.s.day });
+      say(q.p, '👍 Brilliant, see you then!', 1.8); sfx.ching();
+    } else say(q.p, '😕 Oh well…', 1.4);
+    return true;
+  }
+  const requestInfo = () => { const q = run && run.pendingRequest; return q ? { name: q.p.name, qty: q.qty, line: run.lines[q.line], due: q.due } : null; };
+
+  // ---------- your team: each helper has a job you can change in the shop ----------
+  const JOBS = { till: '🧾 Till', stock: '📦 Restock', door: '🚪 Door', break: '☕ Break' };
+  const DOOR_SPOT = { x: 0.57, y: L.enter + 0.03 };
+  const guard = () => run.staff.find((st) => st.job === 'door' && st.body && st.body.state === 'guard');
+  function setJob(i, job) {
+    const r = run, st = r && r.staff[i];
+    if (!st || !JOBS[job] || r.ending) return false;
+    if (st.job === job) return true;
+    st.job = job; st.brk = 0;
+    if (job === 'till' || job === 'break') { // back behind the counter
+      if (st.body) { const b = st.body; pileIn(b.carry, b.carryLine); b.carry = 0; b.state = 'leave'; b.path = planPath(b, TILL_SPOT); }
+    } else {
+      const b = st.body || (st.body = { kind: 'staffer', look: st.look, x: TILL_SPOT.x, y: TILL_SPOT.y, phase: 0, facing: 'back', carry: 0, name: st.m.name, i });
+      if (job === 'stock') { b.state = 'idle'; b.path = []; } else { b.state = 'toDoor'; b.path = planPath(b, DOOR_SPOT); }
+    }
+    sfx.pop();
+    return true;
+  }
+  function stepStaffJob(st, i, dt) {
+    const r = run, b = st.body;
+    if (st.job === 'break') st.energy = Math.min(100, st.energy + dt * 9);
+    else st.energy = Math.max(0, st.energy - dt * (st.job === 'stock' ? 0.7 : 0.35));
+    if (st.job === 'break' && st.energy >= 100) { setJob(i, 'till'); r.effects.push({ kind: 'text', text: `💪 ${st.m.name} is back on the till`, x: 0.5, y: L.counter - 0.1, t: 0, color: '#4ade80' }); }
+    if (!b) return;
+    b.moving = false;
+    if (b.bubbleT !== undefined) b.bubbleT -= dt;
+    if (b.state === 'leave') { if (walk(b, dt, 0.3)) st.body = null; return; }
+    if (st.job === 'stock') {
+      const sp = r.clerkSpeed; r.clerkSpeed = sp * (st.energy < 30 ? 0.7 : 1); // tired: slower
+      stepClerk(dt, b); r.clerkSpeed = sp;
+      // too tired, they fumble a pack while stocking
+      if (b.state === 'stock' && st.energy < 20 && b.carry > 0 && Math.random() < dt * 0.4) {
+        b.carry--; r.floor.push({ x: b.x + rand(-0.02, 0.02), y: b.y + 0.01, n: 1, rot: rand(-1.2, 1.2), line: b.carryLine }); say(b, '😵 Whoops…', 1.2);
+      }
+    } else if (st.job === 'door') {
+      if (b.state === 'toDoor' && walk(b, dt, 0.3)) { b.state = 'guard'; b.facing = 'back'; }
+      if (b.state === 'guard') b.facing = 'back';
+    }
+  }
+  // the team, for the sheet: names, skills, energy, morale, job
+  const team = () => (run ? run.staff.map((st, i) => ({ i, name: st.m.name, skill: st.m.skill, icon: T.SKILLS[st.m.skill].icon, energy: Math.round(st.energy), morale: Math.round(st.m.morale), job: st.job, brk: st.brk > 0, served: st.served })) : []);
 
   // who: -1 for you, or the helper's index
   function startServe(p, time, who = -1) {
@@ -1413,6 +1595,12 @@ window.NeonShop = (() => {
     r.served++; r.sold += res.qty; r.revenue += res.revenue;
     r.stats.waits.push(p.wait || 0);
     if (Number.isInteger(p.got) && r.lineSold[p.got] !== undefined) r.lineSold[p.got] += res.qty;
+    if (p.bogo && p.got === p.line && res.qty > 1) { // the free ones
+      const free = Math.floor(res.qty / 2), off = -Math.round((res.revenue / res.qty) * free * 100) / 100;
+      T.shopExtra(r.s, r.b.id, off); r.revenue += off; res.revenue += off; r.stats.bogo = (r.stats.bogo || 0) + free;
+    }
+    const lm = Number.isInteger(p.got) ? linePrice(r.b, p.got) : 1;
+    if (Math.abs(lm - 1) > 0.001) { const diff = Math.round(res.revenue * (lm - 1) * 100) / 100; T.shopExtra(r.s, r.b.id, diff); r.revenue += diff; res.revenue += diff; }
     if ((p.wait || 0) < 2.5 && via !== 'kiosk') react(p, '⚡');
     if (r.candyNear && Math.random() < 0.15) { p.extra += 1.5; r.effects.push({ kind: 'text', text: '🍬 +$1.50', x: p.x - 0.08, y: L.counter - 0.16, t: 0, color: '#ff8fcf' }); }
     p.bag = true;
@@ -1435,6 +1623,13 @@ window.NeonShop = (() => {
       r.b.regulars.push({ name: p.name, look: p.look, stamps: 1, visits: 1 }); r.stats.newRegulars++;
       say(p, `💳 I'll be back! (${p.name})`, 2);
     }
+    if (p.order) { // a collected order: they pay a third more for you getting it in
+      const bonus = Math.round(res.revenue * 0.3 * 100) / 100;
+      T.shopExtra(r.s, r.b.id, bonus); r.stats.extras += bonus; r.stats.orders = (r.stats.orders || 0) + 1;
+      r.b.requests = r.b.requests.filter((x) => x !== p.order);
+      say(p, '📝 My order! Thank you!', 2);
+      r.effects.push({ kind: 'text', text: `📝 Order collected +$${bonus.toFixed(2)}`, x: p.x, y: L.counter - 0.18, t: 0, color: '#4ade80' });
+    } else maybeAsk(p);
     if (p.type === 'influencer') { // a haul video brings more shoppers tomorrow
       r.b.buzz = { day: r.s.day + 1, mult: 1.12 }; r.stats.haul = true;
       say(p, '🎥 Haul video! Like and subscribe!', 2.2);
@@ -1464,6 +1659,7 @@ window.NeonShop = (() => {
     const q = run.inv.transformPoint(new DOMPoint(x * run.dpr, y * run.dpr));
     return [q.x, q.y];
   };
+  const staffAt = (wx, wy, W, H) => { const saved = run.people; run.people = run.staff.filter((st) => st.body).map((st) => st.body); const hit = personAt(wx, wy, W, H, () => true); run.people = saved; return hit; };
   function personAt(wx, wy, W, H, test) {
     if (run.r3d) { // wx, wy are on the screen
       const hits3 = run.people.filter((p) => { if (!test(p)) return false; const [x, y, s] = onScreen(p); return Math.abs(wx - x) < s * 0.6 && wy < y + 6 && wy > y - s * 2.1; });
@@ -1505,6 +1701,7 @@ window.NeonShop = (() => {
     }
     const thief = personAt(wx, wy, W, H, (p) => p.state === 'sneak');
     if (thief) { catchThief(thief, false); return 'caught'; }
+    if (staffAt(wx, wy, W, H)) return 'team';
     const asker = personAt(wx, wy, W, H, (p) => p.state === 'help');
     if (asker) { helpShopper(asker); return 'help'; }
     const who = personAt(wx, wy, W, H, (p) => (p.kind === 'shopper' || p.kind === 'companion') && p.y > L.wall && !atTill(p) && p.state !== 'returning');
@@ -1534,8 +1731,8 @@ window.NeonShop = (() => {
     r.drag = null; r.away = 0.8; // back to the till in a moment
     const ui = r.r3d ? r.r3d.unitAt(x, y) : UNITS.findIndex((u) => x >= u.x0 * W && x <= u.x1 * W && y >= (u.top - 0.05) * H && y <= (u.base + 0.04) * H);
     if (ui < 0 || unitRoom(ui) <= 0) return 'none';
-    let n = Math.min(r.pile, unitRoom(ui), r.cap * UNITS[ui].cols * 2);
-    r.pile -= n;
+    let n = pileOut(Math.min(unitRoom(ui), r.cap * UNITS[ui].cols * 2), r.unitLine[ui]);
+    if (n <= 0) { r.effects.push({ kind: 'text', text: `📦 No ${r.lines[r.unitLine[ui]]} in the stockroom`, x: 0.5, y: 0.5, t: 0, color: '#ff9f6b' }); return 'none'; }
     while (n > 0) {
       const sl = r.slots.filter((x) => x.u === ui && x.n < r.cap).sort((a, b) => a.n - b.n || a.row - b.row)[0];
       const add = Math.min(n, r.cap - sl.n, Math.max(1, Math.ceil(r.cap / 3)));
@@ -1631,7 +1828,7 @@ window.NeonShop = (() => {
     // inside: shelf islands, the stock pile and people, far to near
     const items = [];
     UNITS.forEach((u, i) => { if (!u.wall) items.push({ y: u.base, draw: () => drawUnitCached(ctx, u, i, W, H, G, cache) }); });
-    items.push({ y: PILE.y, draw: () => drawPile(ctx, W, H, G) });
+    items.push({ y: bayAt(0).y, draw: () => drawPile(ctx, W, H, G) });
     const plants = r.decor.plants.id;
     for (const [kind, x, y] of holidayProps()) items.push({ y, draw: () => drawHolidayProp(ctx, kind, x, y, W, H) });
     for (const [kind, x, y] of PROPS.concat(plants === 'jungle' ? JUNGLE : [])) {
@@ -1647,7 +1844,9 @@ window.NeonShop = (() => {
     for (const p of r.people) if (!outside(p)) items.push({ y: p.y, draw: () => drawPerson(ctx, p, W, H, G) });
     items.push({ y: r.clerk.y, draw: () => drawPerson(ctx, r.clerk, W, H, G) });
     if (r.me) items.push({ y: r.me.y, draw: () => drawPerson(ctx, r.me, W, H, G) });
-    if (courier && !outside(courier)) items.push({ y: courier.y, draw: () => drawPerson(ctx, courier, W, H, G) });
+    for (const st of r.staff) if (st.body) items.push({ y: st.body.y, draw: () => drawPerson(ctx, st.body, W, H, G) });
+    for (const pr of r.promos) items.push({ y: pr.y, draw: () => drawPromo(ctx, pr, W, H) });
+    if (courier && !outside(courier) && courier.y < L.counter - 0.01) items.push({ y: courier.y, draw: () => drawPerson(ctx, courier, W, H, G) });
     items.sort((a, b) => a.y - b.y).forEach((it) => it.draw());
 
     // boxes being dropped, and their dust
@@ -1756,7 +1955,7 @@ window.NeonShop = (() => {
       ctx.beginPath(); ctx.ellipse(x, y, s * 0.5, s * 0.16, 0, 0, Math.PI * 2); ctx.stroke();
     }
     // badges, patience bars and speech bubbles; the clerk's STAFF tag
-    const all = r.people.concat([r.clerk], r.me ? [r.me] : []);
+    const all = r.people.concat([r.clerk], r.me ? [r.me] : [], r.staff.filter((st) => st.body).map((st) => st.body));
     for (const p of all.sort((a, b) => a.y - b.y)) {
       const [x, y, s, vis] = onScreen(p);
       if (!vis || x < -40 || x > W + 40) continue;
@@ -1868,7 +2067,7 @@ window.NeonShop = (() => {
     for (let x = ((-r.t * 30) % 40) - 40; x < W; x += 40) ctx.fillRect(x, lane, 18, 1.5);
     for (const c of r.cars) drawCar(ctx, c, W, H, night);
     drawParadeAndPolice(ctx, W, H);
-    if (r.van) drawVan(ctx, r.van, W, H);
+    // (the delivery van parks round the back now)
     // curb and pavement, with street lamps that come on at dusk
     ctx.fillStyle = mix('#a49cb4', '#5a4a6e', night); ctx.fillRect(0, F.road1 * H, W, 2);
     g = ctx.createLinearGradient(0, F.road1 * H, 0, L.door * H);
@@ -1949,8 +2148,8 @@ window.NeonShop = (() => {
   // a shelving unit: cached until its packs, stickers or price change
   function drawUnitCached(ctx, u, ui, W, H, G, cache) {
     const r = run, mine = r.slots.filter((sl) => sl.u === ui);
-    if (!cache || onSale() || mine.some((sl) => sl.pop > 0)) { drawUnit(ctx, u, ui, W, H, G); return; }
-    const key = [W, H, r.dpr, T.shelfPrice(r.s, r.b), mine.map((sl) => sl.n + (r.stickers.has(sl) ? 's' : '')).join(',')].join('|');
+    if (!cache || onSale() || linePrice(r.b, r.unitLine[ui]) < 0.999 || mine.some((sl) => sl.pop > 0)) { drawUnit(ctx, u, ui, W, H, G); return; }
+    const key = [W, H, r.dpr, T.shelfPrice(r.s, r.b), linePrice(r.b, r.unitLine[ui]), mine.map((sl) => sl.n + (r.stickers.has(sl) ? 's' : '')).join(',')].join('|');
     blit(ctx, layer('unit' + ui, key, (g) => drawUnit(g, u, ui, W, H, G), [(u.x0 - 0.05) * W, (u.top - 0.07) * H, (u.x1 - u.x0 + 0.1) * W, (u.base - u.top + 0.13) * H]));
   }
 
@@ -2617,8 +2816,8 @@ window.NeonShop = (() => {
       ctx.fillStyle = '#0b0221'; ctx.fillText(tk.talk[0], tx, ty + rh * 0.23);
     }
     // the price, on the middle shelf: red with a SALE flash when you've cut it
-    const sale = onSale();
-    const price = T.shelfPrice(r.s, r.b), label = `${sale ? 'SALE ' : ''}$${price < 100 ? price.toFixed(2) : Math.round(price).toLocaleString()}`;
+    const lm = linePrice(r.b, r.unitLine[ui]), sale = onSale() || lm < 0.999;
+    const price = T.shelfPrice(r.s, r.b) * lm, label = `${sale ? 'SALE ' : ''}$${price < 100 ? price.toFixed(2) : Math.round(price).toLocaleString()}`;
     ctx.font = `900 ${Math.max(8, Math.round(rh * 0.36))}px system-ui, sans-serif`;
     const tw = ctx.measureText(label).width + 8, th = rh * 0.4, ty = shelfY(u, 1) * H - th * 0.3;
     ctx.fillStyle = sale ? '#ff3b3b' : '#ffd23f'; roundRect(ctx, cx - tw / 2, ty, tw, th, 3); ctx.fill();
@@ -2652,21 +2851,56 @@ window.NeonShop = (() => {
     if (size > 14) { ctx.font = `${Math.round(size * 0.32)}px system-ui, sans-serif`; ctx.fillText(G.icon, x - w * 0.27, y - h * 0.2); }
   }
 
+  // a promotion on the floor, in its line's colour
+  function drawPromo(ctx, pr, W, H) {
+    const r = run, s = scaleAt(pr.y, H), x = pr.x * W, y = pr.y * H, col = LINE_COLORS[pr.line], name = r.lines[pr.line].toUpperCase();
+    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(x, y, s * 0.3, s * 0.07, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.textAlign = 'center';
+    if (pr.id === 'poster') { // an A-board
+      ctx.fillStyle = '#2a2a35'; ctx.beginPath(); ctx.moveTo(x - s * 0.24, y); ctx.lineTo(x - s * 0.18, y - s * 0.75); ctx.lineTo(x + s * 0.18, y - s * 0.75); ctx.lineTo(x + s * 0.24, y); ctx.fill();
+      ctx.fillStyle = col; ctx.fillRect(x - s * 0.16, y - s * 0.72, s * 0.32, s * 0.62);
+      ctx.fillStyle = '#0b0221'; ctx.font = `900 ${Math.max(6, Math.round(s * 0.1))}px system-ui, sans-serif`;
+      ctx.fillText('TRY', x, y - s * 0.55); ctx.fillText(fit(ctx, name, s * 0.3), x, y - s * 0.42); ctx.fillText('NEW!', x, y - s * 0.2);
+    } else if (pr.id === 'bogo') { // a round sign on a pole
+      ctx.fillStyle = '#9aa0b5'; ctx.fillRect(x - 1.5, y - s * 0.95, 3, s * 0.95); ctx.fillRect(x - s * 0.12, y - 3, s * 0.24, 3);
+      ctx.fillStyle = '#ff3b3b'; ctx.beginPath(); ctx.arc(x, y - s * 1.05, s * 0.24, 0, Math.PI * 2); ctx.fill();
+      ctx.strokeStyle = col; ctx.lineWidth = 3; ctx.stroke();
+      ctx.fillStyle = '#fff'; ctx.font = `900 ${Math.max(6, Math.round(s * 0.11))}px system-ui, sans-serif`;
+      ctx.fillText('2 FOR 1', x, y - s * 1.06); ctx.font = `800 ${Math.max(5, Math.round(s * 0.07))}px system-ui, sans-serif`; ctx.fillText(fit(ctx, name, s * 0.36), x, y - s * 0.95);
+    } else { // a tasting table with a tray of samples
+      ctx.fillStyle = '#6b4423'; ctx.fillRect(x - s * 0.3, y - s * 0.5, s * 0.6, s * 0.08); ctx.fillRect(x - s * 0.26, y - s * 0.42, 3, s * 0.42); ctx.fillRect(x + s * 0.26 - 3, y - s * 0.42, 3, s * 0.42);
+      ctx.fillStyle = '#fff'; ctx.fillRect(x - s * 0.3, y - s * 0.46, s * 0.6, s * 0.18);
+      ctx.fillStyle = '#e8e8f2'; ctx.beginPath(); ctx.ellipse(x, y - s * 0.53, s * 0.18, s * 0.04, 0, 0, Math.PI * 2); ctx.fill();
+      for (let i = 0; i < 5; i++) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x - s * 0.12 + i * s * 0.06, y - s * 0.56, Math.max(1.5, s * 0.025), 0, Math.PI * 2); ctx.fill(); }
+      ctx.fillStyle = col; ctx.font = `900 ${Math.max(6, Math.round(s * 0.1))}px system-ui, sans-serif`; ctx.fillText(fit(ctx, `TASTE ${name}`, s * 0.62), x, y - s * 0.33);
+    }
+  }
+
+  // the stockroom: a low rack bay for each line, boxes on it, its name, and a light that goes red when it's low
   function drawPile(ctx, W, H, G) {
     const r = run;
-    const s = scaleAt(PILE.y, H), size = s * 0.42, x = PILE.x * W, y = PILE.y * H;
-    // pallet
-    ctx.fillStyle = '#6b4a2a'; ctx.fillRect(x - size * 1.7, y - 4, size * 3.4, 6);
-    ctx.fillStyle = '#4a3020'; for (let i = -1; i <= 1; i++) ctx.fillRect(x + i * size * 1.3 - 3, y + 2, 6, 3);
-    const n = Math.min(9, Math.ceil(r.pile / Math.max(1, r.cap * 6)));
-    for (let i = 0; i < n; i++) {
-      const lvl = Math.floor(i / 3), col = i % 3;
-      drawBox(ctx, x + (col - 1) * size * 1.05 + (lvl % 2 ? size * 0.2 : 0), y - 4 - lvl * size * 0.72, size, G);
-    }
-    if (r.pile > 0) {
-      ctx.font = `800 ${Math.round(Math.max(10, s * 0.26))}px system-ui, sans-serif`; ctx.fillStyle = '#fff';
-      ctx.fillText(`${r.pile}`, x, y - 8 - Math.ceil(n / 3) * size * 0.72);
-    }
+    r.bay.forEach((n, line) => {
+      const b = bayAt(line), s = scaleAt(b.y, H), x = b.x * W, y = b.y * H, w = (bayAt(1).x - bayAt(0).x) * W * 0.86, h = s * 0.95;
+      ctx.fillStyle = '#4b5263'; ctx.fillRect(x - w / 2, y - h, 3, h); ctx.fillRect(x + w / 2 - 3, y - h, 3, h);
+      for (const k of [0.05, 0.5, 0.95]) { ctx.fillStyle = '#8a90a2'; ctx.fillRect(x - w / 2, y - h * k - 2, w, 3); }
+      const boxes = Math.min(6, Math.ceil(n / Math.max(1, r.cap * 2))), size = w * 0.36;
+      for (let i = 0; i < boxes; i++) drawBox(ctx, x - w * 0.22 + (i % 2) * w * 0.44, y - h * 0.05 - Math.floor(i / 2) * h * 0.45 - 2 - (i >= 4 ? 0 : 0), size, G);
+      const col = LINE_COLORS[line], fs = Math.max(7, Math.round(Math.min(s * 0.15, w * 0.24)));
+      ctx.font = `900 ${fs}px system-ui, sans-serif`; ctx.textAlign = 'center';
+      const label = fit(ctx, r.lines[line].toUpperCase(), w * 0.92);
+      ctx.fillStyle = '#0b0221'; roundRect(ctx, x - w * 0.5, y - h - fs * 1.5, w, fs * 1.3, 3); ctx.fill();
+      ctx.fillStyle = col; ctx.fillText(label, x, y - h - fs * 0.5);
+      const low = bayLow(line), on = !low || Math.sin(r.t * 8) > 0;
+      ctx.fillStyle = n <= 0 ? (on ? '#ff3b3b' : '#5a1010') : low ? '#ffb020' : '#4ade80';
+      ctx.beginPath(); ctx.arc(x + w * 0.38, y - h - fs * 1.75, Math.max(2.5, fs * 0.32), 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#fff'; ctx.font = `800 ${Math.max(8, Math.round(fs * 0.9))}px system-ui, sans-serif`;
+      ctx.fillText(`${n}`, x, y + fs * 0.9);
+    });
+    // the stockroom sign
+    const b0 = bayAt(0), s0 = scaleAt(b0.y, H);
+    ctx.font = `800 ${Math.max(8, Math.round(s0 * 0.15))}px system-ui, sans-serif`; ctx.fillStyle = 'rgba(255,255,255,.7)';
+    ctx.fillText('STOCKROOM', (bayAt(0).x + bayAt(r.bay.length - 1).x) / 2 * W, b0.y * H - s0 * 1.35);
+    if (r.van && r.van.state !== 'out') { ctx.font = '800 11px system-ui, sans-serif'; ctx.fillStyle = '#7fe9ff'; ctx.fillText('🚚 Delivery at the back', Math.max(70, bayAt(1).x * W), b0.y * H + s0 * 0.45); }
   }
 
   const SKIN = (window.NeonLooks && NeonLooks.SKINS) || ['#f3cfb3', '#e0a986', '#c08058', '#8d5a3b', '#5a3825'];
@@ -2704,7 +2938,7 @@ window.NeonShop = (() => {
       ctx.fillStyle = SKIN[p.look.skin] || '#c68642'; ctx.beginPath(); ctx.arc(hx, hy, Math.max(2.5, s * 0.08), 0, Math.PI * 2); ctx.fill();
     }
     // the clerk's cloth or mop while cleaning
-    if ((p.kind === 'clerk' || p.kind === 'me') && p.state === 'choring' && p.chore !== 'stock') {
+    if ((p.kind === 'clerk' || p.kind === 'me' || p.kind === 'staffer') && p.state === 'choring' && p.chore !== 'stock') {
       if (p.chore === 'wipe') {
         const wx = px + Math.sin(p.phase) * s * 0.25, wy = py - s * 1.6 + Math.cos(p.phase) * s * 0.1;
         ctx.fillStyle = '#05d9e8'; ctx.fillRect(wx - 3, wy - 3, 6, 6);
@@ -2716,12 +2950,12 @@ window.NeonShop = (() => {
       }
     }
     // the clerk wears the staff apron
-    if (p.kind === 'clerk' || p.kind === 'me') {
+    if (p.kind === 'clerk' || p.kind === 'me' || p.kind === 'staffer') {
       ctx.fillStyle = r.decor.uniform.color; roundRect(ctx, px - s * 0.18, py - s * 1.26, s * 0.36, s * 0.52, s * 0.06); ctx.fill();
       if (front) { ctx.fillStyle = '#0b0221'; ctx.font = `800 ${Math.round(Math.max(6, s * 0.09))}px system-ui, sans-serif`; ctx.fillText('STAFF', px, py - s * 1.08); }
     }
     // a box in their arms (clerk and courier)
-    if (((p.kind === 'clerk' || p.kind === 'me') && p.carry > 0) || (p.kind === 'courier' && p.box > 0)) drawBox(ctx, px, py - s * 0.62, s * 0.55, G);
+    if (((p.kind === 'clerk' || p.kind === 'me' || p.kind === 'staffer') && p.carry > 0) || (p.kind === 'courier' && p.box > 0)) drawBox(ctx, px, py - s * 0.62, s * 0.55, G);
     // a pack held up to read the label
     if (p.hold) art.pack(ctx, r.b.good, px + s * 0.3, py - s * 1.15, s * 0.32, 0, r.dpr);
     // shopping basket, held at the side (a shoplifter has hidden theirs)
@@ -2752,6 +2986,14 @@ window.NeonShop = (() => {
         const end = p.path[p.path.length - 1], [ex, ey] = r.r3d.project(end[0], end[1], 0);
         ctx.strokeStyle = 'rgba(255,210,63,.6)'; ctx.beginPath(); ctx.ellipse(ex, ey, s * 0.25, s * 0.08, 0, 0, Math.PI * 2); ctx.stroke();
       }
+    }
+    // a helper on the floor: their name and how much energy they have left
+    if (p.kind === 'staffer') {
+      const st = r.staff[p.i], k = st.energy / 100, w = s * 0.6;
+      ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillRect(px - w / 2, py - s * 2.12, w, 4);
+      ctx.fillStyle = k > 0.5 ? '#4ade80' : k > 0.25 ? '#ffd23f' : '#ff6b6b'; ctx.fillRect(px - w / 2, py - s * 2.12, w * k, 4);
+      ctx.font = `800 ${Math.round(Math.max(9, s * 0.17))}px system-ui, sans-serif`; ctx.fillStyle = '#fff';
+      ctx.fillText(`${st.job === 'door' ? '🚪' : '📦'} ${st.m.name}`, px, py - s * 2.2);
     }
     // a little face: 😍 a bargain, 💸 too dear, 🤔 thinking it over, 😤 waiting too long
     if (p.react) {
@@ -2952,7 +3194,8 @@ window.NeonShop = (() => {
     const pose = (who) => (busy(who) ? { phase: r.t * 14 + (typeof who === 'number' ? who : 3), stride: 0.3 } : { phase: 0, stride: 0 });
     r.staff.forEach((st, i) => {
       const sx = W * staffXs[i % 4];
-      if (st.brk > 0) { // on a break
+      if (st.job !== 'till' && st.job !== 'break') return; // out on the shop floor
+      if (st.brk > 0 || st.job === 'break') { // on a break
         ctx.fillStyle = 'rgba(11,2,33,.85)'; roundRect(ctx, sx - 30, H - sellerS * 0.7, 60, 16, 5); ctx.fill();
         ctx.fillStyle = '#7fe9ff'; ctx.font = '800 10px system-ui, sans-serif'; ctx.fillText('☕ ON BREAK', sx, H - sellerS * 0.7 + 12);
         return;
@@ -2992,14 +3235,14 @@ window.NeonShop = (() => {
     if (!run) return null;
     const baskets = run.people.reduce((a, p) => a + (p.basket || 0), 0);
     const floor = run.floor.reduce((a, f) => a + f.n, 0);
-    return { shelves: shelfTotal(), pile: run.pile, incoming: run.incoming, clerk: run.clerk.carry + (run.me ? run.me.carry : 0), baskets: baskets + floor, total: run.b.stock };
+    return { shelves: shelfTotal(), pile: run.pile, incoming: run.incoming, clerk: carried(), baskets: baskets + floor, total: run.b.stock };
   };
 
   return {
     getGfx, setGfx, open, serve, refill, order, setPrice, closeEarly, clock, frontWaiting, stockInfo, pointerDown, pointerMove, pointerUp, tap, zoomBy, panBy, resetZoom,
-    getView, setView, has3D, toggleWalk, canWalk, walking: () => !!(run && run.me), actions: () => nearby().map(({ id, label }) => ({ id, label })), act: doAction, goal: goalInfo,
-    plan: { trend: trending, shapes: planShapes, draw: drawPlan, hit: planHit, move: planMove, lineNames, unitLines, PROP_KINDS, colors: LINE_COLORS },
-    layout: () => ({ L, UNITS, ROWS, unitLine: run && run.unitLine, lines: run && run.lines, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
+    getView, setView, has3D, nudgeLine, linePrice, answerRequest, request: requestInfo, team, setJob, JOBS, toggleWalk, canWalk, walking: () => !!(run && run.me), actions: () => nearby().map(({ id, label }) => ({ id, label })), act: doAction, goal: goalInfo,
+    plan: { PROMOS, trend: trending, shapes: planShapes, draw: drawPlan, hit: planHit, move: planMove, lineNames, unitLines, PROP_KINDS, colors: LINE_COLORS },
+    layout: () => ({ BAY_X, BAY_Z, L, UNITS, ROWS, unitLine: run && run.unitLine, lines: run && run.lines, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
     _drawPOS: (...a) => drawPOS(...a),
     toggleTill2, resolveReturn, pendingReturn: () => !!(run && run.pendingReturn), active: () => !!run, current: () => run,
   };

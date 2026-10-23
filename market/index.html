@@ -73,12 +73,14 @@
       <div class="stat"><small>Time</small><b id="shopClock"></b></div>
       <div class="stat grow"><small id="shopTitle"></small><b id="shopTake">$0</b></div>
       <div class="stat"><small>Shelf · back</small><b id="shopStock"></b></div>
-      <button id="shopZoom" class="btn hidden">🔍 1×</button><button id="shopClose" class="btn">Close</button>
+      <button id="shopTeam" class="btn hidden" aria-label="Your team">👥</button><button id="shopZoom" class="btn hidden">🔍 1×</button><button id="shopClose" class="btn">Close</button>
     </div>
     <div id="shopStage"><canvas id="shop3d" aria-hidden="true"></canvas><canvas id="shopCanvas"></canvas><div id="shopGoal" class="goalpill"></div></div>
     <div class="shopbar">
       <div id="shopReturn" class="returnrow hidden"><span>🔁 A return:</span><button class="btn" data-ret="refund">💵 Refund</button><button class="btn" data-ret="swap">🔄 Swap</button><button class="btn danger" data-ret="refuse">✋ Refuse</button></div>
+      <div id="shopRequest" class="returnrow hidden"><span id="reqText"></span><button class="btn" data-req="yes">✅ Accept</button><button class="btn" data-req="no">✋ No</button></div>
       <div id="shopActs" class="actrow hidden"></div>
+      <div id="lineChips" class="linechips hidden"></div>
       <div class="pricer"><button class="btn" id="shopDown" aria-label="Lower price">−</button><div id="shopPrice"></div><button class="btn" id="shopUp" aria-label="Raise price">+</button></div>
       <div class="shopbtns"><button class="btn cyan" id="shopRefill">📦 Restock</button><button class="btn" id="shopTill">🧾 Till 2</button><button class="btn" id="shopWalk" aria-label="Walk the shop floor">🚶 Walk</button><button class="serve" id="shopServe">SERVE 🛎️</button></div>
     </div>

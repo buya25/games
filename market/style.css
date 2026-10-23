@@ -200,3 +200,11 @@ div.row { cursor: default; }
 .shopbtns { gap: 8px; }
 .shopbtns .btn { padding-left: 10px; padding-right: 10px; }
 .shopbtns .serve { letter-spacing: 1px; font-size: 16px; white-space: nowrap; padding: 12px 8px; }
+.teamcard h3 small { font-weight: 600; font-size: 12px; margin-left: 6px; }
+.bars { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; margin: 8px 0; font-size: 12px; }
+.bar { display: block; height: 8px; border-radius: 4px; background: rgba(255, 255, 255, .1); overflow: hidden; }
+.bar b { display: block; height: 100%; border-radius: 4px; }
+.linechips button[data-job].on { background: rgba(255, 210, 63, .25); border-color: var(--gold); }
+#lineChips { margin: 0; justify-content: center; }
+#lineChips button { padding: 4px 10px; font-size: 12px; }
+#lineChips button.on { background: rgba(255, 210, 63, .25); border-color: var(--gold); }

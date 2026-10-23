@@ -11,7 +11,7 @@ const T = window.NeonTycoon, art = window.NeonShopArt;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // ---------- flat shop coordinates -> metres ----------
-const sAt = (y) => 0.035 + 0.075 * clamp((y - 0.16) / 0.63, 0, 1);
+const sAt = (y) => 0.035 + 0.075 * clamp((y - 0.16) / 0.63, 0, 1.7); // goes on past the counter (the back door)
 const SB = sAt(0.27), SC = sAt(0.79), RW = 9, RD = 9;
 const zOf = (y) => (RD * (1 / SB - 1 / sAt(y))) / (1 / SB - 1 / SC);
 const xOf = (x, y) => (x - 0.5) * (RW / 0.86) * (SB / sAt(y));
@@ -574,12 +574,28 @@ function create(canvas) {
   // ---------- props ----------
   function buildProps() {
     parts.dynamic = new THREE.Group(); scene.add(parts.dynamic);
-    // the stock pile on its pallet
-    const [px, pz] = [xOf(L.PILE.x, L.PILE.y), zOf(L.PILE.y)];
-    scene.add(at(box(1.3, 0.12, 0.9, mat('#6b4a2a')), px, 0.06, pz));
     parts.boxGeo = new THREE.BoxGeometry(0.5, 0.36, 0.42);
     parts.boxMat = [mat('#a8713a'), mat('#a8713a'), mat('#c68d4f'), mat('#a8713a'), new THREE.MeshLambertMaterial({ map: canvasTex(64, 48, (g) => { g.fillStyle = '#a8713a'; g.fillRect(0, 0, 64, 48); g.fillStyle = '#e2c08a'; g.fillRect(28, 0, 8, 48); art.pack(g, run.b.good, 14, 44, 30, 0, 1); }) }), mat('#a8713a')];
-    parts.pileBoxes = [];
+    // the stockroom: a metal rack bay for each line, its name on top and a light (green, amber when low, flashing red when empty)
+    parts.bays = L.lines.map((name, i) => {
+      const g = new THREE.Group(), steel = mat('#8a90a2'), col = ['#05d9e8', '#ff2a6d', '#ffd23f'][i];
+      for (const x of [-0.25, 0.25]) for (const z of [-0.24, 0.24]) g.add(at(box(0.04, 1.5, 0.04, steel), x, 0.75, z));
+      for (const y of [0.08, 0.62, 1.16]) g.add(at(box(0.52, 0.03, 0.5, mat('#5b6273')), 0, y, 0));
+      for (const side of [1, -1]) {
+        const sg = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.17), new THREE.MeshBasicMaterial({ map: signTex(name.toUpperCase(), { w: 200, h: 56, bg: '#0b0221', color: col, border: col }) }));
+        sg.position.set(0, 1.62, side * 0.01); if (side < 0) sg.rotation.y = Math.PI; g.add(sg);
+      }
+      const light = at(new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), new THREE.MeshBasicMaterial({ color: '#4ade80' })), 0.27, 1.62, 0);
+      g.add(light);
+      g.position.set(L.BAY_X[i], 0, L.BAY_Z); scene.add(g);
+      return { g, light, boxes: [] };
+    });
+    // the back door, and the yard behind the shop where the van parks
+    scene.add(at(box(1.15, 2.25, 0.08, mat('#3a3f4f')), -4, 1.12, ROOM.back - 0.05));
+    scene.add(at(box(0.08, 0.08, 0.1, mat('#c9cdd8')), -3.6, 1.1, ROOM.back - 0.1));
+    const exit = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.2), new THREE.MeshBasicMaterial({ map: signTex('DELIVERIES', { w: 200, h: 56, bg: '#16a34a', color: '#fff' }) }));
+    exit.rotation.y = Math.PI; exit.position.set(-4, 2.45, ROOM.back - 0.1); scene.add(exit);
+    const yard = new THREE.Mesh(new THREE.PlaneGeometry(14, 7), mat('#55505e')); yard.rotation.x = -Math.PI / 2; yard.position.set(-1, 0.002, ROOM.back + 3.6); scene.add(yard);
     const r = run, plants = r.decor.plants.id;
     const list = L.PROPS.concat(plants === 'jungle' ? L.JUNGLE : []).filter(([k]) => !(k === 'plant' && plants === 'none')).concat(L.holidayProps());
     for (const [kind, x, y] of list) {
@@ -610,6 +626,28 @@ function create(canvas) {
         for (let i = 0; i < 3; i++) g.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), new THREE.MeshBasicMaterial({ color: '#ff5c8a' })), (i - 1) * 0.3, 0.5 + (i % 2) * 0.25, 0));
       }
       g.position.set(X, 0, Z); scene.add(g);
+    }
+    // promotions on the floor, in their line's colour
+    for (const pr of r.promos || []) {
+      const g = new THREE.Group(), col = ['#05d9e8', '#ff2a6d', '#ffd23f'][pr.line], name = (r.lines[pr.line] || '').toUpperCase();
+      const face = (w, h, tex, y, z = 0, ry = 0) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex })); m.position.set(0, y, z); m.rotation.y = ry; g.add(m); };
+      if (pr.id === 'poster') { // an A-board, both sides
+        for (const sd of [1, -1]) { const b = box(0.6, 0.95, 0.04, mat('#2a2a35')); b.position.set(0, 0.47, sd * 0.13); b.rotation.x = sd * 0.16; g.add(b); }
+        const tex = canvasTex(120, 180, (c) => { c.fillStyle = col; c.fillRect(0, 0, 120, 180); c.fillStyle = '#0b0221'; c.textAlign = 'center'; c.font = '900 26px system-ui'; c.fillText('TRY', 60, 50); c.font = '900 20px system-ui'; c.fillText(name.slice(0, 9), 60, 95); c.font = '900 26px system-ui'; c.fillText('NEW!', 60, 150); });
+        face(0.5, 0.8, tex, 0.5, 0.16); face(0.5, 0.8, tex, 0.5, -0.16, Math.PI);
+      } else if (pr.id === 'bogo') { // a round sign on a pole
+        g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.5, 8), mat('#9aa0b5')), 0, 0.75, 0));
+        g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.04, 16), mat('#2a2a35')), 0, 0.02, 0));
+        const tex = canvasTex(160, 160, (c) => { c.fillStyle = col; c.beginPath(); c.arc(80, 80, 80, 0, Math.PI * 2); c.fill(); c.fillStyle = '#ff3b3b'; c.beginPath(); c.arc(80, 80, 70, 0, Math.PI * 2); c.fill(); c.fillStyle = '#fff'; c.textAlign = 'center'; c.font = '900 34px system-ui'; c.fillText('2 FOR 1', 80, 82); c.font = '800 18px system-ui'; c.fillText(name.slice(0, 10), 80, 110); });
+        for (const ry of [0, Math.PI]) { const m = new THREE.Mesh(new THREE.CircleGeometry(0.32, 24), new THREE.MeshBasicMaterial({ map: tex })); m.position.set(0, 1.7, ry ? -0.01 : 0.01); m.rotation.y = ry; g.add(m); }
+      } else { // a tasting table with a tray of samples
+        g.add(at(box(0.9, 0.05, 0.5, mat('#6b4423')), 0, 0.8, 0));
+        for (const x of [-0.4, 0.4]) for (const z of [-0.2, 0.2]) g.add(at(box(0.04, 0.8, 0.04, mat('#4a3020')), x, 0.4, z));
+        g.add(at(box(0.92, 0.35, 0.02, new THREE.MeshBasicMaterial({ map: signTex(`TASTE ${name}`, { w: 256, h: 96, bg: '#ffffff', color: col.replace('#ffd23f', '#b38600') }) })), 0, 0.6, 0.26));
+        g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.02, 20), mat('#e8e8f2')), 0, 0.84, 0));
+        for (let i = 0; i < 6; i++) g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.025, 0.06, 8), mat(col)), Math.cos(i) * 0.12, 0.88, Math.sin(i) * 0.12));
+      }
+      g.position.set(xOf(pr.x, pr.y), 0, zOf(pr.y)); scene.add(g);
     }
     // upgrades you can see: self-checkout, coffee corner, security gates
     const up = r.up;
@@ -662,13 +700,13 @@ function create(canvas) {
   // ---------- people ----------
   function syncPeople(dt) {
     const r = run, seen = new Set();
-    const all = r.people.concat([r.clerk], r.van && r.van.courier ? [r.van.courier] : [], r.me ? [r.me] : []);
+    const all = r.people.concat([r.clerk], r.van && r.van.courier ? [r.van.courier] : [], r.me ? [r.me] : [], r.staff.filter((st) => st.body).map((st) => st.body));
     for (const p of all) {
       if (p.kind === 'clerk' && (p.state === 'till' || (p.state === 'toTill' && p.y > L.L.counter - 0.04))) continue;
       seen.add(p);
       let f = figs.get(p);
       if (!f) {
-        f = figure(p.look, { apron: p.kind === 'clerk' || p.kind === 'me' ? r.decor.uniform.color : null });
+        f = figure(p.look, { apron: p.kind === 'clerk' || p.kind === 'me' || p.kind === 'staffer' ? r.decor.uniform.color : null });
         if (p.child) f.scale.setScalar(0.66);
         f.userData.yaw = 0; f.userData.last = null;
         figs.set(p, f); parts.dynamic.add(f);
@@ -689,7 +727,18 @@ function create(canvas) {
       const moving = p.kind === 'passer' || p.moving || p.state === 'street', sw = moving ? Math.sin(p.phase || 0) * 0.55 : 0;
       f.userData.legL.rotation.x = sw; f.userData.legR.rotation.x = -sw;
       f.userData.armL.rotation.x = -sw * 0.8; f.userData.armR.rotation.x = p.hand ? -Math.PI * 0.9 + Math.sin(r.t * 8) * 0.1 : sw * 0.8;
-      const carrying = ((p.kind === 'clerk' || p.kind === 'me') && p.carry > 0) || (p.kind === 'courier' && p.box > 0);
+      const carrying = ((p.kind === 'clerk' || p.kind === 'me' || p.kind === 'staffer') && p.carry > 0) || (p.kind === 'courier' && p.box > 0 && !p.trolley);
+      const trolley = p.kind === 'courier' && p.trolley;
+      setHeld(f, 'trolley', trolley, () => {
+        const t = new THREE.Group();
+        t.add(at(box(0.62, 0.04, 0.85, mat('#3a3f4f')), 0, 0.14, 0.75));
+        for (const x of [-0.27, 0.27]) for (const z of [0.4, 1.1]) { const w = at(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.05, 10), mat('#111')), x, 0.07, z); w.rotation.z = Math.PI / 2; t.add(w); }
+        t.add(at(box(0.62, 0.9, 0.04, mat('#3a3f4f')), 0, 0.6, 0.33)); t.add(at(box(0.66, 0.05, 0.05, mat('#ff2a6d')), 0, 1.06, 0.3));
+        t.userData.boxes = [];
+        for (let i = 0; i < 4; i++) { const b = new THREE.Mesh(parts.boxGeo, parts.boxMat); b.position.set(i % 2 ? 0.14 : -0.14, 0.34 + Math.floor(i / 2) * 0.37, 0.8); b.scale.setScalar(0.55 + (i % 2) * 0.05); t.add(b); t.userData.boxes.push(b); }
+        return t;
+      });
+      if (trolley) { f.userData.armL.rotation.x = f.userData.armR.rotation.x = -1.0; const tb = f.userData.held_trolley.userData.boxes; tb.forEach((b, i) => { b.visible = p.box > 0 && i < Math.ceil(p.box / Math.max(1, r.cap * 3)) + 1; }); }
       if (carrying) { f.userData.armL.rotation.x = f.userData.armR.rotation.x = -1.2; }
       // looking along the shelf while they browse
       const head = f.userData.head, browsing = ['look', 'consider', 'wait', 'help', 'pick'].includes(p.state);
@@ -717,7 +766,7 @@ function create(canvas) {
   function syncStaff() {
     const r = run, z = parts.counterZ + 1.15, w = parts.counterW;
     const want = [{ key: 'you', look: r.sellerLook, x: 0, show: !(r.away > 0), who: -1 }]
-      .concat(r.staff.map((st, i) => ({ key: 'st' + i, look: st.look, x: [-0.3, 0.3, -0.42, 0.42][i % 4] * w, show: !(st.brk > 0), who: i })))
+      .concat(r.staff.map((st, i) => ({ key: 'st' + i, look: st.look, x: [-0.3, 0.3, -0.42, 0.42][i % 4] * w, show: st.job === 'till' && !(st.brk > 0), who: i })))
       .concat(r.till2 && r.clerk.state === 'till' ? [{ key: 'till2', look: r.clerk.look, x: 0.2 * w, show: true, who: 'till2', apron: r.decor.uniform.color }] : []);
     parts.staffMap = parts.staffMap || new Map();
     const keep = new Set();
@@ -769,8 +818,12 @@ function create(canvas) {
     if (parts.openState !== open) { parts.openState = open; setMap(parts.openSign, signTex(open ? 'OPEN' : 'CLOSED', { w: 256, h: 72, bg: '#0a0219', color: open ? '#ff5c8a' : '#7a4a5a', glow: open ? '#ff2a6d' : null, border: open ? '#ff2a6d' : '#5a2a3a' })); }
     const sale = L.onSale();
     if (parts.posterState !== sale) { parts.posterState = sale; setMap(parts.poster, canvasTex(160, 100, (g) => { const gr = g.createLinearGradient(0, 0, 0, 100); gr.addColorStop(0, sale ? '#ff3b3b' : '#ffd23f'); gr.addColorStop(1, sale ? '#b80f2e' : '#ff7a00'); g.fillStyle = gr; g.fillRect(0, 0, 160, 100); art.pack(g, r.b.good, 80, 66, 46, 0, 1); g.fillStyle = sale ? '#fff' : '#0b0221'; g.font = '900 20px system-ui'; g.textAlign = 'center'; g.fillText(sale ? 'SALE!' : 'FRESH!', 80, 92); })); }
-    const price = T.shelfPrice(r.s, r.b), label = `${sale ? 'SALE ' : ''}$${price < 100 ? price.toFixed(2) : Math.round(price).toLocaleString()}`;
-    for (const u of parts.units) if (u.userData.tagText !== label) { u.userData.tagText = label; setMap(u.userData.tag, signTex(label, { w: 192, h: 60, bg: sale ? '#ff3b3b' : '#ffd23f', color: sale ? '#fff' : '#0b0221' })); }
+    // each unit's tag shows its line's price (red when that line is on sale)
+    for (const u of parts.units) {
+      const lm = window.NeonShop.linePrice(r.b, r.unitLine[u.userData.ui]), sl = sale || lm < 0.999, price = T.shelfPrice(r.s, r.b) * lm;
+      const label = `${sl ? 'SALE ' : ''}$${price < 100 ? price.toFixed(2) : Math.round(price).toLocaleString()}`;
+      if (u.userData.tagText !== label) { u.userData.tagText = label; setMap(u.userData.tag, signTex(label, { w: 192, h: 60, bg: sl ? '#ff3b3b' : '#ffd23f', color: sl ? '#fff' : '#0b0221' })); }
+    }
     // marquee bulbs and holiday lights twinkle
     if (parts.bulbs) { const c = new THREE.Color(); for (let i = 0; i < 60; i++) parts.bulbs.setColorAt(i, c.set((i + Math.floor(r.t * 8)) % 3 === 0 ? '#fff6c4' : '#5a4a20')); parts.bulbs.instanceColor.needsUpdate = true; }
     if (parts.holLights) { const c = new THREE.Color(); for (let i = 0; i < 70; i++) parts.holLights.setColorAt(i, (i + Math.floor(r.t * 3)) % 4 ? parts.holCols[i % parts.holCols.length] : c.set('#333')); parts.holLights.instanceColor.needsUpdate = true; }
@@ -800,9 +853,14 @@ function create(canvas) {
     syncPile(); syncVehicles(); syncFloorItems();
   }
   function syncPile() {
-    const r = run, n = Math.min(12, Math.ceil(r.pile / Math.max(1, r.cap * 6))), [px, pz] = [xOf(L.PILE.x, L.PILE.y), zOf(L.PILE.y)];
-    while (parts.pileBoxes.length < n) { const b = new THREE.Mesh(parts.boxGeo, parts.boxMat); const i = parts.pileBoxes.length; b.position.set(px + ((i % 4) % 2 - 0.5) * 0.52, 0.3 + Math.floor(i / 4) * 0.37, pz + (Math.floor((i % 4) / 2) - 0.5) * 0.44); scene.add(b); parts.pileBoxes.push(b); }
-    while (parts.pileBoxes.length > n) scene.remove(parts.pileBoxes.pop());
+    const r = run;
+    parts.bays.forEach((bay, line) => {
+      const left = r.bay[line] || 0, n = Math.min(6, Math.ceil(left / Math.max(1, r.cap * 2)));
+      while (bay.boxes.length < n) { const b = new THREE.Mesh(parts.boxGeo, parts.boxMat), i = bay.boxes.length; b.scale.setScalar(0.42); b.castShadow = true; b.position.set(i % 2 ? 0.11 : -0.11, 0.17 + Math.floor(i / 2) * 0.54, 0); bay.g.add(b); bay.boxes.push(b); }
+      while (bay.boxes.length > n) bay.g.remove(bay.boxes.pop());
+      const low = left < r.cap * 3;
+      bay.light.material.color.set(left <= 0 ? (Math.sin(r.t * 8) > 0 ? '#ff3b3b' : '#4a1010') : low ? '#ffb020' : '#4ade80');
+    });
     // boxes being dropped
     parts.falling = parts.falling || [];
     while (parts.falling.length < r.boxes.length) { const b = new THREE.Mesh(parts.boxGeo, parts.boxMat); scene.add(b); parts.falling.push(b); }
@@ -837,7 +895,7 @@ function create(canvas) {
       scene.add(parts.van);
     }
     if (!r.van && parts.van) { scene.remove(parts.van); dropFig(parts.van); parts.van = null; }
-    if (parts.van) parts.van.position.set(xOf(r.van.x, 0.16), 0, -10.2);
+    if (parts.van) { parts.van.position.set((r.van.x - L.VAN_X) * 18 - 2.5, 0, ROOM.back + 2.4); parts.van.rotation.y = Math.PI; } // round the back
     // a parade, the police
     parts.parade = parts.parade || [];
     if (r.parade.length && !parts.parade.length) for (const m of r.parade) { const f = figure(m.look); f.add(at(box(0.6, 0.4, 0.02, mat(m.flag)), 0.4, 2.2, 0)); scene.add(f); parts.parade.push(f); }
