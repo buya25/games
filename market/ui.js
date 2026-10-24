@@ -350,6 +350,8 @@
       if (b.side) status += `<br>🥡 Side counter: ${T.G[b.side.good].icon} ${b.side.stock} ${T.G[b.side.good].name}`;
       if (T.adsOf(s, b).length) status += `<br>📣 ${T.adsOf(s, b).map((a) => `${T.CAMPAIGNS[a.id].icon} ${T.CAMPAIGNS[a.id].name} to day ${a.until}`).join(' · ')}`;
       if (b.manager) { const ms = T.MANAGER_STYLES[b.manager.style]; status += `<br>${ms.icon} Manager ${esc(b.manager.name)} (level ${b.manager.level} ${ms.name}) runs it on days you don't${b.manager.last ? `: ${esc(b.manager.last)}` : ''}`; }
+      const frs = friendReviews(b);
+      if (frs.length) status += `<br>💌 Friends rate it <span class="stars">${starStr(frs.reduce((a, r) => a + r.stars, 0) / frs.length)}</span>: ${frs.slice(-2).map((r) => `${esc(r.from)}${r.text ? ` (“${esc(r.text)}”)` : ''}`).join(', ')}`;
       if (b.regulars && b.regulars.length) status += `<br>💳 ${b.regulars.length} regular${b.regulars.length > 1 ? 's' : ''} with stamp cards`;
       if (b.last && b.last.live) status += `<br>${b.servedDay === s.day ? 'Today' : 'Last time'} you served it yourself: sold ${b.last.sold} for ${money(b.last.revenue)}`;
       else if (b.last) status += `<br>Yesterday: sold ${b.last.sold} for ${money(b.last.revenue)}${b.stock === 0 ? ' · <b class="down">out of stock</b>' : ''}`;
@@ -647,7 +649,7 @@
       onTick: hud,
       onEnd: (sum) => {
         if (coach) coachEnd();
-        if (visiting) { view.classList.add('hidden'); view.classList.remove('photo'); document.body.classList.remove('noscroll'); visitEnd(sum); return; }
+        if (visiting) { view.classList.add('hidden'); view.classList.remove('photo'); document.body.classList.remove('noscroll'); if (visiting.challenge) { achCount({ served: sum.served }); challengeOver(sum); } else visitEnd(sum); return; }
         view.classList.add('hidden'); view.classList.remove('photo');
         document.body.classList.remove('noscroll');
         save(); render();
@@ -712,6 +714,8 @@
   $('coachSkip').onclick = coachEnd;
 
   function shopSummary(b, m) {
+    achCount({ served: m.served, caught: m.caught || 0, five: m.stars >= 5 ? 1 : 0, streak: (m.goal && m.goal.met && m.goal.streak) || 0, online: m.online || 0,
+      inspect: m.eventResult && m.eventResult.ok && m.event === 'inspector' ? 1 : 0, celeb: m.eventResult && m.eventResult.ok && m.event === 'celebrity' ? 1 : 0, critic: m.critic && m.critic.stars >= 4 ? 1 : 0 });
     const lost = m.lostPrice + m.lostWait + m.lostStock, wx = T.WEATHER[m.weather] || T.WEATHER.sunny;
     const tips = [];
     if (m.lostStock) tips.push(`📦 ${m.lostStock} left because the shelves were empty. Bring more stock, or build a workshop here making ${T.G[b.good].name}.`);
@@ -1131,7 +1135,9 @@
         <p>Net worth <b>${money(nw)}</b>${next ? ` · ${money(next[0] - nw)} to <b>${next[1]}</b>` : ' · top rank!'}</p>
         ${next ? `<div class="bar"><i style="width:${Math.max(2, Math.min(100, (nw / next[0]) * 100))}%;background:var(--gold)"></i></div>` : ''}</div>
       <div class="card"><h3>Net worth this season</h3>${legend}<canvas class="chart" id="nwChart" aria-label="Net worth by day"></canvas></div>
-      <div class="card"><h3>Where your money is</h3><div class="kv">${breakdown().map(([k, v]) => `<span>${k}</span><span class="${v < 0 ? 'down' : ''}">${money(v)}</span>`).join('')}</div></div>`;
+      <div class="card"><h3>Where your money is</h3><div class="kv">${breakdown().map(([k, v]) => `<span>${k}</span><span class="${v < 0 ? 'down' : ''}">${money(v)}</span>`).join('')}</div></div>
+      ${trophiesHtml()}
+      <div class="btns"><button class="btn" data-act="settings">⚙️ Settings</button><button class="btn" data-act="challenges">🏆 Challenge days</button></div>`;
   }
   function drawNetWorthChart(cv, days = s.hist.nw.length) {
     const mine = s.hist.nw.slice(0, days);
@@ -1156,7 +1162,8 @@
   // ---------- days & travel ----------
   function openTravel() {
     openSheet(`<h2>🗺️ Where to?<button class="close" data-close>✕</button></h2>
-      <p class="muted">Travelling takes the rest of the day.</p>
+      <canvas class="citymap" id="cityMap" aria-label="Map of Neon City: tap a district to go there"></canvas>
+      <p class="muted">Travelling takes the rest of the day. Tap a district on the map, or pick one below.</p>
       ${T.DISTRICTS.map((d) => {
         const wants = T.GOODS.filter((g) => d.mods[g.id] >= 1.2).map((g) => g.icon).join(' ');
         const cheap = T.GOODS.filter((g) => d.mods[g.id] <= 0.8).map((g) => g.icon).join(' ');
@@ -1166,12 +1173,20 @@
           <small>${cheap ? `Cheap: ${cheap}` : ''}${cheap && wants ? ' · ' : ''}${wants ? `Pays well: ${wants}` : ''}${mine ? ` · 🏪 ${mine} yours` : ''}</small></span></button>`;
       }).join('')}`);
     for (const b of document.querySelectorAll('[data-go]')) b.onclick = () => (b.dataset.go === s.district ? endDay(null) : endDay(b.dataset.go));
+    const cv = $('cityMap');
+    drawCityMap(cv);
+    cv.onclick = (e) => {
+      const rc = cv.getBoundingClientRect(), x = (e.clientX - rc.left) / rc.width, y = (e.clientY - rc.top) / rc.height;
+      const near = T.DISTRICTS.map((d) => [d, Math.hypot(MAP_AT[d.id][0] - x, (MAP_AT[d.id][1] - y) * 0.7)]).sort((a, b) => a[1] - b[1])[0];
+      if (near && near[1] < 0.14) { const btn = document.querySelector(`[data-go="${near[0].id}"]`); if (btn) btn.scrollIntoView({ block: 'nearest' }); btn && btn.classList.add('flash'); setTimeout(() => btn && btn.click(), 250); }
+    };
   }
 
   function endDay(dest) {
     if (s.finished) { showSeasonEnd(); return; }
     const rep = T.endDay(s, dest);
     save();
+    if (s.news.some((n) => n.text.includes('paid off the mortgage'))) achCount({ paidoff: 1 }); else achCheck();
     render();
     const d = rep.nw - rep.nw0;
     const lines = rep.lines.length ? `<p class="section-title">Your businesses</p><div class="news">${rep.lines.map((l) => `<div><span>${l.icon}</span><span>${esc(l.text)}</span></div>`).join('')}</div>` : '';
@@ -1217,18 +1232,222 @@
     if (v.lp) b.linePrice = v.lp;
     b.stock = T.unitsPerDay(T.STALLS[b.tier].cap, b.good) * 2;
     b.staff = (v.st || []).slice(0, T.STAFF_SLOTS[b.tier] + 2).map(([name, skill, look]) => ({ name, skill: T.SKILLS[skill] ? skill : 'cashier', wage: 0, morale: 80, look }));
-    visiting = { name: v.n || 'A friend' };
+    visiting = { name: v.n || 'A friend', v };
     window.NeonShopArt.setOverride(v.dec);
     s = vs;
     openShop(b);
     $('shopTitle').textContent = `👀 ${visiting.name}'s ${T.STALLS[b.tier].name.toLowerCase()}`;
   }
   function visitEnd(m) {
-    const who = visiting.name;
+    const who = visiting.name, v = visiting.v;
     visiting = null; window.NeonShopArt.setOverride(null); s = null;
     showTitle();
     openSheet(`<h2>👋 Thanks for visiting!</h2><p>You looked round <b>${esc(who)}</b>'s shop and served ${m.served} shopper${m.served === 1 ? '' : 's'} for ${money(m.revenue + (m.extras || 0))}. Nothing from the visit is saved.</p>
-      <p class="muted">Want your own? Start a season, open a stall and share it back with 🔗 Share shop.</p><button class="btn primary" data-close>Done</button>`);
+      <p class="muted">Want your own? Start a season, open a stall and share it back with 🔗 Share shop.</p><div class="btns"><button class="btn primary" id="visitRate">💌 Rate their shop</button><button class="btn" data-close>Done</button></div>`);
+    $('visitRate').onclick = () => openRate(v, m);
+  }
+  // a challenge day is over: back to where you were (your season, or the title)
+  let challengeFromGame = false, savedGame = null;
+  function challengeOver(m) {
+    const c = visiting.challenge;
+    visiting = null; s = savedGame; savedGame = null;
+    if (s) { $('title').classList.add('hidden'); $('game').classList.remove('hidden'); render(); } else showTitle();
+    challengeEnd(c, m);
+  }
+
+  // ---------- achievements: badges for milestones (kept across seasons), each with arcade coins ----------
+  const ACH = [
+    { id: 'first', icon: '🛎️', name: 'First customer', desc: 'Serve your first shopper.', coins: 10, test: (c) => c.served >= 1 },
+    { id: 'serve100', icon: '💯', name: 'Regular trade', desc: 'Serve 100 shoppers yourself.', coins: 40, test: (c) => c.served >= 100 },
+    { id: 'serve1000', icon: '🏅', name: 'Till legend', desc: 'Serve 1,000 shoppers yourself.', coins: 150, test: (c) => c.served >= 1000 },
+    { id: 'shop', icon: '🏪', name: 'Moving up', desc: 'Upgrade a stall to a shop.', coins: 30, test: (c, s) => s && s.businesses.some((b) => b.kind === 'stall' && b.tier >= 1) },
+    { id: 'mega', icon: '🏬', name: 'Megastore', desc: 'Own a megastore.', coins: 100, test: (c, s) => s && s.businesses.some((b) => b.kind === 'stall' && b.tier >= 2) },
+    { id: 'empire', icon: '🗺️', name: 'Empire', desc: 'Run five businesses at once.', coins: 80, test: (c, s) => s && s.businesses.length >= 5 },
+    { id: 'owner', icon: '🏠', name: 'Landlord', desc: 'Own the building your shop is in.', coins: 50, test: (c, s) => s && s.businesses.some((b) => b.owned) },
+    { id: 'paidoff', icon: '🔑', name: 'Mortgage free', desc: 'Pay off a mortgage.', coins: 80, test: (c) => c.paidoff >= 1 },
+    { id: 'wh', icon: '📦', name: 'Stockpile', desc: 'Rent storage space.', coins: 20, test: (c, s) => s && Object.keys(s.warehouses || {}).length > 0 },
+    { id: 'dc', icon: '🚚', name: 'Distribution', desc: 'Grow a warehouse into a distribution centre.', coins: 120, test: (c, s) => s && Object.values(s.warehouses || {}).some((w) => w.tier >= 2) },
+    { id: 'bigger', icon: '🧱', name: 'Knock through', desc: 'Expand a shop\'s floor to the max.', coins: 60, test: (c, s) => s && s.businesses.some((b) => T.expOf(b).floor >= 2) },
+    { id: 'regulars', icon: '💳', name: 'Loyal crowd', desc: 'Have 10 regulars at one shop.', coins: 50, test: (c, s) => s && s.businesses.some((b) => (b.regulars || []).length >= 10) },
+    { id: 'thief10', icon: '👮', name: 'Shop guard', desc: 'Catch 10 shoplifters.', coins: 50, test: (c) => c.caught >= 10 },
+    { id: 'five', icon: '⭐', name: 'Five stars', desc: 'Earn a 5★ day.', coins: 40, test: (c) => c.five >= 1 },
+    { id: 'streak', icon: '🔥', name: 'On a roll', desc: 'Meet the daily goal 5 days running.', coins: 60, test: (c) => c.streak >= 5 },
+    { id: 'clean', icon: '📋', name: 'Spotless', desc: 'Pass a health inspection.', coins: 40, test: (c) => c.inspect >= 1 },
+    { id: 'celeb', icon: '📸', name: 'Star struck', desc: 'Keep a celebrity happy.', coins: 40, test: (c) => c.celeb >= 1 },
+    { id: 'critic', icon: '📰', name: 'Rave review', desc: 'Get 4★ or more from the food critic.', coins: 60, test: (c) => c.critic >= 1 },
+    { id: 'online', icon: '🛵', name: 'Delivered', desc: 'Send out 25 online orders.', coins: 60, test: (c) => c.online >= 25 },
+    { id: 'gram', icon: '📲', name: 'Influencer', desc: 'Reach 1,000 NeonGram followers.', coins: 60, test: (c, s) => s && (s.followers || 0) >= 1000 },
+    { id: 'manager', icon: '🎓', name: 'Top manager', desc: 'Train a manager to level 5.', coins: 70, test: (c, s) => s && s.businesses.some((b) => b.manager && b.manager.level >= 5) },
+    { id: 'rich', icon: '💰', name: 'Shop Owner', desc: 'Reach a $60k net worth.', coins: 50, test: (c, s) => s && T.netWorth(s) >= 60000 },
+    { id: 'tycoon', icon: '👑', name: 'Neon Tycoon', desc: 'Reach a $600k net worth.', coins: 200, test: (c, s) => s && T.netWorth(s) >= 600000 },
+    { id: 'season', icon: '🏁', name: 'Full season', desc: 'Finish a 120-day season.', coins: 50, test: (c, s) => s && s.finished },
+    { id: 'challenge3', icon: '🏆', name: 'Challenger', desc: 'Get 3★ on any challenge day.', coins: 50, test: (c) => c.ch3 >= 1 },
+  ];
+  const achData = () => Object.assign({ got: {}, c: {} }, store.get('neonTycoon.ach', {}));
+  // count things up (from a shop day, or a challenge), then see what's newly unlocked
+  function achCount(add) {
+    const d = achData();
+    for (const [k, v] of Object.entries(add || {})) d.c[k] = k === 'streak' ? Math.max(d.c[k] || 0, v) : (d.c[k] || 0) + v;
+    store.set('neonTycoon.ach', d);
+    achCheck();
+  }
+  function achCheck() {
+    const d = achData(), fresh = ACH.filter((a) => !d.got[a.id] && a.test(Object.assign({ served: 0 }, d.c), s && !visiting ? s : null));
+    if (!fresh.length) return;
+    let coins = 0;
+    for (const a of fresh) { d.got[a.id] = Date.now(); coins += a.coins; }
+    store.set('neonTycoon.ach', d);
+    store.set('neonDash.wallet', store.get('neonDash.wallet', 0) + coins);
+    fresh.forEach((a, i) => setTimeout(() => toast(`🏆 ${a.icon} ${a.name}! +${a.coins} 🪙`), 600 + i * 1800));
+  }
+  const achCountGot = () => Object.keys(achData().got).length;
+  function trophiesHtml() {
+    const d = achData(), n = Object.keys(d.got).length;
+    return `<div class="card"><h3>🏆 Trophy room<span class="muted" style="margin-left:auto;font-size:12px">${n}/${ACH.length}</span></h3>
+      <p class="muted">Kept across seasons. Each one pays arcade coins, and your trophies stand on a shelf in your shop.</p>
+      <div class="trophies">${ACH.map((a) => `<div class="${d.got[a.id] ? 'got' : ''}" title="${esc(a.desc)}"><span>${d.got[a.id] ? a.icon : '🔒'}</span><b>${esc(a.name)}</b><small>${esc(a.desc)} · ${a.coins} 🪙</small></div>`).join('')}</div></div>`;
+  }
+
+  // ---------- the city map, in the Travel sheet ----------
+  const MAP_AT = { downtown: [0.5, 0.48], docks: [0.16, 0.78], tech: [0.84, 0.24], night: [0.18, 0.22], arena: [0.82, 0.78] };
+  function drawCityMap(cv) {
+    const dpr = Math.min(2, window.devicePixelRatio || 1), W = cv.clientWidth, H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    const g = cv.getContext('2d'); g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.fillStyle = '#0d0420'; g.fillRect(0, 0, W, H);
+    // the river along the docks, and the roads between districts
+    g.strokeStyle = 'rgba(5,217,232,.25)'; g.lineWidth = 18; g.beginPath(); g.moveTo(0, H * 0.95); g.bezierCurveTo(W * 0.3, H * 0.9, W * 0.5, H * 1.05, W, H * 0.97); g.stroke();
+    const P = (id) => [MAP_AT[id][0] * W, MAP_AT[id][1] * H];
+    g.lineCap = 'round';
+    for (const [a, c] of [['downtown', 'docks'], ['downtown', 'tech'], ['downtown', 'night'], ['downtown', 'arena'], ['night', 'tech'], ['docks', 'arena'], ['night', 'docks'], ['tech', 'arena']]) {
+      g.strokeStyle = '#2a1a4a'; g.lineWidth = 7; g.beginPath(); g.moveTo(...P(a)); g.lineTo(...P(c)); g.stroke();
+      g.strokeStyle = 'rgba(255,210,63,.35)'; g.lineWidth = 1; g.setLineDash([4, 6]); g.beginPath(); g.moveTo(...P(a)); g.lineTo(...P(c)); g.stroke(); g.setLineDash([]);
+    }
+    for (const d of T.DISTRICTS) {
+      const [x, y] = P(d.id), mine = s.businesses.filter((b) => b.district === d.id), here = d.id === s.district;
+      const invested = mine.reduce((a, b) => a + b.invested, 0) + ((s.warehouses || {})[d.id] ? s.warehouses[d.id].invested : 0);
+      const glow = Math.min(1, invested / 30000), r0 = 26 + glow * 10;
+      // a little skyline: busier where you've invested
+      const gr = g.createRadialGradient(x, y, 4, x, y, r0 * 1.6); gr.addColorStop(0, here ? 'rgba(255,210,63,.45)' : `rgba(155,93,229,${0.2 + glow * 0.4})`); gr.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = gr; g.beginPath(); g.arc(x, y, r0 * 1.6, 0, Math.PI * 2); g.fill();
+      for (let i = 0; i < 5 + Math.round(glow * 4); i++) { const bw = 6, bh = 8 + ((i * 37 + d.id.length * 11) % 18) + glow * 10, bx = x - 26 + i * 6.5; g.fillStyle = here ? '#3a2a6a' : '#241446'; g.fillRect(bx, y + 6 - bh, bw, bh); g.fillStyle = 'rgba(255,240,180,.7)'; for (let k = 0; k < bh / 5 - 1; k++) if ((i + k) % 3) g.fillRect(bx + 2, y + 2 - k * 5, 2, 2); }
+      g.font = '700 22px system-ui'; g.textAlign = 'center'; g.fillText(d.icon, x, y - 14);
+      g.fillStyle = here ? '#ffd23f' : '#fff'; g.font = '800 11px system-ui'; g.fillText(d.name, x, y + 20);
+      const icons = mine.map((b) => (b.kind === 'stall' ? '🏪' : '🏭')).concat((s.warehouses || {})[d.id] ? ['🏬'] : []).join('');
+      if (icons) { g.font = '12px system-ui'; g.fillText(icons, x, y + 35); }
+      if (mine.some((b) => b.kind === 'stall' && T.rival(s, b))) { g.font = '11px system-ui'; g.fillStyle = '#ff9fbf'; g.fillText('🥊 rival', x, y + 48); }
+      if (here) { g.strokeStyle = '#ffd23f'; g.lineWidth = 2; g.beginPath(); g.arc(x, y - 6, 30, 0, Math.PI * 2); g.stroke(); g.fillStyle = '#ffd23f'; g.font = '800 10px system-ui'; g.fillText('YOU ARE HERE', x, y - 40); }
+    }
+    g.textAlign = 'start';
+  }
+
+  // ---------- challenge days: a set-up shop day with a goal, scored in stars ----------
+  const CHALLENGES = [
+    { id: 'rush', icon: '🎄', name: 'Holiday rush', desc: 'Christmas in a megastore with one helper. Serve as many as you can.', good: 'holo', tier: 2, day: 110, staff: 1, stars: [15, 25, 35], score: (m) => m.served, unit: 'served' },
+    { id: 'war', icon: '🥊', name: 'Price war', desc: 'The rival is slashing prices. Win shoppers back with your price and service.', good: 'sneakers', tier: 1, day: 30, fight: 1, stars: [8, 14, 20], score: (m) => m.served, unit: 'served' },
+    { id: 'rescue', icon: '🚑', name: 'Rescue mission', desc: 'A run-down stall nobody likes. Turn it around in one day.', good: 'noodles', tier: 0, day: 20, rescue: true, stars: [3, 3.5, 4.5], score: (m) => m.stars || 0, unit: '★ day' },
+    { id: 'inspect', icon: '📋', name: 'Inspection day', desc: 'The inspector is coming and the shop is a mess. Clean up (🚶 Walk) and keep serving.', good: 'coffee', tier: 1, day: 40, event: 'inspector', mess: true, staff: 1, stars: [1, 2, 3], score: (m) => (m.eventResult && m.eventResult.ok ? 1 + (m.served >= 10) + (m.served >= 18) : 0), unit: 'stars' },
+    { id: 'snow', icon: '❄️', name: 'Snow day', desc: 'A blizzard and a coffee shop. Make the most of it.', good: 'coffee', tier: 1, day: 100, weather: 'snow', stars: [600, 1100, 1700], score: (m) => Math.round(m.revenue + (m.extras || 0)), unit: '$ taken' },
+    { id: 'star', icon: '⭐', name: 'Star visit', desc: 'A celebrity is coming, with fans. Keep them happy and keep up.', good: 'sneakers', tier: 1, day: 50, event: 'celebrity', staff: 1, stars: [1, 2, 3], score: (m) => (m.eventResult && m.eventResult.ok ? 1 + (m.served >= 15) + (m.served >= 25) : 0), unit: 'stars' },
+    { id: 'deliver', icon: '🛵', name: 'Delivery rush', desc: 'The online orders won\'t stop. Pack and send while you serve.', good: 'noodles', tier: 1, day: 60, online: true, stars: [3, 6, 9], score: (m) => m.online, unit: 'delivered' },
+  ];
+  const chBest = () => store.get('neonTycoon.challenges', {});
+  function openChallenges() {
+    const best = chBest();
+    openSheet(`<h2>🏆 Challenge days<button class="close" data-close>✕</button></h2>
+      <p class="muted">A one-day shop with a twist. Score up to three stars; each new star pays 🪙 30. Nothing here touches your season.</p>
+      <div class="pick">${CHALLENGES.map((c) => `<button class="row" data-ch="${c.id}"><span class="ic">${c.icon}</span><span class="nm"><b>${c.name} ${'★'.repeat(best[c.id] || 0)}${'☆'.repeat(3 - (best[c.id] || 0))}</b><small>${esc(c.desc)} ★ ${c.stars.join(' / ')} ${c.unit}</small></span></button>`).join('')}</div>`);
+    for (const el of document.querySelectorAll('[data-ch]')) el.onclick = () => { closeSheet(); startChallenge(CHALLENGES.find((c) => c.id === el.dataset.ch)); };
+  }
+  function startChallenge(c) {
+    const vs = T.newGame(T.newSeed(), { name: 'challenge' });
+    vs.day = c.day; vs.cash = 1e6; vs.debt = 0;
+    T.openBusiness(vs, 'stall', c.good);
+    const b = vs.businesses[0];
+    b.tier = c.tier; b.stock = T.unitsPerDay(T.STALLS[b.tier].cap, b.good) * 2;
+    b.staff = Array.from({ length: c.staff ?? T.STAFF_SLOTS[b.tier] }, (_, i) => ({ name: T.NAMES[(i * 7 + 3) % T.NAMES.length], skill: 'cashier', wage: 0, morale: 80 }));
+    if (c.fight) b.rv = { fight: c.fight, poached: 0 };
+    if (c.rescue) { b.rep = { price: 25, stock: 20, queue: 22, service: 25 }; b.rating = 1.5; b.wear = { scuffs: Array.from({ length: 14 }, () => [0.15 + Math.random() * 0.7, 0.35 + Math.random() * 0.4, 0.3]), smudges: [[0, 0.3, 0.6], [1, 0.6, 0.5], [0, 0.7, 0.4]] }; }
+    if (c.mess) b.wear = { scuffs: Array.from({ length: 12 }, () => [0.15 + Math.random() * 0.7, 0.35 + Math.random() * 0.4, 0.3]), smudges: Array.from({ length: 7 }, (_, i) => [i % 2, Math.random(), 0.5]) };
+    if (c.online) b.upgrades = { online: true };
+    vs.forceWeather = c.weather || null; vs.forceEvent = c.event || null;
+    savedGame = visiting ? savedGame : s;
+    visiting = { name: c.name, challenge: c };
+    s = vs;
+    openShop(b);
+    $('shopTitle').textContent = `${c.icon} ${c.name}`;
+    const r = NeonShop.current();
+    if (r && c.online) r.onlineRush = true;
+    if (r && c.mess) for (let i = 0; i < 4; i++) r.floor.push({ x: 0.3 + i * 0.12, y: 0.5 + (i % 2) * 0.1, n: 1, rot: i, line: 0 });
+    toast(`${c.icon} ${c.name}: ★ ${c.stars.join(' / ')} ${c.unit}`);
+  }
+  function challengeEnd(c, m) {
+    const sc = c.score(m), stars = c.stars.filter((t) => sc >= t).length, best = chBest(), was = best[c.id] || 0;
+    if (stars > was) { best[c.id] = stars; store.set('neonTycoon.challenges', best); store.set('neonDash.wallet', store.get('neonDash.wallet', 0) + (stars - was) * 30); }
+    if (stars >= 3) achCount({ ch3: 1 });
+    openSheet(`<h2>${c.icon} ${c.name}</h2>
+      <p class="big-num">${'★'.repeat(stars)}${'☆'.repeat(3 - stars)}</p>
+      <p>You scored <b>${typeof sc === 'number' && sc % 1 ? sc.toFixed(1) : sc}</b> ${c.unit} (★ ${c.stars.join(' / ')}).${stars > was ? ` New best: +${(stars - was) * 30} 🪙!` : ''}</p>
+      ${m.eventResult ? `<p>${esc(m.eventResult.text)}</p>` : ''}
+      <div class="btns"><button class="btn primary" id="chAgain">Try again</button><button class="btn" id="chList">All challenges</button><button class="btn" data-close>Done</button></div>`);
+    $('chAgain').onclick = () => { closeSheet(); startChallenge(c); };
+    $('chList').onclick = openChallenges;
+  }
+
+  // ---------- reviews from friends who visited your shop ----------
+  function openRate(v, m) {
+    let stars = 4, chips = new Set();
+    const NICE = ['Great layout', 'Lovely decor', 'Fast tills', 'Good prices', 'Love the furniture', 'Needs more stock'];
+    const draw = () => {
+      $('rateStars').innerHTML = [1, 2, 3, 4, 5].map((n) => `<button data-star="${n}" class="${n <= stars ? 'on' : ''}">★</button>`).join('');
+      $('rateChips').innerHTML = NICE.map((t) => `<button data-chip="${esc(t)}" class="${chips.has(t) ? 'on' : ''}">${esc(t)}</button>`).join('');
+    };
+    openSheet(`<h2>💌 Rate ${esc(v.n || 'their')} shop<button class="close" data-close>✕</button></h2>
+      <p class="muted">You served ${m.served} shopper${m.served === 1 ? '' : 's'} there. Send a review back and it shows on their shop card.</p>
+      <div id="rateStars" class="ratestars"></div><div id="rateChips" class="linechips"></div>
+      <div class="btns"><button class="btn primary" id="rateSend">💌 Send review</button></div>`);
+    $('rateStars').onclick = (e) => { const el = e.target.closest('[data-star]'); if (el) { stars = +el.dataset.star; draw(); } };
+    $('rateChips').onclick = (e) => { const el = e.target.closest('[data-chip]'); if (el) { const t = el.dataset.chip; if (chips.has(t)) chips.delete(t); else if (chips.size < 3) chips.add(t); draw(); } };
+    $('rateSend').onclick = async () => {
+      const code = b64(JSON.stringify({ v: 1, from: playerName() === 'You' ? 'A friend' : playerName(), g: v.g, d: v.d, stars, text: [...chips].join(' · '), day: Date.now() }));
+      const url = `${location.origin}${location.pathname}?review=${code}`, text = `💌 I rated your Neon Tycoon shop ${'★'.repeat(stars)}!`;
+      try { if (navigator.share) { await navigator.share({ title: 'My review of your shop', text, url }); closeSheet(); return; } } catch { /* fall back */ }
+      try { await navigator.clipboard.writeText(`${text} ${url}`); toast('💌 Review link copied: send it back to them'); closeSheet(); } catch { openSheet(`<h2>💌 Your review<button class="close" data-close>✕</button></h2><p>Send this link back to them:</p><textarea class="sharebox" readonly>${esc(url)}</textarea>`); }
+    };
+    draw();
+  }
+  const friendReviews = (b) => store.get('neonTycoon.friendReviews', []).filter((r) => r.g === b.good && r.d === b.district);
+
+  // ---------- settings ----------
+  const SET_KEY = 'neonTycoon.settings';
+  const settings = () => Object.assign({ text: 'normal', cb: false, lefty: false, buzz: true, music: true }, store.get(SET_KEY, {}));
+  const realVibrate = navigator.vibrate ? navigator.vibrate.bind(navigator) : null;
+  function applySettings() {
+    const st = settings(), cl = document.documentElement.classList;
+    cl.toggle('text-large', st.text === 'large'); cl.toggle('text-larger', st.text === 'larger');
+    cl.toggle('cb', st.cb); cl.toggle('lefty', st.lefty);
+    if (realVibrate) navigator.vibrate = st.buzz ? realVibrate : () => false;
+    if (window.NeonShop && NeonShop.setOptions) NeonShop.setOptions({ cb: st.cb, music: st.music });
+  }
+  function openSettings() {
+    const st = settings(), muted = store.get('neonDash.muted', false);
+    const opt = (key, val, label) => `<button class="dec${st[key] === val ? ' on' : ''}" data-set="${key}:${val}"><b>${label}</b></button>`;
+    openSheet(`<h2>⚙️ Settings<button class="close" data-close>✕</button></h2>
+      <p class="section-title">Text size</p><div class="decor">${opt('text', 'normal', 'Normal')}${opt('text', 'large', 'Large')}${opt('text', 'larger', 'Larger')}</div>
+      <p class="section-title">Seeing and playing</p><div class="decor">
+        <button class="dec${st.cb ? ' on' : ''}" data-tog="cb"><b>🎨 Colour-blind friendly</b><small>Blue, orange and yellow lines; ▲▼ marks stand out</small></button>
+        <button class="dec${st.lefty ? ' on' : ''}" data-tog="lefty"><b>🤚 Left-handed</b><small>SERVE on the left of the shop buttons</small></button>
+        <button class="dec${st.buzz ? ' on' : ''}" data-tog="buzz"><b>📳 Vibration</b><small>${st.buzz ? 'On' : 'Off'}</small></button></div>
+      <p class="section-title">Sound</p><div class="decor">
+        <button class="dec${!muted ? ' on' : ''}" id="setSound"><b>🔊 Sound effects</b><small>${muted ? 'Off' : 'On'}</small></button>
+        <button class="dec${st.music ? ' on' : ''}" data-tog="music"><b>🎵 Shop music</b><small>${st.music ? 'On: changes with the time of day and holidays' : 'Off'}</small></button></div>
+      <p class="section-title">Help</p><div class="btns"><button class="btn" id="setCoach">🎓 Replay the tutorial</button>${s && !visiting ? '<button class="btn" id="setMap">🗺️ City map</button>' : ''}</div>`);
+    const saveSet = (patch) => { store.set(SET_KEY, Object.assign(settings(), patch)); applySettings(); openSettings(); };
+    for (const el of document.querySelectorAll('[data-set]')) el.onclick = () => { const [k, v] = el.dataset.set.split(':'); saveSet({ [k]: v }); };
+    for (const el of document.querySelectorAll('[data-tog]')) el.onclick = () => saveSet({ [el.dataset.tog]: !settings()[el.dataset.tog] });
+    $('setSound').onclick = () => { store.set('neonDash.muted', !store.get('neonDash.muted', false)); openSettings(); };
+    $('setCoach').onclick = () => { store.del('neonTycoon.coached'); store.del('neonTycoon.tips'); if (s && !visiting) { s.coachDone = false; s.day = Math.min(s.day, 15); save(); render(); } toast('🎓 The tips and the coach will show again'); closeSheet(); };
+    if ($('setMap')) $('setMap').onclick = openTravel;
   }
 
   // ---------- season end, coins, challenges ----------
@@ -1254,6 +1473,7 @@
       store.set('neonDash.wallet', store.get('neonDash.wallet', 0) + coins);
       save();
     }
+    achCheck();
     const vs = s.challenge ? (nw >= s.challenge.nw
       ? `<p class="up"><b>🏆 You beat ${esc(s.challenge.name)} by ${money(nw - s.challenge.nw)}!</b></p>`
       : `<p class="down"><b>${esc(s.challenge.name)} wins by ${money(s.challenge.nw - nw)}.</b></p>`) : '';
@@ -1340,6 +1560,8 @@
     else if (act === 'whput') result(T.whMove(s, a, s.cargo[a] || 0), `🏬 Stored in the warehouse`);
     else if (act === 'whtake') result(T.whMove(s, a, -(T.whOf(s).goods[a] || 0)), '🎒 Into your cargo');
     else if (act === 'whsell') { openSheet(`<h2>Sell the warehouse?<button class="close" data-close>✕</button></h2><p>You get back ${Math.round(T.RESALE * 100)}% of what you put in, plus the goods inside at today's prices.</p><button class="btn danger" id="whSellYes">Sell it</button>`); $('whSellYes').onclick = () => { if (result(T.sellWarehouse(s), 'Warehouse sold')) closeSheet(); }; }
+    else if (act === 'settings') openSettings();
+    else if (act === 'challenges') { if (s && !s.finished) { save(); } challengeFromGame = true; openChallenges(); }
     else if (act === 'coachoff') { s.coachDone = true; save(); render(); }
     else if (act === 'tipok') { store.set('neonTycoon.tips', Object.assign(store.get('neonTycoon.tips', {}), { [a]: true })); render(); }
     else bizAction(act, parseInt(a, 10));
@@ -1374,7 +1596,22 @@
     try { pendingVisit = decodeShop(vcode); } catch { toast('That shop link looks broken.'); }
   }
   $('visitBtn').onclick = () => { if (pendingVisit) openVisit(pendingVisit); };
+  $('chBtn').onclick = openChallenges;
+  $('setBtn').onclick = openSettings;
+  const rcode = new URLSearchParams(location.search).get('review');
+  if (rcode) {
+    history.replaceState(null, '', location.pathname + location.hash);
+    try {
+      const rv = JSON.parse(unb64(rcode));
+      if (rv && rv.v === 1 && T.G[rv.g] && T.D[rv.d] && rv.stars >= 1 && rv.stars <= 5) {
+        const list = store.get('neonTycoon.friendReviews', []);
+        if (!list.some((x) => x.day === rv.day && x.from === rv.from)) store.set('neonTycoon.friendReviews', list.concat([{ from: String(rv.from).slice(0, 24), g: rv.g, d: rv.d, stars: rv.stars, text: String(rv.text || '').slice(0, 120), day: rv.day }]).slice(-30));
+        setTimeout(() => toast(`💌 ${String(rv.from).slice(0, 24)} rated your ${T.G[rv.g].name} shop ${'★'.repeat(rv.stars)}`), 800);
+      }
+    } catch { toast('That review link looks broken.'); }
+  }
+  applySettings();
   showTitle();
 
-  if (location.hash === '#test') window.tycoonTest = { state: () => s, T, endDay, encodeChallenge, encodeShop, shop: window.NeonShop };
+  if (location.hash === '#test') window.tycoonTest = { state: () => s, T, endDay, encodeChallenge, encodeShop, achData, startChallenge: (id) => startChallenge(CHALLENGES.find((c) => c.id === id)), b64, shop: window.NeonShop };
 })();

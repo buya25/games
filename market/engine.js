@@ -261,6 +261,7 @@
     hot: { icon: '🥵', name: 'Hot', crowd: 1.05 },
   };
   function weather(s, day = s.day) {
+    if (s.forceWeather && day === s.day) return s.forceWeather; // (a challenge day)
     if (s.effects.some((e) => e.good === 'drinks' && !e.district && e.mult >= 1.5 && e.until > day)) return 'hot';
     const x = seeded(mixSeed(s.seed, day, 99))();
     const winter = season(day).id === 'winter', summer = season(day).id === 'summer';

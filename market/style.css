@@ -267,3 +267,19 @@ main > * { flex-shrink: 0; }
 .whgoods > div span { flex: 1; }
 .whgoods .btn.mini { margin-left: 0; }
 #shopOnline.ping { border-color: var(--cyan); color: var(--cyan); animation: pulse 1.2s ease-in-out infinite; }
+/* trophies, the city map, rating a friend's shop, title buttons */
+.trophies { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 8px; margin-top: 8px; }
+.trophies > div { padding: 8px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); opacity: .45; display: flex; flex-direction: column; gap: 2px; }
+.trophies > div.got { opacity: 1; border-color: var(--gold); }
+.trophies span { font-size: 22px; } .trophies b { font-size: 13px; } .trophies small { font-size: 11px; color: var(--muted); }
+.citymap { width: 100%; height: 300px; border-radius: 14px; border: 1px solid var(--line); margin: 6px 0; display: block; cursor: pointer; }
+.district.flash { border-color: var(--gold); box-shadow: 0 0 0 3px rgba(255, 210, 63, .4); }
+.ratestars { display: flex; gap: 6px; margin: 10px 0; } .ratestars button { font-size: 34px; color: #555; background: none; border: none; } .ratestars button.on { color: var(--gold); }
+.titlerow { display: flex; gap: 8px; justify-content: center; margin-top: 10px; flex-wrap: wrap; }
+/* settings: text size, colour-blind friendly colours, left-handed buttons */
+html.text-large main, html.text-large .sheet-body, html.text-large .top, html.text-large .tabs { zoom: 1.12; }
+html.text-larger main, html.text-larger .sheet-body, html.text-larger .top, html.text-larger .tabs { zoom: 1.25; }
+html.text-large .shopbar, html.text-large .shophud { zoom: 1.08; } html.text-larger .shopbar, html.text-larger .shophud { zoom: 1.15; }
+html.cb { --up: #3b9eff; --down: #ff9f1a; }
+html.cb .repchip.good { border-color: #3b9eff; color: #bcdcff; } html.cb .repchip.bad { border-color: #ff9f1a; color: #ffd9a8; }
+html.lefty .shopbtns { flex-direction: row-reverse; }

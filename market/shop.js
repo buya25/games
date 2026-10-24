@@ -252,14 +252,19 @@ window.NeonShop = (() => {
         const inside = r.people.filter((p) => p.kind !== 'passer' && p.y > L.wall).length;
         this.crowd.g.gain.setTargetAtTime(Math.min(0.014, inside * 0.0012), actx.currentTime, 0.4);
       }
-      const m = MUSIC[r.decor.music.id];
+      const m = OPTS.music && MUSIC[r.decor.music.id];
       r.beat -= dt;
       if (!m || r.beat > 0 || r.closed || r.intro > 0) return;
+      // the music follows the day: brisker in the rushes, soft and slow at night, quieter in the rain; bells on a holiday
+      const k = dayK(), rush = rushRate(k) / RUSH_AVG, night = nightAt(k), tempo = clamp(1 / (0.85 + 0.15 * rush) * (1 + 0.25 * night), 0.8, 1.3);
+      const vol = m.vol * (1 - 0.35 * night) * (r.weather === 'rain' || r.weather === 'snow' ? 0.8 : 1) * (r.power ? 0 : 1);
       const i = r.note % 8;
-      r.beat = m.beat * (m.swing ? (i % 2 ? 0.67 : 1.33) : 1);
-      const chord = m.chords[Math.floor(r.note / 8) % m.chords.length];
-      tone(chord[m.arp[i]] * 2, m.beat * 0.85, m.wave, m.vol);
-      if (i === 0) tone(chord[0] / 2, m.beat * 3.8, m.bass || 'sine', m.bass ? 0.008 : 0.018);
+      r.beat = m.beat * tempo * (m.swing ? (i % 2 ? 0.67 : 1.33) : 1);
+      const chord = m.chords[Math.floor(r.note / 8) % m.chords.length], lift = night > 0.6 ? 0.5 : 1; // an octave down late at night
+      tone(chord[m.arp[i]] * 2 * lift, m.beat * 0.85 * tempo, m.wave, vol);
+      if (i === 0) tone(chord[0] / 2, m.beat * 3.8 * tempo, m.bass || 'sine', (m.bass ? 0.008 : 0.018) * (1 - 0.3 * night));
+      if (r.holiday && (i === 0 || i === 4)) tone(chord[(i / 4 + 2) % 4] * 4, 0.35, 'sine', vol * 0.9); // sleigh-bell sparkle
+      if (rush > 1.5 && i % 2 === 1) noiseBurst(0.03, 0.006, 6000, 9000); // a hi-hat when it's busy
       r.note++;
     },
     stop() {
@@ -581,7 +586,10 @@ window.NeonShop = (() => {
     holo: ['Robots', 'Pets', 'Dragons'], sneakers: ['Runners', 'High-tops', 'Slides'], chips: ['Basic', 'Pro', 'Ultra'], signs: ['Small', 'Arrow', 'Custom'],
   };
   const LINE_V = [0, 2, 4];            // the pack colourway for each line
-  const LINE_COLORS = ['#05d9e8', '#ff2a6d', '#ffd23f'];
+  // each line's colour (a colour-blind friendly set: blue, orange, yellow)
+  const LINE_COLORS = ['#05d9e8', '#ff2a6d', '#ffd23f'], CB_COLORS = ['#3b9eff', '#ff9f1a', '#fde047'], STD_COLORS = LINE_COLORS.slice();
+  const OPTS = { music: true };
+  function setOptions(o) { Object.assign(OPTS, o); LINE_COLORS.splice(0, 3, ...(OPTS.cb ? CB_COLORS : STD_COLORS)); }
   const lineCount = (tier) => (tier === 0 ? 2 : 3);
   const lineNames = (b) => (LINES[b.good] || ['Classic', 'Special', 'Deluxe']).slice(0, lineCount(b.tier));
   // which line is on each shelving unit (your choice, or a mix by default)
@@ -634,7 +642,7 @@ window.NeonShop = (() => {
     const units = T.unitsPerDay(T.STALLS[tier].cap, b.good);
     // festivals and heatwaves, the weather, your shop's rating, and a coffee corner all change the crowd
     const weather = T.weather(s), up = b.upgrades || {};
-    const events = [null, null, null, 'market', 'parade', 'power', 'inspector', 'celebrity', 'pipe', 'critic'], event = events[(Math.random() * events.length) | 0];
+    const events = [null, null, null, 'market', 'parade', 'power', 'inspector', 'celebrity', 'pipe', 'critic'], event = s.forceEvent || events[(Math.random() * events.length) | 0];
     const buzz = b.buzz && b.buzz.day === s.day ? b.buzz.mult : 1;
     const crowd = T.effectMod(s, b.district, b.good) * T.WEATHER[weather].crowd * T.weatherDemand(s, b.good) * (T.holiday(s.day) ? 1.06 : 1) * T.ratingMod(b) * T.repMod(b) * (up.coffee ? 1.12 : 1) * buzz * (event === 'market' ? 1.08 : 1);
     b.regulars = b.regulars || [];
@@ -703,6 +711,7 @@ window.NeonShop = (() => {
     run.collect = b.requests.filter((x) => x.made < s.day).map((rq, i) => ({ rq, at: rand(6, 14) + i * 9 }));
     run.promos = promosOf(b);
     run.furn = furnOf(b);
+    try { run.trophies = Object.keys((JSON.parse(localStorage.getItem('neonTycoon.ach') || '{}').got) || {}).length; } catch { run.trophies = 0; }
     const has = (id) => run.furn.some((f) => f.id === id);
     if (has('bench')) run.patienceMul *= 1.1;
     // a basket stand near the door, and sweets by the till, sell a little more
@@ -1606,7 +1615,7 @@ window.NeonShop = (() => {
     const r = run;
     if (!r.up.online || r.intro > 0) return;
     if (open && r.t >= r.nextOnline && r.online.filter((o) => o.state === 'new').length < 3) {
-      r.nextOnline = r.t + rand(12, 22);
+      r.nextOnline = r.t + (r.onlineRush ? rand(5, 9) : rand(12, 22));
       const id = (r.onlineId = (r.onlineId || 0) + 1);
       r.online.push({ id, name: pick(T.NAMES), line: (Math.random() * r.lines.length) | 0, qty: 2 + ((Math.random() * 4) | 0), age: 0, state: 'new' });
       sfx.chime(); r.effects.push({ kind: 'text', text: '📱 New online order!', x: 0.62, y: L.counter - 0.12, t: 0, color: '#7fe9ff' });
@@ -3854,14 +3863,14 @@ window.NeonShop = (() => {
   };
 
   return {
-    online: onlineInfo, packOrder, getGfx, setGfx, getSaver, setSaver, lowBattery, open, serve, refill, order, setPrice, closeEarly, clock, frontWaiting, stockInfo, pointerDown, pointerMove, pointerUp, tap, zoomBy, panBy, resetZoom,
+    online: onlineInfo, packOrder, setOptions, getGfx, setGfx, getSaver, setSaver, lowBattery, open, serve, refill, order, setPrice, closeEarly, clock, frontWaiting, stockInfo, pointerDown, pointerMove, pointerUp, tap, zoomBy, panBy, resetZoom,
     _route: (a, b) => routeTo(a, b), _spot: (ui) => unitSpot(UNITS[ui]), _zone: (p) => zoneOf(p),
     _samples: () => Object.keys(SAMPLES),
     orbit, snapshot, is3D: () => !!(run && run.r3d),
     nightShift, night: nightInfo, endNight: () => { if (run && run.night) endNight(); },
     getView, setView, has3D, nudgeLine, linePrice, answerRequest, request: requestInfo, team, setJob, JOBS, toggleWalk, canWalk, walking: () => !!(run && run.me), actions: () => nearby().map(({ id, label }) => ({ id, label })), act: doAction, goal: goalInfo,
     plan: { PROMOS, FURNITURE, trend: trending, shapes: planShapes, draw: drawPlan, hit: planHit, move: planMove, lineNames, unitLines, PROP_KINDS, colors: LINE_COLORS },
-    layout: () => ({ SIDE, HOL_COLS, MUD_SPOT, ANNEX, LEVEL2_DX, LEVEL2_Y, BAY_X, BAY_Z, L, UNITS, ROWS, unitLine: run && run.unitLine, lines: run && run.lines, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
+    layout: () => ({ LINE_COLORS, SIDE, HOL_COLS, MUD_SPOT, ANNEX, LEVEL2_DX, LEVEL2_Y, BAY_X, BAY_Z, L, UNITS, ROWS, unitLine: run && run.unitLine, lines: run && run.lines, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
     _drawPOS: (...a) => drawPOS(...a),
     eventInfo, callPlumber, fixPipe,
     toggleTill2, resolveReturn, pendingReturn: () => !!(run && run.pendingReturn), active: () => !!run, current: () => run,

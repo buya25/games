@@ -660,7 +660,7 @@ function create(canvas) {
       tag.position.set((gm.x0 + gm.x1) / 2, shelfH(gm, 1) - 0.03, gm.front + 0.012); g.add(tag);
       // a light-box sign on top of an island
       // a light-box sign naming the line on it: on top of an island, along the top of a wall unit
-      const line = L.unitLine ? L.unitLine[ui] : 0, lc = ['#05d9e8', '#ff2a6d', '#ffd23f'][line];
+      const line = L.unitLine ? L.unitLine[ui] : 0, lc = L.LINE_COLORS[line];
       const lname = (L.lines && L.lines[line] || `AISLE ${ui + 1}`).toUpperCase();
       const s = new THREE.Mesh(new THREE.PlaneGeometry(gm.wall ? Math.min(1.4, gm.w * 0.8) : 1.2, 0.28), new THREE.MeshBasicMaterial({ map: signTex(`${G.icon} ${lname}`, { w: 256, h: 60, bg: '#0b0221', color: lc, border: lc }) }));
       if (gm.wall) s.position.set((gm.x0 + gm.x1) / 2, gm.h + 0.2, gm.front - 0.05); else s.position.set((gm.x0 + gm.x1) / 2, gm.h + 0.3, gm.front - 0.2);
@@ -792,7 +792,7 @@ function create(canvas) {
     parts.boxMat = [mat('#a8713a'), mat('#a8713a'), mat('#c68d4f'), mat('#a8713a'), new THREE.MeshLambertMaterial({ map: canvasTex(64, 48, (g) => { g.fillStyle = '#a8713a'; g.fillRect(0, 0, 64, 48); g.fillStyle = '#e2c08a'; g.fillRect(28, 0, 8, 48); art.pack(g, run.b.good, 14, 44, 30, 0, 1); }) }), mat('#a8713a')];
     // the stockroom: a metal rack bay for each line, its name on top and a light (green, amber when low, flashing red when empty)
     parts.bays = L.lines.map((name, i) => {
-      const g = new THREE.Group(), steel = shiny('#8a90a2', 0.35, 0.8), col = ['#05d9e8', '#ff2a6d', '#ffd23f'][i];
+      const g = new THREE.Group(), steel = shiny('#8a90a2', 0.35, 0.8), col = L.LINE_COLORS[i];
       for (const x of [-0.25, 0.25]) for (const z of [-0.24, 0.24]) g.add(at(box(0.04, 1.5, 0.04, steel), x, 0.75, z));
       for (const y of [0.08, 0.62, 1.16]) g.add(at(box(0.52, 0.03, 0.5, mat('#5b6273')), 0, y, 0));
       for (const side of [1, -1]) {
@@ -811,6 +811,20 @@ function create(canvas) {
     exit.rotation.y = Math.PI; exit.position.set(-4, 2.45, ROOM.back - 0.1); scene.add(exit);
     const yard = new THREE.Mesh(new THREE.PlaneGeometry(14, 7), mat('#55505e')); yard.rotation.x = -Math.PI / 2; yard.position.set(-1, 0.002, ROOM.back + 3.6); scene.add(yard);
     const r = run, plants = r.decor.plants.id;
+    // your trophies, on a shelf on the left-hand wall
+    if (run.trophies > 0) {
+      const g = new THREE.Group(), n = Math.min(12, run.trophies), gold = shiny('#ffd23f', 0.25, 0.9);
+      g.add(at(box(0.25, 0.05, 2.6, mat('#6b4423')), 0, 0, 0));
+      for (let i = 0; i < n; i++) {
+        const cup = new THREE.Group(), z = -1.2 + (i % 6) * 0.48, y = i < 6 ? 0.03 : 0.5;
+        cup.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 0.04, 10), gold), 0, 0.02, 0));
+        cup.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.015, 0.015, 0.1, 6), gold), 0, 0.09, 0));
+        cup.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.04, 0.14, 12), gold), 0, 0.21, 0));
+        cup.position.set(0, y, z); g.add(cup);
+      }
+      if (n > 6) g.add(at(box(0.25, 0.05, 2.6, mat('#6b4423')), 0, 0.47, 0));
+      g.position.set(-RW / 2 + 0.16, 2.3, 4.2); scene.add(g);
+    }
     // the side counter by the till: a second product
     if (run.b.side) {
       const g = new THREE.Group(), sg = run.b.side.good;
@@ -892,7 +906,7 @@ function create(canvas) {
     }
     // promotions on the floor, in their line's colour
     for (const pr of r.promos || []) {
-      const g = new THREE.Group(), col = ['#05d9e8', '#ff2a6d', '#ffd23f'][pr.line], name = (r.lines[pr.line] || '').toUpperCase();
+      const g = new THREE.Group(), col = L.LINE_COLORS[pr.line], name = (r.lines[pr.line] || '').toUpperCase();
       const face = (w, h, tex, y, z = 0, ry = 0) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex })); m.position.set(0, y, z); m.rotation.y = ry; g.add(m); };
       if (pr.id === 'poster') { // an A-board, both sides
         for (const sd of [1, -1]) { const b = box(0.6, 0.95, 0.04, mat('#2a2a35')); b.position.set(0, 0.47, sd * 0.13); b.rotation.x = sd * 0.16; g.add(b); }
