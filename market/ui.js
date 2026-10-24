@@ -521,7 +521,9 @@
     document.body.classList.add('noscroll');
     $('shopTitle').textContent = `${G.icon} ${T.STALLS[b.tier].name} · ${T.D[b.district].name}`;
     let takings = 0, lastKey = '';
+    coach = !store.get('neonTycoon.coached', false) && (location.hash !== '#test' || store.get('neonTycoon.coachTest', false)) ? { i: 0 } : null;
     const hud = (run) => {
+      coachTick(run);
       if (run) takings = run.revenue;
       const si = NeonShop.stockInfo();
       const acts = NeonShop.actions(), goal = NeonShop.goal();
@@ -568,6 +570,7 @@
       canvas: $('shopCanvas'), canvas3d: $('shop3d'),
       onTick: hud,
       onEnd: (sum) => {
+        if (coach) coachEnd();
         view.classList.add('hidden'); view.classList.remove('photo');
         document.body.classList.remove('noscroll');
         save(); render();
@@ -600,6 +603,37 @@
     return out;
   }
 
+  // ---------- your first shop day: a coach walks you through it (once; you can skip it) ----------
+  let coach = null;
+  const COACH = [
+    { text: '👋 Welcome to your shop! Shoppers walk in off the street, take what they want off the shelves and queue at your till.' },
+    { text: '🛎️ Someone\'s at the till: tap SERVE to ring them up.', wait: '⏳ Wait for a shopper to reach the till…', target: ['shopServe'], until: (r) => r.served > 0 },
+    { text: '💲 − and + change your price. Higher earns more on each sale, but more shoppers walk out. The line under it says how many will pay.', target: ['.pricer'] },
+    { text: '📦 Shelves running low? Restock brings goods from your cargo or a supplier. Boxes come in the back door and your clerk shelves them.', target: ['shopRefill'] },
+    { text: '👆 Tap a shopper to see who they are and what they want. Tap 👀 shoplifters before they reach the door, and 🙋 raised hands to help.' },
+    { text: '🧾 Busy? Open Till 2. Once someone else is on a till, 🚶 Walk lets you out onto the shop floor. Drag to turn the shop, pinch to zoom.', target: ['shopTill', 'shopWalk'] },
+    { text: '🎯 Every day has a goal, up top. At closing time you get a report with tips. That\'s it: good luck!', target: ['shopGoal'], last: true },
+  ];
+  let coachSig = '';
+  function coachTick(r) {
+    const box = $('shopCoach'), st = coach && r && COACH[coach.i];
+    if (st && st.until && st.until(r)) { coach.i++; coachTick(r); return; }
+    const waiting = !!(st && st.until && !NeonShop.frontWaiting()), sig = st ? `${coach.i}|${waiting}` : '';
+    if (sig === coachSig) return; // only touch the page when the step changes
+    coachSig = sig;
+    for (const el of document.querySelectorAll('.coachme')) el.classList.remove('coachme');
+    if (!st) { box.classList.add('hidden'); return; }
+    box.classList.remove('hidden');
+    $('coachText').textContent = waiting ? st.wait : st.text;
+    $('coachNext').classList.toggle('hidden', !!st.until);
+    $('coachNext').textContent = st.last ? 'Got it ✓' : 'Next ▸';
+    $('coachSkip').classList.toggle('hidden', !!st.last);
+    if (!waiting) for (const t of st.target || []) { const el = t[0] === '.' ? document.querySelector(`#shopView ${t}`) : $(t); if (el) el.classList.add('coachme'); }
+  }
+  const coachEnd = () => { coach = null; store.set('neonTycoon.coached', true); coachTick(null); };
+  $('coachNext').onclick = () => { if (!coach) return; if (COACH[coach.i].last) coachEnd(); else { coach.i++; coachTick(NeonShop.current()); } };
+  $('coachSkip').onclick = coachEnd;
+
   function shopSummary(b, m) {
     const lost = m.lostPrice + m.lostWait + m.lostStock, wx = T.WEATHER[m.weather] || T.WEATHER.sunny;
     const tips = [];
@@ -617,6 +651,7 @@
     if (m.eventResult) tips.push(m.eventResult.text);
     if (m.critic) tips.push(`📰 The critic wrote: ${m.critic.words}${m.critic.stars >= 3.5 ? ' Expect a few more shoppers tomorrow.' : ' Fewer shoppers may come tomorrow.'}`);
     if (m.splashed) tips.push(`💦 ${m.splashed} shopper${m.splashed > 1 ? 's' : ''} walked through the flood.`);
+    if (m.furnTake) tips.push(`🥫 Your vending and arcade machines took ${money(m.furnTake)} today.`);
     if (m.toRival) tips.push(`🏪 ${m.toRival} walked over the road to ${m.rivalName} for a cheaper price. Turn on 🤝 price match on the shop card, or price under them.`);
     if (m.matched) tips.push(`🤝 You matched ${m.rivalName}'s price for ${m.matched} shopper${m.matched > 1 ? 's' : ''} who'd have gone over the road.`);
     if (m.stolen) tips.push(`🚨 ${m.stolen} went out the door unpaid. Tap shoplifters (👀) before they reach the door, or fit security gates.`);
@@ -743,6 +778,7 @@
       <div id="planInfo"></div>
       <p class="muted">${names.length > 1 ? `You sell ${names.map((n, i) => `<b style="color:${P.colors[i]}">${esc(n)}</b>`).join(', ')}. 🔥 Trending today: <b>${esc(names[trend])}</b>. ` : ''}Islands near the door get more impulse buys, but more shoplifters. 🧺 Baskets by the door make shoppers buy a bit more, and 🍬 sweets by the till sell at the counter.</p>
       <p class="section-title">🛒 Promotions</p><div id="promoBuy" class="decor"></div>
+      <p class="section-title">🪑 Furniture</p><div id="furnBuy" class="decor"></div>
       <div class="btns"><button class="btn" id="planReset">↺ Reset</button><button class="btn primary" id="planSave">Save layout</button></div>`);
     const cv = $('planCv');
     // promotions: buy one (it's placed on the plan), then drag it and choose its line
@@ -759,6 +795,22 @@
         pick = { type: 'promo', id }; promoList(); draw(); info(); toast(`${pm.name} bought: drag it where you want it`);
       };
     };
+    // furniture: buy it once, then drag it on the plan and turn it
+    const furnList = () => {
+      $('furnBuy').innerHTML = Object.entries(P.FURNITURE).map(([id, f]) => {
+        const own = b.furniture && b.furniture[id];
+        return `<button class="dec${own ? ' on' : ''}" data-furn="${id}"${own ? '' : s.cash < f.cost ? ' disabled' : ''}><b>${f.name}</b><small>${own ? '✓ Placed: drag or turn it' : `${money(f.cost)} · ${esc(f.desc)}`}</small></button>`;
+      }).join('');
+      for (const el of document.querySelectorAll('[data-furn]')) el.onclick = () => {
+        const id = el.dataset.furn, f = P.FURNITURE[id];
+        if (!(b.furniture && b.furniture[id])) {
+          if (s.cash < f.cost) { toast(`You need ${money(f.cost)}`); return; }
+          s.cash -= f.cost; b.furniture = Object.assign({}, b.furniture, { [id]: true }); save(); render();
+          toast(`${f.name} bought: drag it where you want it`);
+        }
+        pick = { type: 'furn', id }; furnList(); draw(); info();
+      };
+    };
     const draw = () => drawPlanCanvas(cv, P.shapes(b, lay), { pick });
     const info = () => {
       if (!pick) { $('planInfo').innerHTML = ''; return; }
@@ -769,6 +821,12 @@
         for (const el of document.querySelectorAll('[data-pline]')) el.onclick = () => {
           lay.promos = lay.promos || {}; lay.promos[pick.id] = Object.assign({}, lay.promos[pick.id], { line: +el.dataset.pline }); draw(); info();
         };
+        return;
+      }
+      if (pick.type === 'furn') {
+        const f = P.FURNITURE[pick.id];
+        $('planInfo').innerHTML = `<p class="section-title">${f.name} (drag to move)</p><p class="muted">${esc(f.desc)}</p><div class="btns"><button class="btn" id="furnTurn">⟳ Turn</button></div>`;
+        $('furnTurn').onclick = () => { lay.furn = lay.furn || {}; const cur = lay.furn[pick.id] || {}; lay.furn[pick.id] = Object.assign({}, cur, { rot: ((cur.rot || 0) + 1) % 4 }); draw(); };
         return;
       }
       if (pick.type === 'prop') { $('planInfo').innerHTML = `<p class="muted">${P.PROP_KINDS[P.shapes(b, lay).props[pick.i].kind]}: drag it anywhere on the floor.</p>`; return; }
@@ -786,7 +844,7 @@
     const up = () => { down = null; };
     cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
     $('planReset').onclick = () => { lay = {}; pick = null; draw(); info(); };
-    promoList();
+    promoList(); furnList();
     $('planSave').onclick = () => { b.layout = lay; save(); closeSheet(); toast('🧱 Layout saved: you\'ll see it next time you open the shop'); };
     draw();
   }

@@ -801,6 +801,35 @@ function create(canvas) {
     exit.rotation.y = Math.PI; exit.position.set(-4, 2.45, ROOM.back - 0.1); scene.add(exit);
     const yard = new THREE.Mesh(new THREE.PlaneGeometry(14, 7), mat('#55505e')); yard.rotation.x = -Math.PI / 2; yard.position.set(-1, 0.002, ROOM.back + 3.6); scene.add(yard);
     const r = run, plants = r.decor.plants.id;
+    // furniture you've bought and placed (it faces the till unless you turned it)
+    for (const f of run.furn || []) {
+      const g = new THREE.Group(), [X, , Z] = wpos(f.x, f.y);
+      if (f.id === 'bench') {
+        const wood = mat('#8a5a2b'), legs = shiny('#2a2a35', 0.4, 0.6);
+        g.add(at(box(1.4, 0.06, 0.42, wood), 0, 0.45, 0)); g.add(at(box(1.4, 0.32, 0.05, wood), 0, 0.75, -0.2));
+        for (const x of [-0.6, 0.6]) g.add(at(box(0.06, 0.45, 0.4, legs), x, 0.22, 0));
+      } else if (f.id === 'vending') {
+        g.add(at(box(0.9, 1.9, 0.7, mat('#c81e55')), 0, 0.95, 0));
+        g.add(at(new THREE.Mesh(new THREE.PlaneGeometry(0.6, 1.1), new THREE.MeshBasicMaterial({ map: canvasTex(96, 176, (c) => { c.fillStyle = '#e8f6ff'; c.fillRect(0, 0, 96, 176); const cs = ['#ff2a6d', '#05d9e8', '#ffd23f', '#9b5de5', '#22c55e']; for (let i = 0; i < 15; i++) { c.fillStyle = cs[i % 5]; c.fillRect(8 + (i % 3) * 30, 10 + Math.floor(i / 3) * 33, 20, 24); } }) })), -0.08, 1.2, 0.351));
+        g.add(at(box(0.18, 0.5, 0.02, mat('#2a2a35')), 0.3, 1.2, 0.36)); g.add(at(box(0.6, 0.15, 0.02, mat('#111')), -0.08, 0.35, 0.36));
+      } else if (f.id === 'arcade') {
+        g.add(at(box(0.8, 1.7, 0.8, mat('#2a1a4a')), 0, 0.85, 0));
+        const scr = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.5), new THREE.MeshBasicMaterial({ color: '#05d9e8' })); scr.position.set(0, 1.3, 0.405); scr.rotation.x = -0.15; g.add(scr); parts.arcadeScreen = scr;
+        g.add(at(box(0.8, 0.08, 0.35, mat('#1b1035')), 0, 0.95, 0.5));
+        g.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.05, 8, 6), mat('#ff2a6d')), -0.15, 1.02, 0.55)); g.add(at(box(0.14, 0.04, 0.06, mat('#ffd23f')), 0.15, 1.0, 0.55));
+        g.add(at(new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.2), new THREE.MeshBasicMaterial({ map: signTex('ARCADE', { w: 256, h: 72, bg: '#0b0221', color: '#ff2a6d', glow: '#ff2a6d' }) })), 0, 1.6, 0.405));
+      } else if (f.id === 'bigplant') {
+        g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.24, 0.5, 14), mat('#b5651d')), 0, 0.25, 0));
+        for (let i = 0; i < 7; i++) { const lf = new THREE.Mesh(new THREE.SphereGeometry(0.28, 8, 6), mat(i % 2 ? '#2f9e44' : '#37b24d')); lf.scale.set(0.6, 1.5, 0.35); lf.position.set(Math.sin(i * 0.9) * 0.22, 0.95 + (i % 3) * 0.25, Math.cos(i * 0.9) * 0.22); lf.rotation.set(Math.cos(i) * 0.4, i, Math.sin(i) * 0.4); g.add(lf); }
+      } else if (f.id === 'display') { // a glass case showing off the trending line
+        g.add(at(box(1.0, 0.7, 0.6, mat('#e8e8f2')), 0, 0.35, 0));
+        g.add(at(box(1.0, 0.45, 0.6, new THREE.MeshLambertMaterial({ color: '#a0dcff', transparent: true, opacity: 0.3, depthWrite: false })), 0, 0.93, 0));
+        const lineV = [0, 2, 4][run.trend] || 0;
+        for (let i = 0; i < 3; i++) { const m = new THREE.Mesh(SHAPES[run.b.good] ? SHAPES[run.b.good].geo() : SHAPES.coffee.geo(), new THREE.MeshLambertMaterial({ map: packTex(run.b.good, lineV) })); m.scale.setScalar(0.22); m.position.set((i - 1) * 0.3, 0.82, 0); g.add(m); }
+        g.add(at(new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.18), new THREE.MeshBasicMaterial({ map: signTex('🔥 TRENDING', { w: 256, h: 52, bg: '#ffd23f', color: '#0b0221' }) })), 0, 0.55, 0.305));
+      }
+      g.position.set(X, 0, Z); g.rotation.y = -(f.rot || 0) * Math.PI / 2; scene.add(g);
+    }
     const list = L.PROPS.concat(plants === 'jungle' ? L.JUNGLE : []).filter(([k]) => !(k === 'plant' && plants === 'none')).concat(L.holidayProps());
     for (const [kind, x, y] of list) {
       const g = new THREE.Group(), X = xOf(x, y), Z = zOf(y);
@@ -1097,6 +1126,7 @@ function create(canvas) {
     // the road's lane markings, falling rain or snow
     parts.roadTex.offset.x = (r.t * 0.15) % 1;
     syncPuddle();
+    if (parts.arcadeScreen) parts.arcadeScreen.material.color.setHSL((r.t * 0.25) % 1, 0.9, 0.55);
     if (parts.mud) parts.mud.material.opacity = Math.min(0.85, r.mud * 0.95);
     if (parts.leaves) { // autumn leaves and spring blossom, drifting down
       const a = parts.leaves.geometry.attributes.position;

@@ -252,3 +252,10 @@ main > * { flex-shrink: 0; }
 .eventpill.done { border-color: #4ade80; color: #b9f5cf; } .eventpill.failed { border-color: #ff6b6b; color: #ffb4b4; }
 .shopview.photo .eventpill { visibility: hidden; }
 @keyframes pulse { 50% { box-shadow: 0 0 0 4px rgba(5, 217, 232, .35); } }
+/* the first-day coach, and what it points at */
+.coach { position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 4; padding: 10px 12px; border-radius: 14px; background: rgba(11, 2, 33, .94); border: 2px solid var(--gold); box-shadow: 0 8px 24px rgba(0, 0, 0, .5); }
+.coach p { font-size: 14px; font-weight: 700; line-height: 1.35; }
+.coach .btns { justify-content: flex-end; margin-top: 8px; }
+.coachme { outline: 3px solid var(--gold) !important; outline-offset: 2px; animation: coachpulse 1s ease-in-out infinite; position: relative; z-index: 3; }
+@keyframes coachpulse { 50% { outline-color: rgba(255, 210, 63, .25); } }
+.shopview.photo .coach { visibility: hidden; }

@@ -317,6 +317,20 @@ window.NeonShop = (() => {
       return { id, x, y, line: Number.isInteger(m.line) && m.line < lineCount(b.tier) ? m.line : 0 };
     });
   }
+  // furniture you buy once and place (and turn) anywhere on the floor; each helps a little
+  const FURNITURE = {
+    bench: { name: '🪑 Bench', cost: 500, size: [1.4, 0.5], desc: 'Somewhere to sit: the queue is a little more patient.', at: [0.8, 0.7] },
+    vending: { name: '🥫 Vending machine', cost: 1200, size: [0.9, 0.7], desc: 'Sells snacks all day: a few dollars more.', at: [0.94, 0.62] },
+    arcade: { name: '🕹️ Arcade machine', cost: 2000, size: [0.8, 0.8], desc: 'Kids love it: families buy a bit more, and it takes coins.', at: [0.1, 0.36] },
+    bigplant: { name: '🌳 Big plant', cost: 300, size: [0.7, 0.7], desc: 'A nicer place to shop: a little better word of mouth.', at: [0.06, 0.6] },
+    display: { name: '💎 Trend display', cost: 1600, size: [1.0, 0.6], desc: 'Shows off today\'s trending line: more shoppers go for it.', at: [0.72, 0.38] },
+  };
+  function furnOf(b, lay = b.layout || {}) {
+    return Object.keys(FURNITURE).filter((id) => b.furniture && b.furniture[id]).map((id) => {
+      const m = (lay.furn && lay.furn[id]) || {}, [x, y] = clampProp(m.x ?? FURNITURE[id].at[0], m.y ?? FURNITURE[id].at[1]);
+      return { id, x, y, rot: (m.rot || 0) % 4 };
+    });
+  }
   const PROP_KINDS = { plant: '🪴 Plant', baskets: '🧺 Baskets', wet: '⚠️ Wet-floor sign', bin: '🗑️ Bin', candy: '🍬 Sweets stand' };
   function clampProp(x, y) { return [clamp(x, 0.06, 0.94), clamp(y, L.enter + 0.01, L.counter - 0.015)]; }
   const layoutUnits = (lay) => UNITS0.map((u, i) => {
@@ -355,6 +369,7 @@ window.NeonShop = (() => {
       units: big.concat(units.map((u, i) => (u.wall ? { i, wall: true, X0: xOf(u.x0, u.base), X1: xOf(u.x1, u.base), Z0: 0.07, Z1: 0.57, line: lines[i] } : Object.assign({ i, wall: false, line: lines[i], x: (u.x0 + u.x1) / 2, base: u.base }, footprint(u))))),
       props, lines: lineNames(b), colors: LINE_COLORS,
       promos: promosOf(b, lay).map((pr) => Object.assign(pr, { X: xOf(pr.x, pr.y), Z: zOf(pr.y) })),
+      furn: furnOf(b, lay).map((f) => Object.assign(f, { X: xOf(f.x, f.y), Z: zOf(f.y) })),
       counter: { X0: xOf(0, L.counter) - 0.2, X1: -xOf(0, L.counter) + 0.2, Z0: zOf(L.counter), Z1: zOf(L.counter) + 0.85 },
       pile: { X: xOf(PILE.x, PILE.y), Z: zOf(PILE.y) }, fridge: { X0: xOf(FRIDGE.x0, L.door), X1: xOf(FRIDGE.x1, L.door) },
       door: { X0: xOf(FRONT.door[0], L.door), X1: xOf(FRONT.door[1], L.door) }, windows: FRONT.windows.map(([a, c]) => [xOf(a, L.door), xOf(c, L.door)]),
@@ -419,6 +434,16 @@ window.NeonShop = (() => {
       ctx.strokeStyle = sh.colors[pr.line]; ctx.lineWidth = opts.pick && opts.pick.type === 'promo' && opts.pick.id === pr.id ? 4 : 2; ctx.stroke();
       ctx.font = `${Math.max(13, Math.round(k * 0.5))}px system-ui, sans-serif`; ctx.fillText(PROMOS[pr.id].name.split(' ')[0], x, y);
     }
+    // furniture: its footprint, turned, with its icon
+    for (const f of sh.furn || []) {
+      const [w, d] = FURNITURE[f.id].size, [x, y] = P(f.X, f.Z), on = opts.pick && opts.pick.type === 'furn' && opts.pick.id === f.id;
+      ctx.save(); ctx.translate(x, y); ctx.rotate((f.rot * Math.PI) / 2);
+      ctx.fillStyle = '#3b2a5c'; ctx.fillRect(-w * k / 2, -d * k / 2, w * k, d * k);
+      ctx.strokeStyle = on ? '#fff' : '#ffd23f'; ctx.lineWidth = on ? 3 : 1.5; ctx.strokeRect(-w * k / 2, -d * k / 2, w * k, d * k);
+      ctx.fillStyle = '#ffd23f'; ctx.fillRect(-w * k / 2, d * k / 2 - 3, w * k, 3); // the front
+      ctx.restore();
+      ctx.font = `${Math.max(13, Math.round(k * 0.45))}px system-ui, sans-serif`; ctx.fillText(FURNITURE[f.id].name.split(' ')[0], x, y);
+    }
     // floor props
     ctx.font = `${Math.max(14, Math.round(k * 0.6))}px system-ui, sans-serif`;
     for (const pr of sh.props) {
@@ -433,6 +458,8 @@ window.NeonShop = (() => {
     const [X, Z] = planFrom(W, H, x, y);
     const pm = (sh.promos || []).find((q) => Math.hypot(q.X - X, q.Z - Z) < 0.6);
     if (pm) return { type: 'promo', id: pm.id };
+    const fu = (sh.furn || []).find((q) => Math.hypot(q.X - X, q.Z - Z) < 0.7);
+    if (fu) return { type: 'furn', id: fu.id };
     const pr = sh.props.slice().sort((a, b) => Math.hypot(a.X - X, a.Z - Z) - Math.hypot(b.X - X, b.Z - Z))[0];
     if (pr && Math.hypot(pr.X - X, pr.Z - Z) < 0.6) return { type: 'prop', i: pr.i };
     const u = sh.units.find((v) => X > v.X0 - 0.2 && X < v.X1 + 0.2 && Z > v.Z0 - 0.2 && Z < v.Z1 + 0.2);
@@ -455,6 +482,11 @@ window.NeonShop = (() => {
       UNITS = layoutUnits(lay); const bad = blocked(px, py, 0.05); UNITS = saved;
       if (bad) return lay;
       lay.promos = lay.promos || {}; lay.promos[pick.id] = Object.assign({}, lay.promos[pick.id], { x: px, y: py });
+    } else if (pick.type === 'furn') {
+      const [px, py] = clampProp(...toFlat(X, Z)), saved = UNITS;
+      UNITS = layoutUnits(lay); const bad = blocked(px, py, 0.3); UNITS = saved;
+      if (bad) return lay;
+      lay.furn = lay.furn || {}; lay.furn[pick.id] = Object.assign({}, lay.furn[pick.id], { x: px, y: py });
     } else {
       const props = lay.props && lay.props.length === PROPS0.length ? lay.props : PROPS0.map((pr) => pr.slice());
       const [px, py] = clampProp(...toFlat(X, Z)), saved = UNITS;
@@ -649,6 +681,9 @@ window.NeonShop = (() => {
     for (const rq of b.requests.filter((x) => x.due < s.day)) loseOrder(rq);
     run.collect = b.requests.filter((x) => x.made < s.day).map((rq, i) => ({ rq, at: rand(6, 14) + i * 9 }));
     run.promos = promosOf(b);
+    run.furn = furnOf(b);
+    const has = (id) => run.furn.some((f) => f.id === id);
+    if (has('bench')) run.patienceMul *= 1.1;
     // a basket stand near the door, and sweets by the till, sell a little more
     const propAt = (k) => PROPS.find((pr) => pr[0] === k);
     const bk = propAt('baskets'), cd = propAt('candy');
@@ -690,7 +725,7 @@ window.NeonShop = (() => {
       stars: r.stars, rating: r.b.rating, reviews: r.b.reviews || [],
       goal: r.goalResult || null, eventResult: r.eventResult || null, critic: r.critic || null, splashed: st.splashed || 0, rep: r.b.rep, repBefore: r.repBefore, tidy: r.stats.tidy, nightDone: r.stats.nightDone, nightTotal: r.stats.nightTotal, orders: r.stats.orders || 0, ordersLost: r.ordersLost, openOrders: (r.b.requests || []).map((x) => ({ ...x, lineName: r.lines[x.line] })), lines: r.lines, lineSold: r.lineSold, trend: r.trend,
       heat: { x: HEAT_X, y: HEAT_Y, data: Array.from(r.heat) }, plan: planShapes(r.b),
-      matched: st.matched || 0, toRival: st.toRival || 0, rivalName: r.rival && r.rival.name,
+      furnTake: st.furnTake || 0, matched: st.matched || 0, toRival: st.toRival || 0, rivalName: r.rival && r.rival.name,
       groups: r.groups, slips: st.slips || 0, mopped: st.mopped || 0, weekend: weekend(r.s),
     };
   }
@@ -717,7 +752,7 @@ window.NeonShop = (() => {
     if (st.bad) notes.push('They refused my return. Never again!');
     if (st.good && st.returns) notes.push('Sorted my return, no fuss.');
     if (st.rewards) notes.push('Love my stamp card!');
-    if (r.decor.floor.cost || r.decor.plants.id === 'jungle' || r.decor.sign.cost) notes.push('Lovely decor!');
+    if (r.decor.floor.cost || r.decor.plants.id === 'jungle' || r.decor.sign.cost || r.furn.length >= 2) notes.push('Lovely decor!');
     if (r.up.coffee) notes.push('The coffee corner is great.');
     if (st.tidy >= 0.8) notes.unshift('Spotless when I came in!');
     while (notes.length < 3) notes.push(pick(good));
@@ -777,7 +812,7 @@ window.NeonShop = (() => {
     // which line they're after: a regular always wants the same one; today's trend is more popular
     if (lead.reg && Number.isInteger(lead.reg.line) && lead.reg.line < r.lines.length) lead.line = lead.reg.line;
     else {
-      const w = r.lines.map((_, i) => (i === r.trend ? 1.8 : 1) * r.promos.reduce((a, pr) => a * (pr.id === 'poster' && pr.line === i ? (metres(pr, { x: 0.5, y: L.enter }) < 3 ? 1.7 : 1.35) : 1), 1)); let k = Math.random() * w.reduce((a, x) => a + x, 0);
+      const w = r.lines.map((_, i) => (i === r.trend ? (r.furn.some((f) => f.id === 'display') ? 2.5 : 1.8) : 1) * r.promos.reduce((a, pr) => a * (pr.id === 'poster' && pr.line === i ? (metres(pr, { x: 0.5, y: L.enter }) < 3 ? 1.7 : 1.35) : 1), 1)); let k = Math.random() * w.reduce((a, x) => a + x, 0);
       lead.line = 0; for (let i = 0; i < w.length; i++) { k -= w[i]; if (k <= 0) { lead.line = i; break; } }
       if (lead.reg) lead.reg.line = lead.line;
     }
@@ -1034,6 +1069,7 @@ window.NeonShop = (() => {
               p.greeted = true; r.greetT = 1.2; // the staff wave hello
               if (p.kind === 'shopper') wordOfMouth(p);
               if (r.basketsNear && Math.random() < 0.25) p.qty++;              // grabbed a basket at the door: buys a bit more
+              if (p.group === 'family' && r.furn.some((f) => f.id === 'arcade')) { p.qty++; const kid = r.people.find((c) => c.leader === p && c.child); if (kid) say(kid, '🕹️ Can I play?!', 1.6); }
               if (Math.random() < 0.2 * Math.max(0, doorPull(UNITS[p.unit]))) p.qty++;     // something by the door caught their eye
               if (GREET[p.type]) say(p, GREET[p.type], 1.6);
               else if (r.weather === 'rain' && Math.random() < 0.3) say(p, '☔ Wet out there!', 1.6);
@@ -1250,6 +1286,13 @@ window.NeonShop = (() => {
       if (r.eventT > len) { r.eventT = -1; r.power = false; if (r.event === 'power') r.effects.push({ kind: 'text', text: '💡 Power back on', x: 0.5, y: 0.45, t: 0, color: '#4ade80' }); }
     }
     stepEvent(dt, opening);
+    if (open) for (const f of r.furn) { // the vending machine and the arcade machine earn a little
+      if ((f.id === 'vending' && Math.random() < dt * 0.07) || (f.id === 'arcade' && r.people.some((p) => p.child && p.y > L.wall) && Math.random() < dt * 0.1)) {
+        const amt = f.id === 'vending' ? 2 : 1;
+        T.shopExtra(r.s, r.b.id, amt); r.stats.extras += amt; r.stats.furnTake = (r.stats.furnTake || 0) + amt;
+        r.effects.push({ kind: 'text', text: `${f.id === 'vending' ? '🥫' : '🕹️'} +$${amt}`, x: f.x, y: f.y - 0.06, t: 0, color: '#7fe9ff' });
+      }
+    }
     if (r.power) r.doorOpen = 1; // the automatic doors stay open in a power cut
     if (r.police && (r.police.x += 0.55 * dt) > 1.4) r.police = null;
     stepClerk(dt);
@@ -1991,7 +2034,7 @@ window.NeonShop = (() => {
       const pm = (r.b.mult || T.RETAIL) * (Number.isInteger(p.got) ? linePrice(r.b, p.got) : 1);
       hear('queue', (p.wait || 0) < 3 ? 1.5 : (p.wait || 0) > p.patience * 0.6 ? -1 : 0.3);
       hear('price', pm < p.limit * 0.85 ? 1.2 : pm > p.limit * 0.95 ? -0.5 : 0.3);
-      hear('service', 0.8);
+      hear('service', 0.8 + (r.furn.some((f) => f.id === 'bigplant') ? 0.3 : 0));
       memo(p, { mult: pm, wait: p.wait || 0, out: false, dear: false, slow: false });
     }
     if (r.candyNear && Math.random() < 0.15) { p.extra += 1.5; r.effects.push({ kind: 'text', text: '🍬 +$1.50', x: p.x - 0.08, y: L.counter - 0.16, t: 0, color: '#ff8fcf' }); }
@@ -2233,6 +2276,7 @@ window.NeonShop = (() => {
     items.push({ y: bayAt(0).y, draw: () => drawPile(ctx, W, H, G) });
     const plants = r.decor.plants.id;
     for (const [kind, x, y] of holidayProps()) items.push({ y, draw: () => drawHolidayProp(ctx, kind, x, y, W, H) });
+    for (const f of r.furn) items.push({ y: f.y, draw: () => drawFurn(ctx, f, W, H) });
     for (const [kind, x, y] of PROPS.concat(plants === 'jungle' ? JUNGLE : [])) {
       if (kind === 'plant' && plants === 'none') continue;
       items.push({ y, draw: () => drawProp(ctx, kind, x, y, W, H) });
@@ -3102,6 +3146,28 @@ window.NeonShop = (() => {
   }
 
   // floor props: a plant, baskets, a wet-floor sign, a bin and a sweets rack by the till
+  // furniture in the drawn shop (seen from the till end)
+  function drawFurn(ctx, f, W, H) {
+    const px = f.x * W, py = f.y * H, s = scaleAt(f.y, H), r = run, side = f.rot % 2 === 1, w = s * (side ? 0.6 : 1) * FURNITURE[f.id].size[0];
+    if (f.id === 'bench') {
+      ctx.fillStyle = '#6b4423'; ctx.fillRect(px - w / 2, py - s * 0.42, w, s * 0.1); ctx.fillRect(px - w / 2, py - s * 0.75, w, s * 0.08);
+      ctx.fillStyle = '#2a2a35'; ctx.fillRect(px - w / 2 + 2, py - s * 0.35, 3, s * 0.35); ctx.fillRect(px + w / 2 - 5, py - s * 0.35, 3, s * 0.35);
+    } else if (f.id === 'vending' || f.id === 'arcade') {
+      const h = s * (f.id === 'vending' ? 1.75 : 1.55), ww = s * 0.8;
+      ctx.fillStyle = f.id === 'vending' ? '#c81e55' : '#2a1a4a'; roundRect(ctx, px - ww / 2, py - h, ww, h, 4); ctx.fill();
+      ctx.fillStyle = f.id === 'vending' ? '#e8f6ff' : `hsl(${(r.t * 80) % 360},90%,60%)`; ctx.fillRect(px - ww * 0.36, py - h * 0.88, ww * 0.72, h * (f.id === 'vending' ? 0.5 : 0.32));
+      if (f.id === 'vending') for (let i = 0; i < 9; i++) { ctx.fillStyle = CAR_COLORS[i % CAR_COLORS.length]; ctx.fillRect(px - ww * 0.3 + (i % 3) * ww * 0.22, py - h * 0.84 + Math.floor(i / 3) * h * 0.15, ww * 0.14, h * 0.08); }
+      else { ctx.fillStyle = '#ff2a6d'; ctx.beginPath(); ctx.arc(px - ww * 0.15, py - h * 0.42, s * 0.06, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#05d9e8'; ctx.fillRect(px + ww * 0.05, py - h * 0.45, s * 0.14, s * 0.06); }
+    } else if (f.id === 'bigplant') {
+      ctx.fillStyle = '#b5651d'; ctx.fillRect(px - s * 0.2, py - s * 0.4, s * 0.4, s * 0.4);
+      ctx.fillStyle = '#2f9e44'; for (let i = 0; i < 5; i++) { ctx.beginPath(); ctx.ellipse(px + (i - 2) * s * 0.12, py - s * (0.8 + (i % 2) * 0.35), s * 0.18, s * 0.42, (i - 2) * 0.3, 0, Math.PI * 2); ctx.fill(); }
+    } else if (f.id === 'display') {
+      ctx.fillStyle = '#e8e8f2'; ctx.fillRect(px - w / 2, py - s * 0.55, w, s * 0.55);
+      ctx.fillStyle = 'rgba(160,220,255,.45)'; ctx.fillRect(px - w / 2, py - s * 1.05, w, s * 0.5);
+      for (let i = 0; i < 3; i++) window.NeonShopArt.pack(ctx, r.b.good, px + (i - 1) * w * 0.28, py - s * 0.58, s * 0.3, LINE_V[r.trend] || 0, r.dpr);
+      ctx.fillStyle = '#ffd23f'; ctx.font = `900 ${Math.max(7, Math.round(s * 0.14))}px system-ui`; ctx.fillText('🔥 TRENDING', px, py - s * 1.12);
+    }
+  }
   function drawProp(ctx, kind, x, y, W, H) {
     const art = window.NeonShopArt, s = scaleAt(y, H), px = x * W, py = y * H;
     ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(px, py, s * 0.28, s * 0.07, 0, 0, Math.PI * 2); ctx.fill();
@@ -3689,7 +3755,7 @@ window.NeonShop = (() => {
     orbit, snapshot, is3D: () => !!(run && run.r3d),
     nightShift, night: nightInfo, endNight: () => { if (run && run.night) endNight(); },
     getView, setView, has3D, nudgeLine, linePrice, answerRequest, request: requestInfo, team, setJob, JOBS, toggleWalk, canWalk, walking: () => !!(run && run.me), actions: () => nearby().map(({ id, label }) => ({ id, label })), act: doAction, goal: goalInfo,
-    plan: { PROMOS, trend: trending, shapes: planShapes, draw: drawPlan, hit: planHit, move: planMove, lineNames, unitLines, PROP_KINDS, colors: LINE_COLORS },
+    plan: { PROMOS, FURNITURE, trend: trending, shapes: planShapes, draw: drawPlan, hit: planHit, move: planMove, lineNames, unitLines, PROP_KINDS, colors: LINE_COLORS },
     layout: () => ({ HOL_COLS, MUD_SPOT, ANNEX, LEVEL2_DX, LEVEL2_Y, BAY_X, BAY_Z, L, UNITS, ROWS, unitLine: run && run.unitLine, lines: run && run.lines, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
     _drawPOS: (...a) => drawPOS(...a),
     eventInfo, callPlumber, fixPipe,
