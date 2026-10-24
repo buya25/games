@@ -265,6 +265,7 @@ function figure(look, opts = {}) {
   if (wear.includes('shades')) { hadd(box(0.2, 0.045, 0.02, shiny('#0b0b12', 0.1, 0.6)), 0, 1.703, 0.14); }
   if (wear.includes('backpack')) { g.add(at(box(0.3, 0.38, 0.16, mat('#3b4a6b')), 0, 1.2, -0.2)); g.add(at(box(0.22, 0.08, 0.04, wcol), 0, 1.1, -0.29)); }
   if (wear.includes('briefcase')) g.userData.elbowR.add(at(box(0.07, 0.22, 0.3, mat('#4a2f1d')), 0, -0.44, 0.02));
+  if (wear.includes('flyers')) g.userData.elbowR.add(at(box(0.04, 0.22, 0.16, mat('#f4f4f8')), 0, -0.32, 0.1));
   if (wear.includes('clipboard')) { const cb = at(box(0.03, 0.3, 0.22, mat('#c9a26b')), 0.02, -0.3, 0.1); cb.add(at(box(0.01, 0.24, 0.18, mat('#f4f4f8')), 0.02, 0, 0)); g.userData.elbowL.add(cb); }
   if (wear.includes('cane')) { const cn = at(new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.82, 6), mat('#6b4423')), 0, -0.68, 0.06); g.userData.elbowR.add(cn); }
   // a soft shadow on the floor
@@ -599,6 +600,14 @@ function create(canvas) {
       g.add(at(new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.8), new THREE.MeshBasicMaterial({ map: signTex(`${r.rival.sale ? 'SALE ' : ''}${G.icon} $${price < 100 ? price.toFixed(2) : Math.round(price)}`, { w: 256, h: 110, bg: r.rival.sale ? '#ff3b3b' : '#ffd23f', color: r.rival.sale ? '#fff' : '#0b0221' }) })), -1.8, 1.7, 1.02));
       g.position.set(4, 0, -18); scene.add(g);
     }
+    // your billboard over the road, while it runs
+    if (r.ads && r.ads.includes('billboard')) {
+      const bb = new THREE.Group();
+      for (const x of [-1.6, 1.6]) bb.add(at(box(0.18, 6, 0.18, mat('#2a2a35')), x, 3, 0));
+      bb.add(at(box(5.4, 2.3, 0.2, mat('#1b1035')), 0, 6.6, 0));
+      bb.add(at(new THREE.Mesh(new THREE.PlaneGeometry(5.1, 2.0), new THREE.MeshBasicMaterial({ map: canvasTex(512, 200, (g) => { const gr = g.createLinearGradient(0, 0, 512, 0); gr.addColorStop(0, '#ff2a6d'); gr.addColorStop(1, '#9b5de5'); g.fillStyle = gr; g.fillRect(0, 0, 512, 200); art.pack(g, r.b.good, 90, 170, 120, 0, 1); g.fillStyle = '#fff'; g.textAlign = 'center'; g.font = '900 44px system-ui'; g.fillText('SHOP HERE!', 320, 92); g.font = '800 26px system-ui'; g.fillText(`${G.name} · ${T.STALLS[r.b.tier].name}`, 320, 140); }) })), 0, 6.6, 0.11));
+      bb.position.set(-7.5, 0, -17.6); scene.add(bb);
+    }
     // street-market stalls
     if (r.event === 'market') {
       for (const [i, x] of [[0, -5], [1, 0], [2, 6]]) {
@@ -802,6 +811,16 @@ function create(canvas) {
     exit.rotation.y = Math.PI; exit.position.set(-4, 2.45, ROOM.back - 0.1); scene.add(exit);
     const yard = new THREE.Mesh(new THREE.PlaneGeometry(14, 7), mat('#55505e')); yard.rotation.x = -Math.PI / 2; yard.position.set(-1, 0.002, ROOM.back + 3.6); scene.add(yard);
     const r = run, plants = r.decor.plants.id;
+    // the side counter by the till: a second product
+    if (run.b.side) {
+      const g = new THREE.Group(), sg = run.b.side.good;
+      g.add(at(box(0.9, 0.85, 0.5, mat('#3b2a5c')), 0, 0.42, 0));
+      const sh = SHAPES[sg] || SHAPES.coffee;
+      parts.sidePacks = [];
+      for (let i = 0; i < 4; i++) { const m = new THREE.Mesh(sh.geo(), new THREE.MeshLambertMaterial({ map: packTex(sg, i) })); m.scale.setScalar(0.2); m.position.set(-0.3 + i * 0.2, 0.95, 0); g.add(m); parts.sidePacks.push(m); }
+      g.add(at(new THREE.Mesh(new THREE.PlaneGeometry(0.85, 0.18), new THREE.MeshBasicMaterial({ map: signTex(`${T.G[sg].icon} ${T.G[sg].name.toUpperCase()}`, { w: 256, h: 52, bg: '#ffd23f', color: '#0b0221' }) })), 0, 0.6, 0.26));
+      const [X, , Z] = wpos(L.SIDE.x, L.SIDE.y); g.position.set(X, 0, Z); scene.add(g); parts.sideG = g;
+    }
     // furniture you've bought and placed (it faces the till unless you turned it)
     for (const f of run.furn || []) {
       const g = new THREE.Group(), [X, , Z] = wpos(f.x, f.y);
@@ -1048,7 +1067,7 @@ function create(canvas) {
   function syncStaff() {
     const r = run, z = parts.counterZ + 1.15, w = parts.counterW;
     const want = [{ key: 'you', look: r.sellerLook, x: 0, show: !(r.away > 0), who: -1 }]
-      .concat(r.staff.map((st, i) => ({ key: 'st' + i, look: st.look, x: [-0.3, 0.3, -0.42, 0.42][i % 4] * w, show: st.job === 'till' && !(st.brk > 0), who: i })))
+      .concat(r.staff.map((st, i) => ({ key: 'st' + i, look: st.look, x: [-0.3, 0.3, -0.42, 0.42, -0.18, 0.18][i % 6] * w, show: st.job === 'till' && !(st.brk > 0), who: i })))
       .concat(r.till2 && r.clerk.state === 'till' ? [{ key: 'till2', look: r.clerk.look, x: 0.2 * w, show: true, who: 'till2', apron: r.decor.uniform.color }] : []);
     parts.staffMap = parts.staffMap || new Map();
     const keep = new Set();
@@ -1130,6 +1149,7 @@ function create(canvas) {
     // the road's lane markings, falling rain or snow
     parts.roadTex.offset.x = (r.t * 0.15) % 1;
     syncPuddle();
+    if (parts.sidePacks) { const n = Math.min(4, Math.ceil(run.b.side.stock / 6)); parts.sidePacks.forEach((m, i) => { m.visible = i < n; }); }
     if (parts.arcadeScreen) parts.arcadeScreen.material.color.setHSL((r.t * 0.25) % 1, 0.9, 0.55);
     if (parts.mud) parts.mud.material.opacity = Math.min(0.85, r.mud * 0.95);
     if (parts.leaves) { // autumn leaves and spring blossom, drifting down
@@ -1165,6 +1185,16 @@ function create(canvas) {
     for (const f of r.floor) if (!parts.floorItems.has(f)) { const m = new THREE.Mesh(parts.packShape.geo(), packMat()); m.scale.setScalar(0.12); m.rotation.set(Math.PI / 2, 0, f.rot); m.position.set(xOf(f.x, f.y), 0.08, zOf(f.y)); scene.add(m); parts.floorItems.set(f, m); }
     for (const [f, m] of parts.floorItems) if (!r.floor.includes(f)) { scene.remove(m); dropFig(m); parts.floorItems.delete(f); }
   }
+  // a delivery rider on a scooter, with the box on the back
+  function scooter() {
+    const g = new THREE.Group();
+    g.add(at(box(1.3, 0.25, 0.4, mat('#ff2a6d')), 0, 0.45, 0)); g.add(at(box(0.12, 0.8, 0.12, mat('#2a2a35')), 0.55, 0.85, 0));
+    g.add(at(box(0.5, 0.45, 0.5, mat('#ffd23f')), -0.5, 0.9, 0));
+    for (const x of [-0.5, 0.5]) g.add(rotX(at(new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.25, 0.12, 12), mat('#111')), x, 0.25, 0), Math.PI / 2));
+    g.add(at(box(0.3, 0.6, 0.35, mat('#1b1035')), 0.05, 1.0, 0)); g.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.17, 10, 8), mat('#ff2a6d')), 0.08, 1.45, 0));
+    bakeChildren(g);
+    return g;
+  }
   function car(color, w = 4) {
     const g = new THREE.Group();
     g.add(at(box(w, 0.7, 1.8, mat(color)), 0, 0.6, 0)); g.add(at(box(w * 0.5, 0.55, 1.6, mat(color)), -w * 0.05, 1.2, 0));
@@ -1178,9 +1208,9 @@ function create(canvas) {
     parts.cars = parts.cars || new Map();
     for (const c of r.cars) if (!parts.cars.has(c)) {
       const tk = ['vehicle-truck-green', 'vehicle-truck-red', 'vehicle-truck-purple'][(c.speed * 100 | 0) % 3];
-      let m = car(c.color);
-      if ((c.speed * 1000 | 0) % 2 && MODELS[tk]) { m = model(tk, 4.2); m.children[0].rotation.y = -Math.PI / 2; } // some trucks among the cars
-      m.position.z = c.dir > 0 ? -11 : -13; scene.add(m); parts.cars.set(c, m);
+      let m = c.kind === 'scooter' ? scooter() : car(c.color);
+      if (c.kind !== 'scooter' && (c.speed * 1000 | 0) % 2 && MODELS[tk]) { m = model(tk, 4.2); m.children[0].rotation.y = -Math.PI / 2; } // some trucks among the cars
+      m.position.z = c.kind === 'scooter' ? -9.6 : c.dir > 0 ? -11 : -13; scene.add(m); parts.cars.set(c, m);
     }
     for (const [c, m] of parts.cars) { if (!r.cars.includes(c)) { scene.remove(m); dropFig(m); parts.cars.delete(c); } else { m.position.x = xOf(c.x, 0.16); m.rotation.y = c.dir > 0 ? 0 : Math.PI; } }
     // the delivery van

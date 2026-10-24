@@ -40,6 +40,7 @@ window.NeonShop = (() => {
   // shop upgrades on the floor
   const KIOSK = { x: 0.955, y: 0.77 }, KIOSK_SPOT = { x: 0.89, y: 0.75 };
   const COFFEE = { x: 0.075, y: 0.785 }, TABLE = { x: 0.19, y: 0.79 };
+  const SIDE = { x: 0.64, y: 0.705 };   // the side counter by the till (a second product)
   const FRIDGE_SPOT = { x: 0.82, y: 0.31 };
   // kinds of shopper: [type, chance, badge]
   const TYPES = [['thief', 0.06, ''], ['returner', 0.04, '🔁'], ['influencer', 0.03, '📱'], ['regular', 0.0, '⭐'], ['rushed', 0.13, '⏱️'], ['bargain', 0.1, '🏷️'], ['tourist', 0.08, '📸']];
@@ -329,9 +330,9 @@ window.NeonShop = (() => {
   const FURNITURE = {
     bench: { name: '🪑 Bench', cost: 500, size: [1.4, 0.5], desc: 'Somewhere to sit: the queue is a little more patient.', at: [0.8, 0.7] },
     vending: { name: '🥫 Vending machine', cost: 1200, size: [0.9, 0.7], desc: 'Sells snacks all day: a few dollars more.', at: [0.94, 0.62] },
-    arcade: { name: '🕹️ Arcade machine', cost: 2000, size: [0.8, 0.8], desc: 'Kids love it: families buy a bit more, and it takes coins.', at: [0.1, 0.36] },
-    bigplant: { name: '🌳 Big plant', cost: 300, size: [0.7, 0.7], desc: 'A nicer place to shop: a little better word of mouth.', at: [0.06, 0.6] },
-    display: { name: '💎 Trend display', cost: 1600, size: [1.0, 0.6], desc: 'Shows off today\'s trending line: more shoppers go for it.', at: [0.72, 0.38] },
+    arcade: { name: '🕹️ Arcade machine', cost: 2000, size: [0.8, 0.8], desc: 'Kids love it: families buy a bit more, and it takes coins.', at: [0.08, 0.62] },
+    bigplant: { name: '🌳 Big plant', cost: 300, size: [0.7, 0.7], desc: 'A nicer place to shop: a little better word of mouth.', at: [0.06, 0.33] },
+    display: { name: '💎 Trend display', cost: 1600, size: [1.0, 0.6], desc: 'Shows off today\'s trending line: more shoppers go for it.', at: [0.66, 0.6] },
   };
   function furnOf(b, lay = b.layout || {}) {
     return Object.keys(FURNITURE).filter((id) => b.furniture && b.furniture[id]).map((id) => {
@@ -346,15 +347,24 @@ window.NeonShop = (() => {
     return m ? island(u, ...clampIsland(i, m.x, m.base)) : Object.assign({}, u);
   });
   // the annex and Level 2 units as flat shop coordinates (only in a megastore)
-  function bigUnits(tier) {
-    return MUNITS.filter((u) => tier >= u.tier).map((u) => {
+  // more floor space (🏗️ Grow): new islands in the front half of the shop, either side of the aisle
+  const EXP_UNITS = [
+    { zone: 'main', m: { X0: -3.7, X1: -1.5, Z: 3.5, wall: false }, cols: 3, exp: 1 },
+    { zone: 'main', m: { X0: 1.5, X1: 3.7, Z: 3.5, wall: false }, cols: 3, exp: 2 },
+  ];
+  const UNIT_NAMES = ['Left wall shelves', 'Right wall shelves', 'Left island', 'Right island'];
+  function bigUnits(b) {
+    const floor = T.expOf(b).floor;
+    return MUNITS.filter((u) => b.tier >= u.tier).concat(EXP_UNITS.filter((u) => floor >= u.exp)).map((u) => {
       const dx = u.zone === 'up' ? LEVEL2_DX : 0, [x0, base] = toFlat(u.m.X0 + dx, u.m.Z), [x1] = toFlat(u.m.X1 + dx, u.m.Z);
-      return { x0, x1, base, top: base - ISLAND_H, cols: u.cols, wall: u.m.wall, zone: u.zone, m: u.m, dx };
+      const h = u.exp ? ISLAND_H * sAt(base) / sAt(ISLAND_BASE) : ISLAND_H; // a new island in the main room is drawn to scale
+      return { x0, x1, base, top: base - h, cols: u.cols, wall: u.m.wall, zone: u.zone, m: u.m, dx, exp: u.exp,
+        name: u.exp ? `New island ${u.exp}` : u.zone === 'annex' ? 'Annex island' : 'Level 2 shelves' };
     });
   }
   function applyLayout(b) {
     const lay = b.layout || {};
-    UNITS = layoutUnits(lay).concat(bigUnits(b.tier));
+    UNITS = layoutUnits(lay).concat(bigUnits(b));
     PROPS = lay.props && lay.props.length === PROPS0.length ? lay.props.map(([k, x, y]) => [k, ...clampProp(x, y)]) : PROPS0;
     // a prop dragged onto an island goes back where it was
     PROPS = PROPS.map((pr, i) => (blocked(pr[1], pr[2], 0.05) ? PROPS0[i] : pr));
@@ -371,10 +381,10 @@ window.NeonShop = (() => {
       return { kind: k, x: px, y: py, X: xOf(px, py), Z: zOf(py), i };
     });
     UNITS = saved;
-    const big = bigUnits(b.tier).map((u, k) => ({ i: UNITS0.length + k, wall: u.wall, X0: u.m.X0, X1: u.m.X1, Z0: u.m.Z - (u.wall ? 0.5 : 0.85), Z1: u.m.Z, line: lines[UNITS0.length + k], zone: u.zone, fixed: true }));
+    const big = bigUnits(b).map((u, k) => ({ i: UNITS0.length + k, wall: u.wall, X0: u.m.X0, X1: u.m.X1, Z0: u.m.Z - (u.wall ? 0.5 : 0.85), Z1: u.m.Z, line: lines[UNITS0.length + k], zone: u.zone, fixed: true, name: u.name }));
     return {
       annex: b.tier >= 2 ? ANNEX : null,
-      units: big.concat(units.map((u, i) => (u.wall ? { i, wall: true, X0: xOf(u.x0, u.base), X1: xOf(u.x1, u.base), Z0: 0.07, Z1: 0.57, line: lines[i] } : Object.assign({ i, wall: false, line: lines[i], x: (u.x0 + u.x1) / 2, base: u.base }, footprint(u))))),
+      units: big.concat(units.map((u, i) => (u.wall ? { i, wall: true, X0: xOf(u.x0, u.base), X1: xOf(u.x1, u.base), Z0: 0.07, Z1: 0.57, line: lines[i], name: UNIT_NAMES[i] } : Object.assign({ i, wall: false, line: lines[i], x: (u.x0 + u.x1) / 2, base: u.base, name: UNIT_NAMES[i] }, footprint(u))))),
       props, lines: lineNames(b), colors: LINE_COLORS,
       promos: promosOf(b, lay).map((pr) => Object.assign(pr, { X: xOf(pr.x, pr.y), Z: zOf(pr.y) })),
       furn: furnOf(b, lay).map((f) => Object.assign(f, { X: xOf(f.x, f.y), Z: zOf(f.y) })),
@@ -577,7 +587,7 @@ window.NeonShop = (() => {
   // which line is on each shelving unit (your choice, or a mix by default)
   function unitLines(b) {
     const n = lineCount(b.tier), lay = b.layout || {};
-    return UNITS0.concat(MUNITS).map((_, i) => { const l = lay.lines && lay.lines[i]; return Number.isInteger(l) && l < n ? l : [0, 1, 2, 0, 1, 2][i] % n; });
+    return UNITS0.concat(MUNITS, EXP_UNITS).map((_, i) => { const l = lay.lines && lay.lines[i]; return Number.isInteger(l) && l < n ? l : [0, 1, 2, 0, 1, 2, 0, 1][i] % n; });
   }
   // today's trending line (the same all day; changes from day to day)
   // a price for each line, as a share of the shop's shelf price (1 = the same; 0.8 = 20% off)
@@ -630,8 +640,10 @@ window.NeonShop = (() => {
     b.regulars = b.regulars || [];
     const staff = T.staffOf(b);
     // a present owner draws a bigger crowd than the automatic day (35% more shoppers)
-    const entrants = Math.max(3, Math.round(Math.min(CUSTOMERS[tier], units * 1.35) * crowd) + Math.floor(b.regulars.length / 2));
-    const qtyMean = Math.max(1, (units * 1.35 * crowd) / entrants);
+    const ads = T.adMod(s, b), floorK = 1 + 0.12 * T.expOf(b).floor;
+    const entrants = Math.max(3, Math.round(Math.min(CUSTOMERS[tier] * (1 + 0.15 * T.expOf(b).floor), units * 1.35 * floorK) * crowd * ads * T.followerMod(s)) + Math.floor(b.regulars.length / 2));
+    for (const a of T.adsOf(s, b)) a.shop = (a.shop || 0) + Math.round(entrants * (1 - 1 / ads) * (T.CAMPAIGNS[a.id].boost / Math.max(0.01, ads - 1)));
+    const qtyMean = Math.max(1, (units * 1.35 * floorK * crowd * ads * T.followerMod(s)) / entrants);
     applyLayout(b);
     const slots = makeSlots(), ul = unitLines(b);
     for (const sl of slots) { sl.line = ul[sl.u]; sl.v = LINE_V[sl.line]; }
@@ -669,6 +681,7 @@ window.NeonShop = (() => {
       heat: new Float32Array(HEAT_X * HEAT_Y), goal: pickGoal(s, b), hourSold: Array(12).fill(0),
       rep: T.repOf(b), repD: { price: 0, stock: 0, queue: 0, service: 0 }, // what people say about you, and today's experiences
       groups: {}, mud: 0, // who came today; muddy footprints by the door on a wet day
+      online: [], nextOnline: rand(8, 14), // delivery orders on the tablet
       stats: { waits: [], stolen: 0, caught: 0, helped: 0, extras: 0, good: 0, bad: 0, returns: 0, newRegulars: 0, rewards: 0, reducedSold: 0, knocked: 0, haul: false },
     };
     // wear and tear builds up over the season: scuffs on the floor, smudges on the windows
@@ -699,6 +712,8 @@ window.NeonShop = (() => {
     run.candyNear = !!cd && metres({ x: cd[1], y: cd[2] }, { x: 0.5, y: L.counter - 0.04 }) < 2.6;
     // passers-by who just walk past, so the street feels alive
     for (let i = 0; i < 4; i++) addPasser(Math.random());
+    run.ads = T.adsOf(s, b).map((a) => a.id);
+    if (run.ads.includes('flyers')) run.people.push({ kind: 'promoter', name: 'Flyers', look: Object.assign(randomLook(), { outfit: 'pink', wear: ['flyers'] }), x: 0.36, y: L.street + 0.002, phase: 0, facing: 'front', badge: '📄' });
     ambience.start();
     layers = {};
     if (ui.canvas3d && getView() === '3d') {
@@ -737,7 +752,7 @@ window.NeonShop = (() => {
       stars: r.stars, rating: r.b.rating, reviews: r.b.reviews || [],
       goal: r.goalResult || null, eventResult: r.eventResult || null, critic: r.critic || null, splashed: st.splashed || 0, rep: r.b.rep, repBefore: r.repBefore, tidy: r.stats.tidy, nightDone: r.stats.nightDone, nightTotal: r.stats.nightTotal, orders: r.stats.orders || 0, ordersLost: r.ordersLost, openOrders: (r.b.requests || []).map((x) => ({ ...x, lineName: r.lines[x.line] })), lines: r.lines, lineSold: r.lineSold, trend: r.trend,
       heat: { x: HEAT_X, y: HEAT_Y, data: Array.from(r.heat) }, plan: planShapes(r.b),
-      furnTake: st.furnTake || 0, matched: st.matched || 0, toRival: st.toRival || 0, rivalName: r.rival && r.rival.name,
+      online: st.online || 0, onlineLost: st.onlineLost || 0, side: st.side || 0, furnTake: st.furnTake || 0, matched: st.matched || 0, toRival: st.toRival || 0, rivalName: r.rival && r.rival.name,
       groups: r.groups, slips: st.slips || 0, mopped: st.mopped || 0, weekend: weekend(r.s),
     };
   }
@@ -1051,6 +1066,7 @@ window.NeonShop = (() => {
         r.heat[gy * HEAT_X + gx] += dt;
       }
       if (p.kind === 'passer') { p.x += p.dir * p.speed * dt; p.phase += dt * 8; p.moving = true; continue; }
+      if (p.kind === 'promoter') { if (Math.random() < dt * 0.12) say(p, pick(['📄 Deals inside!', '📄 Have a flyer!', '📄 New in store!']), 1.6); continue; }
       switch (p.state) {
         case 'street': // walk along the pavement, turn in at the door
           p.x += p.dir * p.speed * dt; p.phase += dt * 8; p.moving = true;
@@ -1298,6 +1314,7 @@ window.NeonShop = (() => {
       if (r.eventT > len) { r.eventT = -1; r.power = false; if (r.event === 'power') r.effects.push({ kind: 'text', text: '💡 Power back on', x: 0.5, y: 0.45, t: 0, color: '#4ade80' }); }
     }
     stepEvent(dt, opening);
+    stepOnline(dt, open);
     if (open) for (const f of r.furn) { // the vending machine and the arcade machine earn a little
       if ((f.id === 'vending' && Math.random() < dt * 0.07) || (f.id === 'arcade' && r.people.some((p) => p.child && p.y > L.wall) && Math.random() < dt * 0.1)) {
         const amt = f.id === 'vending' ? 2 : 1;
@@ -1398,7 +1415,7 @@ window.NeonShop = (() => {
   // jobs still to do: scuffs, smudges, dropped packs, shelves to face, the bin
   function nightLeft() {
     const r = run, w = r.b.wear;
-    return w.scuffs.length + w.smudges.length + r.floor.length + UNITS.filter((u, i) => !u.m && unitItems(i) > 0 && !r.night.faced.has(i)).length + (r.night.bin ? 0 : 1);
+    return w.scuffs.length + w.smudges.length + r.floor.length + UNITS.filter((u, i) => (!u.m || u.exp) && unitItems(i) > 0 && !r.night.faced.has(i)).length + (r.night.bin ? 0 : 1);
   }
   function stepNight(dt) {
     const r = run, n = r.night;
@@ -1581,6 +1598,48 @@ window.NeonShop = (() => {
   function puff(x, y) {
     for (let i = 0; i < 8; i++) run.dust.push({ x, y, vx: rand(-0.12, 0.12), vy: rand(-0.06, 0), t: 0 });
   }
+
+  // ---------- online orders: they come in on the tablet; pack them and a rider takes them out ----------
+  const ONLINE_DUE = 30;   // seconds before a delivery counts as late
+  const onlineStock = (o) => run.bay[o.line] + lineItems(o.line) >= o.qty;
+  function stepOnline(dt, open) {
+    const r = run;
+    if (!r.up.online || r.intro > 0) return;
+    if (open && r.t >= r.nextOnline && r.online.filter((o) => o.state === 'new').length < 3) {
+      r.nextOnline = r.t + rand(12, 22);
+      const id = (r.onlineId = (r.onlineId || 0) + 1);
+      r.online.push({ id, name: pick(T.NAMES), line: (Math.random() * r.lines.length) | 0, qty: 2 + ((Math.random() * 4) | 0), age: 0, state: 'new' });
+      sfx.chime(); r.effects.push({ kind: 'text', text: '📱 New online order!', x: 0.62, y: L.counter - 0.12, t: 0, color: '#7fe9ff' });
+    }
+    for (const o of r.online) {
+      o.age += dt;
+      if (o.state === 'new' && o.age > ONLINE_DUE * 1.6) { o.state = 'cancelled'; hear('service', -2); r.stats.onlineLost = (r.stats.onlineLost || 0) + 1; r.effects.push({ kind: 'text', text: `📱 ${o.name} cancelled: too slow`, x: 0.62, y: L.counter - 0.12, t: 0, color: '#ff6b6b' }); }
+    }
+    r.online = r.online.filter((o) => o.state === 'new' || o.age < ONLINE_DUE * 3);
+  }
+  // take the goods from the stockroom (then the shelves), ring it up, and send a rider
+  function packOrder(id, by) {
+    const r = run, o = r && r.online.find((x) => x.id === id && x.state === 'new');
+    if (!o) return { ok: false, msg: 'That order has gone.' };
+    if (!onlineStock(o)) return { ok: false, msg: `Not enough ${r.lines[o.line]} in stock.` };
+    let need = o.qty - pileOut(o.qty, o.line);
+    while (need > 0) { const sl = r.slots.filter((x) => x.line === o.line && x.n > 0).sort((a, b) => b.n - a.n)[0]; if (!sl) break; const t = Math.min(need, sl.n); sl.n -= t; need -= t; }
+    const res = T.shopSale(r.s, r.b.id, o.qty);
+    if (!res.ok) return { ok: false, msg: 'Out of stock.' };
+    const late = o.age > ONLINE_DUE, lm = linePrice(r.b, o.line);
+    let extra = Math.round((res.revenue * (lm - 1) - res.revenue * lm * 0.15 + 3) * 100) / 100; // its line's price, the platform's 15% cut, a $3 delivery fee
+    if (late) extra -= Math.round(res.revenue * lm * 0.3 * 100) / 100; // a late one: 30% back
+    T.shopExtra(r.s, r.b.id, extra);
+    r.revenue += res.revenue; r.sold += res.qty; r.stats.extras += extra;
+    if (r.lineSold[o.line] !== undefined) r.lineSold[o.line] += res.qty;
+    o.state = 'sent'; r.stats.online = (r.stats.online || 0) + 1;
+    hear('service', late ? -1 : 1.2);
+    r.cars.push({ x: 0.5, dir: Math.random() < 0.5 ? 1 : -1, lane: 0.152, speed: 0.4, color: '#ff2a6d', kind: 'scooter' });
+    r.effects.push({ kind: 'text', text: `🛵 ${o.qty}× ${r.lines[o.line]} to ${o.name}${late ? ' (late: 30% back)' : ''}`, x: 0.5, y: L.counter - 0.12, t: 0, color: late ? '#ff9f6b' : '#4ade80' });
+    sfx.approved();
+    return { ok: true, late, by };
+  }
+  const onlineInfo = () => (run && run.up.online ? run.online.filter((o) => o.state === 'new').map((o) => ({ id: o.id, name: o.name, qty: o.qty, line: run.lines[o.line], left: Math.max(0, Math.ceil(ONLINE_DUE - o.age)), late: o.age > ONLINE_DUE, stock: onlineStock(o) })) : null);
 
   // ---------- today's challenge events: an inspector, a celebrity, a burst pipe, a food critic ----------
   const banner = (text, color = '#ffd23f') => run.effects.push({ kind: 'text', text, x: 0.5, y: 0.45, t: 0, color });
@@ -1856,7 +1915,7 @@ window.NeonShop = (() => {
       if (sm) acts.push({ id: 'wipe', label: '🪟 Wipe window', w: sm });
     }
     if (r.night) { // the night shift: face the shelves, empty the bin
-      const ui = UNITS.findIndex((u, i) => !u.m && unitItems(i) > 0 && !r.night.faced.has(i) && d(unitSpot0(u)) < 1.7);
+      const ui = UNITS.findIndex((u, i) => (!u.m || u.exp) && unitItems(i) > 0 && !r.night.faced.has(i) && d(unitSpot0(u)) < 1.7);
       if (ui >= 0) acts.unshift({ id: 'face', label: '✨ Face the shelf', ui });
       const bin = PROPS.find((pr) => pr[0] === 'bin');
       if (bin && !r.night.bin && d({ x: bin[1], y: bin[2] }) < 1.4) acts.unshift({ id: 'bin', label: '🗑️ Empty the bin' });
@@ -1972,7 +2031,7 @@ window.NeonShop = (() => {
   const requestInfo = () => { const q = run && run.pendingRequest; return q ? { name: q.p.name, qty: q.qty, line: run.lines[q.line], due: q.due } : null; };
 
   // ---------- your team: each helper has a job you can change in the shop ----------
-  const JOBS = { till: '🧾 Till', stock: '📦 Restock', door: '🚪 Door', break: '☕ Break' };
+  const JOBS = { till: '🧾 Till', stock: '📦 Restock', door: '🚪 Door', online: '📱 Online orders', break: '☕ Break' };
   const DOOR_SPOT = { x: 0.57, y: L.enter + 0.03 };
   const guard = () => run.staff.find((st) => st.job === 'door' && st.body && st.body.state === 'guard');
   function setJob(i, job) {
@@ -1980,7 +2039,8 @@ window.NeonShop = (() => {
     if (!st || !JOBS[job] || r.ending) return false;
     if (st.job === job) return true;
     st.job = job; st.brk = 0;
-    if (job === 'till' || job === 'break') { // back behind the counter
+    if (job === 'online' && !r.up.online) { st.job = 'till'; return false; }
+    if (job === 'till' || job === 'break' || job === 'online') { // back behind the counter
       if (st.body) { const b = st.body; pileIn(b.carry, b.carryLine); b.carry = 0; b.state = 'leave'; b.path = planPath(b, TILL_SPOT); }
     } else {
       const b = st.body || (st.body = { kind: 'staffer', look: st.look, x: TILL_SPOT.x, y: TILL_SPOT.y, phase: 0, facing: 'back', carry: 0, name: st.m.name, i });
@@ -1993,6 +2053,10 @@ window.NeonShop = (() => {
     const r = run, b = st.body;
     if (st.job === 'break') st.energy = Math.min(100, st.energy + dt * 9);
     else st.energy = Math.max(0, st.energy - dt * (st.job === 'stock' ? 0.7 : 0.35));
+    if (st.job === 'online') { // packs online orders at the counter, one every few seconds
+      st.energy = Math.max(0, st.energy - dt * 0.4);
+      if ((st.timer -= dt) <= 0) { st.timer = 4.5 * (st.energy < 30 ? 1.4 : 1); const o = r.online.find((x) => x.state === 'new' && onlineStock(x)); if (o) packOrder(o.id, st.m.name); }
+    }
     if (st.job === 'break' && st.energy >= 100) { setJob(i, 'till'); r.effects.push({ kind: 'text', text: `💪 ${st.m.name} is back on the till`, x: 0.5, y: L.counter - 0.1, t: 0, color: '#4ade80' }); }
     if (!b) return;
     b.moving = false;
@@ -2048,6 +2112,10 @@ window.NeonShop = (() => {
       hear('price', pm < p.limit * 0.85 ? 1.2 : pm > p.limit * 0.95 ? -0.5 : 0.3);
       hear('service', 0.8 + (r.furn.some((f) => f.id === 'bigplant') ? 0.3 : 0));
       memo(p, { mult: pm, wait: p.wait || 0, out: false, dear: false, slow: false });
+    }
+    if (r.b.side && r.b.side.stock > 0 && Math.random() < 0.3) { // one from the side counter, as they pay
+      const sd = T.sideSale(r.s, r.b.id, Math.random() < 0.3 ? 2 : 1);
+      if (sd.ok) { r.stats.extras += sd.rev; r.stats.side = (r.stats.side || 0) + sd.q; r.effects.push({ kind: 'text', text: `${T.G[r.b.side.good].icon} +$${sd.rev.toFixed(2)}`, x: SIDE.x, y: SIDE.y - 0.06, t: 0, color: '#ffd23f' }); }
     }
     if (r.candyNear && Math.random() < 0.15) { p.extra += 1.5; r.effects.push({ kind: 'text', text: '🍬 +$1.50', x: p.x - 0.08, y: L.counter - 0.16, t: 0, color: '#ff8fcf' }); }
     p.bag = true;
@@ -2284,7 +2352,7 @@ window.NeonShop = (() => {
 
     // inside: shelf islands, the stock pile and people, far to near
     const items = [];
-    UNITS.forEach((u, i) => { if (!u.wall && !u.m) items.push({ y: u.base, draw: () => drawUnitCached(ctx, u, i, W, H, G, cache) }); });
+    UNITS.forEach((u, i) => { if (!u.wall && (!u.m || u.exp)) items.push({ y: u.base, draw: () => drawUnitCached(ctx, u, i, W, H, G, cache) }); });
     items.push({ y: bayAt(0).y, draw: () => drawPile(ctx, W, H, G) });
     const plants = r.decor.plants.id;
     for (const [kind, x, y] of holidayProps()) items.push({ y, draw: () => drawHolidayProp(ctx, kind, x, y, W, H) });
@@ -2295,6 +2363,7 @@ window.NeonShop = (() => {
     }
     // shop upgrades you can see
     if (r.up.selfcheck) items.push({ y: KIOSK.y, draw: () => drawKiosk(ctx, W, H) });
+    if (r.b.side) items.push({ y: SIDE.y, draw: () => drawSide(ctx, W, H) });
     if (r.up.coffee) { items.push({ y: COFFEE.y, draw: () => drawCoffee(ctx, W, H) }); items.push({ y: TABLE.y, draw: () => drawTable(ctx, W, H) }); }
     if (r.up.gates) for (const gx of [FRONT.door[0] + 0.01, FRONT.door[1] - 0.01]) items.push({ y: L.door + 0.02, draw: () => drawGate(ctx, gx, W, H) });
     // packs dropped on the floor
@@ -2550,6 +2619,14 @@ window.NeonShop = (() => {
   }
 
   function drawCar(ctx, c, W, H, night) {
+    if (c.kind === 'scooter') { // a delivery rider
+      const x = c.x * W, base = c.lane * H, s = H * 0.03;
+      ctx.fillStyle = '#111'; for (const k of [-0.4, 0.4]) { ctx.beginPath(); ctx.arc(x + k * s, base - s * 0.15, s * 0.16, 0, Math.PI * 2); ctx.fill(); }
+      ctx.fillStyle = c.color; roundRect(ctx, x - s * 0.5, base - s * 0.45, s, s * 0.25, 3); ctx.fill();
+      ctx.fillStyle = '#ffd23f'; ctx.fillRect(x - c.dir * s * 0.55 - s * 0.18, base - s * 0.85, s * 0.36, s * 0.36); // the delivery box
+      ctx.fillStyle = '#1b1035'; ctx.beginPath(); ctx.arc(x + c.dir * s * 0.1, base - s * 0.9, s * 0.16, 0, Math.PI * 2); ctx.fill();
+      return;
+    }
     const w = W * 0.13, h = H * 0.026, x = c.x * W, base = c.lane * H;
     ctx.fillStyle = c.color; roundRect(ctx, x - w / 2, base - h * 0.62, w, h * 0.5, 3); ctx.fill();
     roundRect(ctx, x - w * 0.27 - c.dir * w * 0.04, base - h, w * 0.5, h * 0.45, 4); ctx.fill();
@@ -2858,6 +2935,12 @@ window.NeonShop = (() => {
       ctx.fillStyle = r.rival.sale ? '#fff' : '#0b0221'; ctx.font = `800 ${Math.round(H * 0.01)}px system-ui, sans-serif`;
       ctx.fillText(`${r.rival.sale ? 'SALE ' : ''}${T.G[r.b.good].icon} $${price < 100 ? price.toFixed(2) : Math.round(price)}`, x0 + (x1 - x0) * 0.3, top + H * 0.035);
     }
+    if (r.ads && r.ads.includes('billboard')) { // your billboard, over the road
+      const x0 = W * 0.06, x1 = W * 0.36, top = (F.road0 - 0.052) * H, h = H * 0.03;
+      ctx.fillStyle = '#2a2a35'; ctx.fillRect(x0 + (x1 - x0) * 0.3, top + h, 2, base - top - h); ctx.fillRect(x0 + (x1 - x0) * 0.7, top + h, 2, base - top - h);
+      ctx.fillStyle = '#ff2a6d'; ctx.fillRect(x0, top, x1 - x0, h); ctx.fillStyle = '#fff'; ctx.font = `900 ${Math.round(H * 0.011)}px system-ui, sans-serif`;
+      ctx.fillText(`${T.G[r.b.good].icon} SHOP HERE! ${T.STALLS[r.b.tier].name.toUpperCase()} →`, (x0 + x1) / 2, top + h * 0.68);
+    }
     if (r.event === 'market') { // a street market over the road, all day
       for (let i = 0; i < 3; i++) {
         const w = W * 0.11, x = W * [0.16, 0.5, 0.88][i] - w / 2, y = base; // either side, and through the door
@@ -3029,6 +3112,15 @@ window.NeonShop = (() => {
     ctx.fillStyle = busy ? '#062a33' : '#7fe9ff'; ctx.font = `800 ${Math.max(6, Math.round(s * 0.09))}px system-ui, sans-serif`;
     ctx.fillText(busy ? 'SCANNING' : 'SELF', x, y - s * 1.27); if (!busy) ctx.fillText('CHECKOUT', x, y - s * 1.16);
     if (busy && Math.sin(r.t * 40) > 0) { ctx.fillStyle = '#ff3b3b'; ctx.fillRect(x - s * 0.2, y - s * 0.88, s * 0.4, 2); }
+  }
+  // the side counter: a small stand of the second product, by the till
+  function drawSide(ctx, W, H) {
+    const r = run, x = SIDE.x * W, y = SIDE.y * H, s = scaleAt(SIDE.y, H), g = r.b.side.good;
+    ctx.fillStyle = 'rgba(0,0,0,.3)'; ctx.beginPath(); ctx.ellipse(x, y, s * 0.4, s * 0.07, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#3b2a5c'; ctx.fillRect(x - s * 0.36, y - s * 0.55, s * 0.72, s * 0.55);
+    const n = Math.min(4, Math.ceil(r.b.side.stock / 6));
+    for (let i = 0; i < n; i++) window.NeonShopArt.pack(ctx, g, x + (i - (n - 1) / 2) * s * 0.17, y - s * 0.57, s * 0.24, i, r.dpr);
+    ctx.fillStyle = '#ffd23f'; ctx.font = `800 ${Math.max(6, Math.round(s * 0.1))}px system-ui, sans-serif`; ctx.fillText(`${T.G[g].icon} ${T.G[g].name.toUpperCase()}`, x, y - s * 0.22);
   }
   function drawCoffee(ctx, W, H) {
     const r = run, x = COFFEE.x * W, y = COFFEE.y * H, s = scaleAt(COFFEE.y, H);
@@ -3489,6 +3581,7 @@ window.NeonShop = (() => {
     if (wear.includes('beanie')) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(px, y(1.74), s * 0.14, Math.PI, 0); ctx.fill(); ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.beginPath(); ctx.arc(px, y(1.9), s * 0.035, 0, Math.PI * 2); ctx.fill(); }
     if (wear.includes('shades') && front) { ctx.fillStyle = '#111'; roundRect(ctx, px - s * 0.1, y(1.73), s * 0.2, s * 0.05, s * 0.02); ctx.fill(); }
     if (wear.includes('briefcase')) { ctx.fillStyle = '#4a2f1d'; roundRect(ctx, px + s * 0.2, y(0.66), s * 0.2, s * 0.15, s * 0.02); ctx.fill(); ctx.fillStyle = '#c9a227'; ctx.fillRect(px + s * 0.29, y(0.64), s * 0.03, s * 0.03); }
+    if (wear.includes('flyers')) { ctx.fillStyle = '#fff'; ctx.fillRect(px + s * 0.22, y(1.0), s * 0.16, s * 0.2); ctx.fillStyle = '#ff2a6d'; ctx.fillRect(px + s * 0.24, y(0.96), s * 0.12, s * 0.04); }
     if (wear.includes('clipboard')) { ctx.fillStyle = '#c9a26b'; ctx.fillRect(px - s * 0.38, y(1.05), s * 0.18, s * 0.24); ctx.fillStyle = '#fff'; ctx.fillRect(px - s * 0.36, y(1.02), s * 0.14, s * 0.18); }
     if (wear.includes('cane')) { ctx.strokeStyle = '#6b4423'; ctx.lineWidth = Math.max(1.5, s * 0.035); ctx.beginPath(); ctx.moveTo(px + s * 0.28, y(0.62)); ctx.lineTo(px + s * 0.34, py); ctx.stroke(); }
   }
@@ -3710,12 +3803,12 @@ window.NeonShop = (() => {
     drawPOS(ctx, P(0.74, 0.45), W, H, G, serving);
     // you and your helpers, behind the counter
     const sellerS = H * 0.13;
-    const staffXs = [0.2, 0.8, 0.08, 0.92];
+    const staffXs = [0.2, 0.8, 0.08, 0.92, 0.32, 0.68];
     // whoever is scanning moves their arms, item to item
     const busy = (who) => r.people.some((x) => x.state === 'serving' && x.servedBy === who);
     const pose = (who) => (busy(who) ? { phase: r.t * 14 + (typeof who === 'number' ? who : 3), stride: 0.3 } : { phase: 0, stride: 0 });
     r.staff.forEach((st, i) => {
-      const sx = W * staffXs[i % 4];
+      const sx = W * staffXs[i % staffXs.length];
       if (st.job !== 'till' && st.job !== 'break') return; // out on the shop floor
       if (st.brk > 0 || st.job === 'break') { // on a break
         ctx.fillStyle = 'rgba(11,2,33,.85)'; roundRect(ctx, sx - 30, H - sellerS * 0.7, 60, 16, 5); ctx.fill();
@@ -3761,14 +3854,14 @@ window.NeonShop = (() => {
   };
 
   return {
-    getGfx, setGfx, getSaver, setSaver, lowBattery, open, serve, refill, order, setPrice, closeEarly, clock, frontWaiting, stockInfo, pointerDown, pointerMove, pointerUp, tap, zoomBy, panBy, resetZoom,
+    online: onlineInfo, packOrder, getGfx, setGfx, getSaver, setSaver, lowBattery, open, serve, refill, order, setPrice, closeEarly, clock, frontWaiting, stockInfo, pointerDown, pointerMove, pointerUp, tap, zoomBy, panBy, resetZoom,
     _route: (a, b) => routeTo(a, b), _spot: (ui) => unitSpot(UNITS[ui]), _zone: (p) => zoneOf(p),
     _samples: () => Object.keys(SAMPLES),
     orbit, snapshot, is3D: () => !!(run && run.r3d),
     nightShift, night: nightInfo, endNight: () => { if (run && run.night) endNight(); },
     getView, setView, has3D, nudgeLine, linePrice, answerRequest, request: requestInfo, team, setJob, JOBS, toggleWalk, canWalk, walking: () => !!(run && run.me), actions: () => nearby().map(({ id, label }) => ({ id, label })), act: doAction, goal: goalInfo,
     plan: { PROMOS, FURNITURE, trend: trending, shapes: planShapes, draw: drawPlan, hit: planHit, move: planMove, lineNames, unitLines, PROP_KINDS, colors: LINE_COLORS },
-    layout: () => ({ HOL_COLS, MUD_SPOT, ANNEX, LEVEL2_DX, LEVEL2_Y, BAY_X, BAY_Z, L, UNITS, ROWS, unitLine: run && run.unitLine, lines: run && run.lines, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
+    layout: () => ({ SIDE, HOL_COLS, MUD_SPOT, ANNEX, LEVEL2_DX, LEVEL2_Y, BAY_X, BAY_Z, L, UNITS, ROWS, unitLine: run && run.unitLine, lines: run && run.lines, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
     _drawPOS: (...a) => drawPOS(...a),
     eventInfo, callPlumber, fixPipe,
     toggleTill2, resolveReturn, pendingReturn: () => !!(run && run.pendingReturn), active: () => !!run, current: () => run,
