@@ -200,3 +200,33 @@ div.row { cursor: default; }
 .shopbtns { gap: 8px; }
 .shopbtns .btn { padding-left: 10px; padding-right: 10px; }
 .shopbtns .serve { letter-spacing: 1px; font-size: 16px; white-space: nowrap; padding: 12px 8px; }
+.teamcard h3 small { font-weight: 600; font-size: 12px; margin-left: 6px; }
+.bars { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; margin: 8px 0; font-size: 12px; }
+.bar { display: block; height: 8px; border-radius: 4px; background: rgba(255, 255, 255, .1); overflow: hidden; }
+.bar b { display: block; height: 100%; border-radius: 4px; }
+.linechips button[data-job].on { background: rgba(255, 210, 63, .25); border-color: var(--gold); }
+#lineChips { margin: 0; justify-content: center; }
+#lineChips button { padding: 4px 10px; font-size: 12px; }
+#lineChips button.on { background: rgba(255, 210, 63, .25); border-color: var(--gold); }
+/* photo mode: just the shop */
+.photobar { display: none; position: absolute; left: 0; right: 0; bottom: calc(env(safe-area-inset-bottom) + 16px); justify-content: center; gap: 12px; }
+.shopview.photo .photobar { display: flex; }
+.shopview.photo .shophud, .shopview.photo .shopbar, .shopview.photo .goalpill { visibility: hidden; }
+.shopview.photo.is3d #shopCanvas { opacity: 0; } /* the labels over the 3D shop (it still takes your fingers) */
+/* the weekly report */
+.tiles { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin: 8px 0; }
+.tile { padding: 10px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
+.tile small { display: block; color: var(--muted, #b9b0d6); font-size: 12px; }
+.tile b { font-size: 18px; }
+.tile b small { display: inline; font-size: 12px; font-weight: 600; }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; margin: 4px 0 6px; }
+.legend i, .tip i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+.chartbox { position: relative; }
+svg.rchart { width: 100%; height: auto; display: block; }
+svg.rchart .grid { stroke: rgba(255, 255, 255, .1); stroke-width: 1; }
+svg.rchart .ax { fill: rgba(255, 255, 255, .55); font-size: 9px; }
+svg.rchart .lbl { fill: #fff; font-size: 10px; font-weight: 800; }
+.tip { position: absolute; top: 0; width: 150px; padding: 8px 10px; border-radius: 10px; font-size: 12px; background: rgba(11, 2, 33, .95); border: 1px solid var(--line); pointer-events: none; }
+.tip div { display: flex; align-items: center; gap: 2px; } .tip div span { margin-left: auto; font-weight: 800; }
+.tablev { margin: 10px 0; font-size: 12px; } .tablev table { width: 100%; border-collapse: collapse; margin-top: 6px; }
+.tablev th, .tablev td { padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: right; } .tablev th:first-child, .tablev td:first-child { text-align: left; }

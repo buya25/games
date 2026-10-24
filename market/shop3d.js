@@ -11,7 +11,7 @@ const T = window.NeonTycoon, art = window.NeonShopArt;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 // ---------- flat shop coordinates -> metres ----------
-const sAt = (y) => 0.035 + 0.075 * clamp((y - 0.16) / 0.63, 0, 1);
+const sAt = (y) => 0.035 + 0.075 * clamp((y - 0.16) / 0.63, 0, 1.7); // goes on past the counter (the back door)
 const SB = sAt(0.27), SC = sAt(0.79), RW = 9, RD = 9;
 const zOf = (y) => (RD * (1 / SB - 1 / sAt(y))) / (1 / SB - 1 / SC);
 const xOf = (x, y) => (x - 0.5) * (RW / 0.86) * (SB / sAt(y));
@@ -20,6 +20,8 @@ function toFlat(X, Z) {
   const y = 0.16 + ((s - 0.035) / 0.075) * 0.63;
   return [0.5 + X / ((RW / 0.86) * (SB / s)), y];
 }
+const UP_DX = 20, UP_Y = 3.0;
+function wpos(x, y) { let X = xOf(x, y), Y = 0; if (X > UP_DX / 2) { X -= UP_DX; Y = UP_Y; } return [X, Y, zOf(y)]; }
 const ROOM = { ceil: 4, back: 11.3, winLo: 1.55, winHi: 3.3, doorH: 2.5 };
 
 // ---------- materials and textures ----------
@@ -202,19 +204,20 @@ function create(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   const camera = new THREE.PerspectiveCamera(56, 1, 0.1, 200);
-  const view = { dist: 1, tx: 0, tz: 0 }; // zoom (1 = default) and pan of the target
+  const view = { dist: 1, tx: 0, tz: 0, yaw: 0, tilt: 0 }; // zoom (1 = default), pan of the target, and the turn round it (360°)
   let scene, run, L, G, parts, figs = new Map(), lastSig = '';
   const ray = new THREE.Raycaster(), floorPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
   function attach(r) {
     run = r; L = window.NeonShop.layout(); G = T.G[r.b.good];
     figs = new Map(); lastSig = '';
-    view.dist = 1; view.tx = 0; view.tz = 0;
+    view.dist = 1; view.tx = 0; view.tz = 0; view.yaw = 0; view.tilt = 0;
     scene = new THREE.Scene();
     parts = {};
     buildRoom(); buildStreet(); buildUnits(); buildFridge(); buildCounter(); buildProps(); buildLights();
     // everything that never moves or changes colour becomes one mesh
-    const live = new Set([parts.dynamic, ...parts.doors, parts.drawer, parts.cash, ...(parts.gates || []), ...parts.units]);
+    const live = new Set([parts.dynamic, ...parts.doors, parts.drawer, parts.cash, ...(parts.gates || []), ...parts.units, parts.frontWall, parts.nb[-1], parts.nb[1]]);
+    for (const g of [parts.frontWall, parts.nb[-1], parts.nb[1]]) bakeChildren(g);
     for (const u of parts.units) bakeChildren(u); // shelving stays in its own group, so a drop can find it
     bakeAll(scene, (o) => { for (let p = o; p; p = p.parent) if (live.has(p)) return true; return false; });
     // what casts and catches shadows: the room's solid things, and the floor
@@ -272,11 +275,14 @@ function create(canvas) {
     }
     // side walls (painted), the back wall behind the till
     const wallM = mat(dec.walls.wall);
-    for (const s of [-1, 1]) {
-      const w = new THREE.Mesh(new THREE.PlaneGeometry(ROOM.back, ROOM.ceil), wallM);
-      w.rotation.y = s * -Math.PI / 2; w.position.set(s * RW / 2, ROOM.ceil / 2, ROOM.back / 2); scene.add(w);
-      scene.add(at(box(0.04, 0.14, ROOM.back, mat(dec.walls.trim)), s * (RW / 2 - 0.02), 0.07, ROOM.back / 2)); // skirting
-    }
+    // the side walls (a megastore's right wall has an arch through to the annex)
+    const sideWall = (s, z0, z1, y0 = 0, y1 = ROOM.ceil) => {
+      const w = new THREE.Mesh(new THREE.PlaneGeometry(z1 - z0, y1 - y0), wallM);
+      w.rotation.y = s * -Math.PI / 2; w.position.set(s * RW / 2, (y0 + y1) / 2, (z0 + z1) / 2); scene.add(w);
+      if (!y0) scene.add(at(box(0.04, 0.14, z1 - z0, mat(dec.walls.trim)), s * (RW / 2 - 0.02), 0.07, (z0 + z1) / 2)); // skirting
+    };
+    sideWall(-1, 0, ROOM.back);
+    if (r.b.tier >= 2) { const [a0, a1] = L.ANNEX.arch; sideWall(1, 0, a0); sideWall(1, a1, ROOM.back); sideWall(1, a0, a1, 2.7, ROOM.ceil); buildAnnex(); } else sideWall(1, 0, ROOM.back);
     const backW = new THREE.Mesh(new THREE.PlaneGeometry(RW, ROOM.ceil), wallM); backW.rotation.y = Math.PI; backW.position.set(0, ROOM.ceil / 2, ROOM.back); scene.add(backW);
     // decor on the side walls: a poster, a fire extinguisher, an exit sign, an escalator in a megastore
     const poster = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 1), new THREE.MeshBasicMaterial({ map: canvasTex(140, 100, (g) => { const gr = g.createLinearGradient(0, 0, 140, 100); gr.addColorStop(0, '#ff2a6d'); gr.addColorStop(1, '#05d9e8'); g.fillStyle = gr; g.fillRect(0, 0, 140, 100); g.fillStyle = '#fff'; g.font = '900 22px system-ui'; g.textAlign = 'center'; g.fillText('NEON CITY', 70, 58); }) }));
@@ -284,13 +290,12 @@ function create(canvas) {
     scene.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.5, 10), mat('#d61e1e')), RW / 2 - 0.12, 0.35, 4));
     const exit = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.25), new THREE.MeshBasicMaterial({ map: signTex('EXIT', { w: 128, h: 54, bg: '#16a34a', color: '#fff' }) }));
     exit.rotation.y = -Math.PI / 2; exit.position.set(RW / 2 - 0.02, 3.2, 2); scene.add(exit);
-    if (r.b.tier >= 2) { // escalator up to level 2
-      // stairs up the right-hand wall
-      for (let i = 0; i < 12; i++) scene.add(at(box(1.1, 0.25 * (i + 1), 0.32, mat(i % 2 ? '#9aa0b5' : '#aab0c4')), RW / 2 - 0.6, 0.125 * (i + 1), 8.4 - i * 0.32));
-      const lv = new THREE.Mesh(new THREE.PlaneGeometry(1, 0.3), new THREE.MeshBasicMaterial({ map: signTex('⬆ LEVEL 2', { w: 256, h: 72, bg: '#05d9e8', color: '#0b0221' }) }));
-      lv.rotation.y = -Math.PI / 2; lv.position.set(RW / 2 - 0.03, 3.3, 6); scene.add(lv);
+    if (r.b.tier >= 2) { // a sign over the arch
+      const lv = new THREE.Mesh(new THREE.PlaneGeometry(1.7, 0.36), new THREE.MeshBasicMaterial({ map: signTex('ANNEX · ⬆ LEVEL 2', { w: 320, h: 68, bg: '#05d9e8', color: '#0b0221' }) }));
+      lv.rotation.y = -Math.PI / 2; lv.position.set(RW / 2 - 0.03, 3.1, (L.ANNEX.arch[0] + L.ANNEX.arch[1]) / 2); scene.add(lv);
     }
     // the front wall: bricks around two big windows and the door
+    const frontFrom = scene.children.length;
     const brick = canvasTex(128, 64, (g) => {
       g.fillStyle = '#26102a'; g.fillRect(0, 0, 128, 64);
       const shades = ['#5a1f45', '#4e1a3d', '#63244c', '#541c41'];
@@ -370,6 +375,35 @@ function create(canvas) {
       const s = new THREE.Mesh(new THREE.PlaneGeometry(b - a, y1 - y0), new THREE.MeshLambertMaterial({ map: canvasTex(32, 64, (g) => { g.fillStyle = '#8a8fa0'; g.fillRect(0, 0, 32, 64); g.fillStyle = 'rgba(0,0,0,.3)'; for (let y = 0; y < 64; y += 6) g.fillRect(0, y, 32, 2); }, [1, (y1 - y0) / 0.3]) }));
       s.userData = { top: y1, h: y1 - y0, x: (a + b) / 2 }; scene.add(s); return s;
     });
+    // everything on the front wall goes in one group, so it can be cut away when you look in from the street
+    parts.frontWall = new THREE.Group();
+    for (const o of scene.children.slice(frontFrom)) if (o !== mat2) parts.frontWall.add(o);
+    scene.add(parts.frontWall);
+  }
+
+  // ---------- a megastore's annex: a second room with Level 2 above its front half, and stairs ----------
+  function buildAnnex() {
+    const a = L.ANNEX, dec = run.decor, wallM = mat(dec.walls.wall), H2 = 6.2, cx = (a.X0 + a.X1) / 2;
+    const fl = new THREE.Mesh(new THREE.PlaneGeometry(a.X1 - a.X0, a.Z1 - a.Z0), parts.floor.material); fl.rotation.x = -Math.PI / 2; fl.position.set(cx, 0.001, (a.Z0 + a.Z1) / 2); scene.add(fl); parts.annexFloor = fl;
+    // walls: the far side, the front and the back
+    const far = new THREE.Mesh(new THREE.PlaneGeometry(a.Z1 - a.Z0, H2), wallM); far.rotation.y = -Math.PI / 2; far.position.set(a.X1, H2 / 2, (a.Z0 + a.Z1) / 2); scene.add(far);
+    const front = new THREE.Mesh(new THREE.PlaneGeometry(a.X1 - a.X0, H2), wallM); front.position.set(cx, H2 / 2, a.Z0); scene.add(front);
+    const back = new THREE.Mesh(new THREE.PlaneGeometry(a.X1 - a.X0, H2), wallM); back.rotation.y = Math.PI; back.position.set(cx, H2 / 2, a.Z1); scene.add(back);
+    // the outside of the annex wall above the main shop's wall
+    const top = new THREE.Mesh(new THREE.PlaneGeometry(a.Z1 - a.Z0, H2 - ROOM.ceil), wallM); top.rotation.y = -Math.PI / 2; top.position.set(a.X0, (H2 + ROOM.ceil) / 2, (a.Z0 + a.Z1) / 2); scene.add(top);
+    // Level 2: a deck over the front of the annex, a glass rail along its edge, the stairs up the far side
+    const [z0, z1] = a.l2;
+    scene.add(at(box(a.X1 - a.X0, 0.16, z1 - z0, mat('#3b2350')), cx, UP_Y - 0.08, (z0 + z1) / 2));
+    const deck = new THREE.Mesh(new THREE.PlaneGeometry(a.X1 - a.X0, z1 - z0), parts.floor.material); deck.rotation.x = -Math.PI / 2; deck.position.set(cx, UP_Y + 0.005, (z0 + z1) / 2); scene.add(deck);
+    const rail = new THREE.Mesh(new THREE.PlaneGeometry(a.X1 - a.X0 - 0.9, 0.9), new THREE.MeshBasicMaterial({ color: '#9fdcff', transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false }));
+    rail.position.set(cx - 0.45, UP_Y + 0.45, z1); scene.add(rail);
+    scene.add(at(box(a.X1 - a.X0 - 0.9, 0.05, 0.06, mat('#c9cdd8')), cx - 0.45, UP_Y + 0.92, z1));
+    const st = a.stair, n = 12, run2 = (st.Z0 - st.Z1) / n;
+    for (let i = 0; i < n; i++) scene.add(at(box(0.8, UP_Y * (i + 1) / n, run2, mat(i % 2 ? '#9aa0b5' : '#aab0c4')), st.X, (UP_Y * (i + 1) / n) / 2, st.Z0 - run2 * (i + 0.5)));
+    const l2 = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.32), new THREE.MeshBasicMaterial({ map: signTex('LEVEL 2', { w: 256, h: 60, bg: '#0b0221', color: '#05d9e8', border: '#05d9e8' }) }));
+    l2.position.set(cx, UP_Y + 1.9, z0 + 0.02); scene.add(l2);
+    // lights: one over the annex floor, one over Level 2
+    for (const [y, z] of [[2.7, 6.6], [UP_Y + 2.4, 2.4]]) { const l = new THREE.PointLight('#ffd9a0', 7, 8, 1.3); l.position.set(cx, y, z); scene.add(l); (parts.annexLights = parts.annexLights || []).push(l); }
   }
 
   // ---------- outside: pavement, road, buildings, the rival shop ----------
@@ -383,12 +417,15 @@ function create(canvas) {
     const far = new THREE.Mesh(new THREE.PlaneGeometry(60, 4), mat('#7a7486')); far.rotation.x = -Math.PI / 2; far.position.set(0, 0.01, -17); scene.add(far);
     // the ground everywhere, and the shops either side of ours (seen from above: their roofs)
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(90, 90), mat('#5f5a6a')); ground.rotation.x = -Math.PI / 2; ground.position.set(0, -0.02, 0); scene.add(ground);
+    parts.nb = { [-1]: new THREE.Group(), [1]: new THREE.Group() };
+    scene.add(parts.nb[-1], parts.nb[1]);
     for (const sx of [-1, 1]) for (let i = 0; i < 3; i++) {
-      const w = 7 + i, x = sx * (RW / 2 + 0.15 + w / 2 + i * 7.2), h = 4.4 + ((i * 7 + (sx > 0 ? 3 : 0)) % 4) * 0.5;
-      scene.add(at(box(w, h, 14, mat(['#3a2f4a', '#43354f', '#352a44'][i])), x, h / 2, 6.4));
-      scene.add(at(box(w - 0.4, 0.2, 13.6, mat('#2a2238')), x, h + 0.1, 6.4));
-      scene.add(at(box(1.2, 0.7, 1, mat('#8a8fa0')), x - sx * 1.2, h + 0.55, 4 + i));
-      scene.add(at(box(w, 0.6, 0.1, mat(['#ff2a6d', '#05d9e8', '#ffd23f'][(i + (sx > 0)) % 3])), x, 3.4, -0.6));
+      const nb = parts.nb[sx];
+      const w = 7 + i, x = sx * (RW / 2 + 0.15 + w / 2 + i * 7.2) + (sx > 0 && run.b.tier >= 2 ? 4.7 : 0), h = 4.4 + ((i * 7 + (sx > 0 ? 3 : 0)) % 4) * 0.5;
+      nb.add(at(box(w, h, 14, mat(['#3a2f4a', '#43354f', '#352a44'][i])), x, h / 2, 6.4));
+      nb.add(at(box(w - 0.4, 0.2, 13.6, mat('#2a2238')), x, h + 0.1, 6.4));
+      nb.add(at(box(1.2, 0.7, 1, mat('#8a8fa0')), x - sx * 1.2, h + 0.55, 4 + i));
+      nb.add(at(box(w, 0.6, 0.1, mat(['#ff2a6d', '#05d9e8', '#ffd23f'][(i + (sx > 0)) % 3])), x, 3.4, -0.6));
     }
     // buildings across the road, with windows that light up at night
     parts.winMats = [];
@@ -433,9 +470,13 @@ function create(canvas) {
 
   // ---------- shelving and the products on it ----------
   function unitGeom(u) {
+    if (u.m) { // the annex and Level 2: laid out in metres
+      const m = u.m, h = m.wall ? 1.45 : 1.55, depth = m.wall ? 0.5 : 0.85, z = m.Z - depth / 2;
+      return { x0: m.X0, x1: m.X1, w: m.X1 - m.X0, h, depth, z, front: m.Z, back: m.Z - depth, wall: m.wall, y0: u.zone === 'up' ? UP_Y : 0, dx: u.dx || 0 };
+    }
     const wall = u.wall, x0 = xOf(u.x0, u.base), x1 = xOf(u.x1, u.base);
     const h = wall ? 1.45 : 1.55, depth = wall ? 0.5 : 0.85, z = wall ? 0.32 : zOf(u.base) - depth / 2;
-    return { x0, x1, w: x1 - x0, h, depth, z, front: z + depth / 2, back: z - depth / 2, wall };
+    return { x0, x1, w: x1 - x0, h, depth, z, front: z + depth / 2, back: z - depth / 2, wall, y0: 0, dx: 0 };
   }
   const shelfH = (gm, row) => 0.14 + row * ((gm.h - 0.2) / 3);
   function buildUnits() {
@@ -469,6 +510,7 @@ function create(canvas) {
         t.position.set(clamp(xOf(ts.x, u.base), gm.x0 + 0.25, gm.x1 - 0.25), shelfH(gm, ts.row) - 0.07, gm.front + 0.012); g.add(t);
       }
       g.userData = { ui, gm, tag, tagText: '' };
+      g.position.y = gm.y0; // Level 2 shelves stand on the upper floor
       scene.add(g);
       return g;
     });
@@ -494,7 +536,7 @@ function create(canvas) {
       if (sl.n <= 0) continue;
       const u = L.UNITS[sl.u], gm = unitGeom(u), cols = u.cols, colW = gm.w / cols, rowH = (gm.h - 0.2) / 3;
       const k = Math.min((colW * 0.42) / parts.packShape.w, (rowH * 0.78) / parts.packShape.h);
-      const vis = clamp(Math.ceil(Math.sqrt(sl.n / r.cap) * 6), 1, 6), x = xOf(sl.x, u.base), y = shelfH(gm, sl.row) + 0.015;
+      const vis = clamp(Math.ceil(Math.sqrt(sl.n / r.cap) * 6), 1, 6), x = xOf(sl.x, u.base) - gm.dx, y = gm.y0 + shelfH(gm, sl.row) + 0.015;
       const pop = sl.pop > 0 ? 1 + sl.pop * 1.2 : 1;
       for (let i = 0; i < vis; i++) {
         const f = i % 2, d = Math.floor(i / 2), step = Math.min(0.14, (gm.depth / 2 - 0.05) / 3);
@@ -574,12 +616,28 @@ function create(canvas) {
   // ---------- props ----------
   function buildProps() {
     parts.dynamic = new THREE.Group(); scene.add(parts.dynamic);
-    // the stock pile on its pallet
-    const [px, pz] = [xOf(L.PILE.x, L.PILE.y), zOf(L.PILE.y)];
-    scene.add(at(box(1.3, 0.12, 0.9, mat('#6b4a2a')), px, 0.06, pz));
     parts.boxGeo = new THREE.BoxGeometry(0.5, 0.36, 0.42);
     parts.boxMat = [mat('#a8713a'), mat('#a8713a'), mat('#c68d4f'), mat('#a8713a'), new THREE.MeshLambertMaterial({ map: canvasTex(64, 48, (g) => { g.fillStyle = '#a8713a'; g.fillRect(0, 0, 64, 48); g.fillStyle = '#e2c08a'; g.fillRect(28, 0, 8, 48); art.pack(g, run.b.good, 14, 44, 30, 0, 1); }) }), mat('#a8713a')];
-    parts.pileBoxes = [];
+    // the stockroom: a metal rack bay for each line, its name on top and a light (green, amber when low, flashing red when empty)
+    parts.bays = L.lines.map((name, i) => {
+      const g = new THREE.Group(), steel = mat('#8a90a2'), col = ['#05d9e8', '#ff2a6d', '#ffd23f'][i];
+      for (const x of [-0.25, 0.25]) for (const z of [-0.24, 0.24]) g.add(at(box(0.04, 1.5, 0.04, steel), x, 0.75, z));
+      for (const y of [0.08, 0.62, 1.16]) g.add(at(box(0.52, 0.03, 0.5, mat('#5b6273')), 0, y, 0));
+      for (const side of [1, -1]) {
+        const sg = new THREE.Mesh(new THREE.PlaneGeometry(0.62, 0.17), new THREE.MeshBasicMaterial({ map: signTex(name.toUpperCase(), { w: 200, h: 56, bg: '#0b0221', color: col, border: col }) }));
+        sg.position.set(0, 1.62, side * 0.01); if (side < 0) sg.rotation.y = Math.PI; g.add(sg);
+      }
+      const light = at(new THREE.Mesh(new THREE.SphereGeometry(0.05, 10, 8), new THREE.MeshBasicMaterial({ color: '#4ade80' })), 0.27, 1.62, 0);
+      g.add(light);
+      g.position.set(L.BAY_X[i], 0, L.BAY_Z); scene.add(g);
+      return { g, light, boxes: [] };
+    });
+    // the back door, and the yard behind the shop where the van parks
+    scene.add(at(box(1.15, 2.25, 0.08, mat('#3a3f4f')), -4, 1.12, ROOM.back - 0.05));
+    scene.add(at(box(0.08, 0.08, 0.1, mat('#c9cdd8')), -3.6, 1.1, ROOM.back - 0.1));
+    const exit = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.2), new THREE.MeshBasicMaterial({ map: signTex('DELIVERIES', { w: 200, h: 56, bg: '#16a34a', color: '#fff' }) }));
+    exit.rotation.y = Math.PI; exit.position.set(-4, 2.45, ROOM.back - 0.1); scene.add(exit);
+    const yard = new THREE.Mesh(new THREE.PlaneGeometry(14, 7), mat('#55505e')); yard.rotation.x = -Math.PI / 2; yard.position.set(-1, 0.002, ROOM.back + 3.6); scene.add(yard);
     const r = run, plants = r.decor.plants.id;
     const list = L.PROPS.concat(plants === 'jungle' ? L.JUNGLE : []).filter(([k]) => !(k === 'plant' && plants === 'none')).concat(L.holidayProps());
     for (const [kind, x, y] of list) {
@@ -610,6 +668,28 @@ function create(canvas) {
         for (let i = 0; i < 3; i++) g.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), new THREE.MeshBasicMaterial({ color: '#ff5c8a' })), (i - 1) * 0.3, 0.5 + (i % 2) * 0.25, 0));
       }
       g.position.set(X, 0, Z); scene.add(g);
+    }
+    // promotions on the floor, in their line's colour
+    for (const pr of r.promos || []) {
+      const g = new THREE.Group(), col = ['#05d9e8', '#ff2a6d', '#ffd23f'][pr.line], name = (r.lines[pr.line] || '').toUpperCase();
+      const face = (w, h, tex, y, z = 0, ry = 0) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), new THREE.MeshBasicMaterial({ map: tex })); m.position.set(0, y, z); m.rotation.y = ry; g.add(m); };
+      if (pr.id === 'poster') { // an A-board, both sides
+        for (const sd of [1, -1]) { const b = box(0.6, 0.95, 0.04, mat('#2a2a35')); b.position.set(0, 0.47, sd * 0.13); b.rotation.x = sd * 0.16; g.add(b); }
+        const tex = canvasTex(120, 180, (c) => { c.fillStyle = col; c.fillRect(0, 0, 120, 180); c.fillStyle = '#0b0221'; c.textAlign = 'center'; c.font = '900 26px system-ui'; c.fillText('TRY', 60, 50); c.font = '900 20px system-ui'; c.fillText(name.slice(0, 9), 60, 95); c.font = '900 26px system-ui'; c.fillText('NEW!', 60, 150); });
+        face(0.5, 0.8, tex, 0.5, 0.16); face(0.5, 0.8, tex, 0.5, -0.16, Math.PI);
+      } else if (pr.id === 'bogo') { // a round sign on a pole
+        g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 1.5, 8), mat('#9aa0b5')), 0, 0.75, 0));
+        g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.04, 16), mat('#2a2a35')), 0, 0.02, 0));
+        const tex = canvasTex(160, 160, (c) => { c.fillStyle = col; c.beginPath(); c.arc(80, 80, 80, 0, Math.PI * 2); c.fill(); c.fillStyle = '#ff3b3b'; c.beginPath(); c.arc(80, 80, 70, 0, Math.PI * 2); c.fill(); c.fillStyle = '#fff'; c.textAlign = 'center'; c.font = '900 34px system-ui'; c.fillText('2 FOR 1', 80, 82); c.font = '800 18px system-ui'; c.fillText(name.slice(0, 10), 80, 110); });
+        for (const ry of [0, Math.PI]) { const m = new THREE.Mesh(new THREE.CircleGeometry(0.32, 24), new THREE.MeshBasicMaterial({ map: tex })); m.position.set(0, 1.7, ry ? -0.01 : 0.01); m.rotation.y = ry; g.add(m); }
+      } else { // a tasting table with a tray of samples
+        g.add(at(box(0.9, 0.05, 0.5, mat('#6b4423')), 0, 0.8, 0));
+        for (const x of [-0.4, 0.4]) for (const z of [-0.2, 0.2]) g.add(at(box(0.04, 0.8, 0.04, mat('#4a3020')), x, 0.4, z));
+        g.add(at(box(0.92, 0.35, 0.02, new THREE.MeshBasicMaterial({ map: signTex(`TASTE ${name}`, { w: 256, h: 96, bg: '#ffffff', color: col.replace('#ffd23f', '#b38600') }) })), 0, 0.6, 0.26));
+        g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.02, 20), mat('#e8e8f2')), 0, 0.84, 0));
+        for (let i = 0; i < 6; i++) g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.025, 0.06, 8), mat(col)), Math.cos(i) * 0.12, 0.88, Math.sin(i) * 0.12));
+      }
+      g.position.set(xOf(pr.x, pr.y), 0, zOf(pr.y)); scene.add(g);
     }
     // upgrades you can see: self-checkout, coffee corner, security gates
     const up = r.up;
@@ -662,18 +742,22 @@ function create(canvas) {
   // ---------- people ----------
   function syncPeople(dt) {
     const r = run, seen = new Set();
-    const all = r.people.concat([r.clerk], r.van && r.van.courier ? [r.van.courier] : [], r.me ? [r.me] : []);
+    const all = r.people.concat([r.clerk], r.van && r.van.courier ? [r.van.courier] : [], r.me ? [r.me] : [], r.staff.filter((st) => st.body).map((st) => st.body));
     for (const p of all) {
       if (p.kind === 'clerk' && (p.state === 'till' || (p.state === 'toTill' && p.y > L.L.counter - 0.04))) continue;
       seen.add(p);
       let f = figs.get(p);
       if (!f) {
-        f = figure(p.look, { apron: p.kind === 'clerk' || p.kind === 'me' ? r.decor.uniform.color : null });
+        f = figure(p.look, { apron: p.kind === 'clerk' || p.kind === 'me' || p.kind === 'staffer' ? r.decor.uniform.color : null });
         if (p.child) f.scale.setScalar(0.66);
         f.userData.yaw = 0; f.userData.last = null;
         figs.set(p, f); parts.dynamic.add(f);
       }
-      const x = p.x + (p.ox || 0), X = xOf(x, p.y), Z = zOf(p.y);
+      let [X, Y, Z] = wpos(p.x + (p.ox || 0), p.y);
+      if (p.climb) { // on the stairs: between the bottom and the top
+        const st = L.ANNEX.stair, k = clamp(p.climb.t, 0, 1), up = p.climb.up ? k : 1 - k;
+        X = st.X; Z = st.Z0 + 0.3 + (st.Z1 - 0.3 - (st.Z0 + 0.3)) * up; Y = UP_Y * up;
+      }
       // face the way they're walking; otherwise the shelf (back), or the till (front)
       const last = f.userData.last;
       let yaw = f.userData.yaw;
@@ -684,12 +768,23 @@ function create(canvas) {
       let dy = yaw - f.userData.yaw; while (dy > Math.PI) dy -= Math.PI * 2; while (dy < -Math.PI) dy += Math.PI * 2;
       f.userData.yaw += dy * Math.min(1, dt * 10);
       f.rotation.y = f.userData.yaw;
-      f.position.set(X, 0, Z);
+      f.position.set(X, Y, Z);
       // walking: legs and arms swing; a raised hand for help; carrying things
       const moving = p.kind === 'passer' || p.moving || p.state === 'street', sw = moving ? Math.sin(p.phase || 0) * 0.55 : 0;
       f.userData.legL.rotation.x = sw; f.userData.legR.rotation.x = -sw;
       f.userData.armL.rotation.x = -sw * 0.8; f.userData.armR.rotation.x = p.hand ? -Math.PI * 0.9 + Math.sin(r.t * 8) * 0.1 : sw * 0.8;
-      const carrying = ((p.kind === 'clerk' || p.kind === 'me') && p.carry > 0) || (p.kind === 'courier' && p.box > 0);
+      const carrying = ((p.kind === 'clerk' || p.kind === 'me' || p.kind === 'staffer') && p.carry > 0) || (p.kind === 'courier' && p.box > 0 && !p.trolley);
+      const trolley = p.kind === 'courier' && p.trolley;
+      setHeld(f, 'trolley', trolley, () => {
+        const t = new THREE.Group();
+        t.add(at(box(0.62, 0.04, 0.85, mat('#3a3f4f')), 0, 0.14, 0.75));
+        for (const x of [-0.27, 0.27]) for (const z of [0.4, 1.1]) { const w = at(new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.05, 10), mat('#111')), x, 0.07, z); w.rotation.z = Math.PI / 2; t.add(w); }
+        t.add(at(box(0.62, 0.9, 0.04, mat('#3a3f4f')), 0, 0.6, 0.33)); t.add(at(box(0.66, 0.05, 0.05, mat('#ff2a6d')), 0, 1.06, 0.3));
+        t.userData.boxes = [];
+        for (let i = 0; i < 4; i++) { const b = new THREE.Mesh(parts.boxGeo, parts.boxMat); b.position.set(i % 2 ? 0.14 : -0.14, 0.34 + Math.floor(i / 2) * 0.37, 0.8); b.scale.setScalar(0.55 + (i % 2) * 0.05); t.add(b); t.userData.boxes.push(b); }
+        return t;
+      });
+      if (trolley) { f.userData.armL.rotation.x = f.userData.armR.rotation.x = -1.0; const tb = f.userData.held_trolley.userData.boxes; tb.forEach((b, i) => { b.visible = p.box > 0 && i < Math.ceil(p.box / Math.max(1, r.cap * 3)) + 1; }); }
       if (carrying) { f.userData.armL.rotation.x = f.userData.armR.rotation.x = -1.2; }
       // looking along the shelf while they browse
       const head = f.userData.head, browsing = ['look', 'consider', 'wait', 'help', 'pick'].includes(p.state);
@@ -717,7 +812,7 @@ function create(canvas) {
   function syncStaff() {
     const r = run, z = parts.counterZ + 1.15, w = parts.counterW;
     const want = [{ key: 'you', look: r.sellerLook, x: 0, show: !(r.away > 0), who: -1 }]
-      .concat(r.staff.map((st, i) => ({ key: 'st' + i, look: st.look, x: [-0.3, 0.3, -0.42, 0.42][i % 4] * w, show: !(st.brk > 0), who: i })))
+      .concat(r.staff.map((st, i) => ({ key: 'st' + i, look: st.look, x: [-0.3, 0.3, -0.42, 0.42][i % 4] * w, show: st.job === 'till' && !(st.brk > 0), who: i })))
       .concat(r.till2 && r.clerk.state === 'till' ? [{ key: 'till2', look: r.clerk.look, x: 0.2 * w, show: true, who: 'till2', apron: r.decor.uniform.color }] : []);
     parts.staffMap = parts.staffMap || new Map();
     const keep = new Set();
@@ -754,6 +849,7 @@ function create(canvas) {
     for (const pl of parts.pools) pl.material.opacity = 0.22 * lights * (0.6 + 0.4 * night);
     if (parts.signGlow) parts.signGlow.material.opacity = (0.08 + 0.5 * night) * (r.power ? 0 : 1);
     parts.openGlow.material.opacity = !r.closed && r.intro <= 0.3 && !r.power ? 0.12 + 0.45 * night : 0;
+    for (const l of parts.annexLights || []) l.intensity = 7 * lights;
     for (const l of parts.lamps) { l.light.intensity = 9 * lights; l.bulb.material.color.set(lights > 0.5 ? '#fff2c4' : '#4a4a40'); }
     for (const wm of parts.winMats) wm.emissiveIntensity = night * 0.9;
     for (const h of parts.streetLamps || []) h.material.color.set(night > 0.1 ? '#fff2c4' : '#8a8a96');
@@ -769,8 +865,12 @@ function create(canvas) {
     if (parts.openState !== open) { parts.openState = open; setMap(parts.openSign, signTex(open ? 'OPEN' : 'CLOSED', { w: 256, h: 72, bg: '#0a0219', color: open ? '#ff5c8a' : '#7a4a5a', glow: open ? '#ff2a6d' : null, border: open ? '#ff2a6d' : '#5a2a3a' })); }
     const sale = L.onSale();
     if (parts.posterState !== sale) { parts.posterState = sale; setMap(parts.poster, canvasTex(160, 100, (g) => { const gr = g.createLinearGradient(0, 0, 0, 100); gr.addColorStop(0, sale ? '#ff3b3b' : '#ffd23f'); gr.addColorStop(1, sale ? '#b80f2e' : '#ff7a00'); g.fillStyle = gr; g.fillRect(0, 0, 160, 100); art.pack(g, r.b.good, 80, 66, 46, 0, 1); g.fillStyle = sale ? '#fff' : '#0b0221'; g.font = '900 20px system-ui'; g.textAlign = 'center'; g.fillText(sale ? 'SALE!' : 'FRESH!', 80, 92); })); }
-    const price = T.shelfPrice(r.s, r.b), label = `${sale ? 'SALE ' : ''}$${price < 100 ? price.toFixed(2) : Math.round(price).toLocaleString()}`;
-    for (const u of parts.units) if (u.userData.tagText !== label) { u.userData.tagText = label; setMap(u.userData.tag, signTex(label, { w: 192, h: 60, bg: sale ? '#ff3b3b' : '#ffd23f', color: sale ? '#fff' : '#0b0221' })); }
+    // each unit's tag shows its line's price (red when that line is on sale)
+    for (const u of parts.units) {
+      const lm = window.NeonShop.linePrice(r.b, r.unitLine[u.userData.ui]), sl = sale || lm < 0.999, price = T.shelfPrice(r.s, r.b) * lm;
+      const label = `${sl ? 'SALE ' : ''}$${price < 100 ? price.toFixed(2) : Math.round(price).toLocaleString()}`;
+      if (u.userData.tagText !== label) { u.userData.tagText = label; setMap(u.userData.tag, signTex(label, { w: 192, h: 60, bg: sl ? '#ff3b3b' : '#ffd23f', color: sl ? '#fff' : '#0b0221' })); }
+    }
     // marquee bulbs and holiday lights twinkle
     if (parts.bulbs) { const c = new THREE.Color(); for (let i = 0; i < 60; i++) parts.bulbs.setColorAt(i, c.set((i + Math.floor(r.t * 8)) % 3 === 0 ? '#fff6c4' : '#5a4a20')); parts.bulbs.instanceColor.needsUpdate = true; }
     if (parts.holLights) { const c = new THREE.Color(); for (let i = 0; i < 70; i++) parts.holLights.setColorAt(i, (i + Math.floor(r.t * 3)) % 4 ? parts.holCols[i % parts.holCols.length] : c.set('#333')); parts.holLights.instanceColor.needsUpdate = true; }
@@ -800,9 +900,14 @@ function create(canvas) {
     syncPile(); syncVehicles(); syncFloorItems();
   }
   function syncPile() {
-    const r = run, n = Math.min(12, Math.ceil(r.pile / Math.max(1, r.cap * 6))), [px, pz] = [xOf(L.PILE.x, L.PILE.y), zOf(L.PILE.y)];
-    while (parts.pileBoxes.length < n) { const b = new THREE.Mesh(parts.boxGeo, parts.boxMat); const i = parts.pileBoxes.length; b.position.set(px + ((i % 4) % 2 - 0.5) * 0.52, 0.3 + Math.floor(i / 4) * 0.37, pz + (Math.floor((i % 4) / 2) - 0.5) * 0.44); scene.add(b); parts.pileBoxes.push(b); }
-    while (parts.pileBoxes.length > n) scene.remove(parts.pileBoxes.pop());
+    const r = run;
+    parts.bays.forEach((bay, line) => {
+      const left = r.bay[line] || 0, n = Math.min(6, Math.ceil(left / Math.max(1, r.cap * 2)));
+      while (bay.boxes.length < n) { const b = new THREE.Mesh(parts.boxGeo, parts.boxMat), i = bay.boxes.length; b.scale.setScalar(0.42); b.castShadow = true; b.position.set(i % 2 ? 0.11 : -0.11, 0.17 + Math.floor(i / 2) * 0.54, 0); bay.g.add(b); bay.boxes.push(b); }
+      while (bay.boxes.length > n) bay.g.remove(bay.boxes.pop());
+      const low = left < r.cap * 3;
+      bay.light.material.color.set(left <= 0 ? (Math.sin(r.t * 8) > 0 ? '#ff3b3b' : '#4a1010') : low ? '#ffb020' : '#4ade80');
+    });
     // boxes being dropped
     parts.falling = parts.falling || [];
     while (parts.falling.length < r.boxes.length) { const b = new THREE.Mesh(parts.boxGeo, parts.boxMat); scene.add(b); parts.falling.push(b); }
@@ -837,7 +942,7 @@ function create(canvas) {
       scene.add(parts.van);
     }
     if (!r.van && parts.van) { scene.remove(parts.van); dropFig(parts.van); parts.van = null; }
-    if (parts.van) parts.van.position.set(xOf(r.van.x, 0.16), 0, -10.2);
+    if (parts.van) { parts.van.position.set((r.van.x - L.VAN_X) * 18 - 2.5, 0, ROOM.back + 2.4); parts.van.rotation.y = Math.PI; } // round the back
     // a parade, the police
     parts.parade = parts.parade || [];
     if (r.parade.length && !parts.parade.length) for (const m of r.parade) { const f = figure(m.look); f.add(at(box(0.6, 0.4, 0.02, mat(m.flag)), 0.4, 2.2, 0)); scene.add(f); parts.parade.push(f); }
@@ -863,19 +968,21 @@ function create(canvas) {
 
   // ---------- camera ----------
   const BASE = { pos: new THREE.Vector3(0, 9.4, 14.4), look: new THREE.Vector3(0, 0, 4.6) };
-  let followK = 0, fx = 0, fz = 4.6;
+  let followK = 0, fx = 0, fy = 0, fz = 4.6;
   function placeCamera(W, H, dt) {
     camera.aspect = W / H;
     // fit the room's width on a narrow phone screen
     camera.fov = clamp(48 / Math.min(1, (W / H) / 0.75), 40, 64);
     const r = run, tgt = BASE.look.clone().add(new THREE.Vector3(view.tx, 0, view.tz));
-    let pos = BASE.pos.clone().add(new THREE.Vector3(view.tx, 0, view.tz));
+    // turned round the target (drag to go all the way round) and tilted up or down
+    const base = BASE.pos.clone().sub(BASE.look), D = base.length(), el = clamp(Math.asin(base.y / D) + view.tilt, 0.28, 1.45), az = Math.atan2(base.x, base.z) + view.yaw;
+    let pos = tgt.clone().add(new THREE.Vector3(D * Math.cos(el) * Math.sin(az), D * Math.sin(el), D * Math.cos(el) * Math.cos(az)));
     let dist = view.dist;
     // walking the floor: the camera follows you, a little closer in
     followK += ((r.me ? 1 : 0) - followK) * Math.min(1, dt * 3);
-    if (r.me) { const mx = xOf(r.me.x, r.me.y), mz = zOf(r.me.y); fx += (mx - fx) * Math.min(1, dt * 4); fz += (mz - fz) * Math.min(1, dt * 4); }
+    if (r.me) { const [mx, my, mz] = wpos(r.me.x, r.me.y); fx += (mx - fx) * Math.min(1, dt * 4); fy += ((r.me.climb ? UP_Y / 2 : my) - fy) * Math.min(1, dt * 3); fz += (mz - fz) * Math.min(1, dt * 4); }
     if (followK > 0.001) {
-      const off = new THREE.Vector3(fx * 0.8, 0, clamp(fz - 1.2, 1, 8) - BASE.look.z).multiplyScalar(followK);
+      const off = new THREE.Vector3(fx * 0.8, fy, clamp(fz - 1.2, 0, 8) - BASE.look.z).multiplyScalar(followK); // (up to Level 2 with you)
       tgt.add(off); pos.add(off); dist = dist + (Math.min(dist, 0.62) - dist) * followK;
     }
     pos = tgt.clone().add(pos.sub(tgt).multiplyScalar(dist));
@@ -887,6 +994,9 @@ function create(canvas) {
     }
     camera.position.copy(pos); camera.lookAt(tgt);
     camera.updateProjectionMatrix();
+    // cut away what's between you and the shop: the front wall from the street side, the neighbours from theirs
+    parts.frontWall.visible = pos.z > 0.6 || pos.y > 14;
+    parts.nb[-1].visible = pos.x > -RW / 2 - 0.5; parts.nb[1].visible = pos.x < RW / 2 + (run.b.tier >= 2 ? 5 : 0.5);
   }
 
   let lastW = 0, lastH = 0, lastDpr = 0;
@@ -906,8 +1016,9 @@ function create(canvas) {
   const v3 = new THREE.Vector3();
   // a point in the shop (flat coords, h metres up) on screen: [x, y, pixels per metre]
   function project(x, y, h = 0) {
-    v3.set(xOf(x, y), h, zOf(y)).project(camera);
-    const W = canvas.clientWidth, H = canvas.clientHeight, d = camera.position.distanceTo(new THREE.Vector3(xOf(x, y), h, zOf(y)));
+    const [X, Y, Z] = wpos(x, y);
+    v3.set(X, Y + h, Z).project(camera);
+    const W = canvas.clientWidth, H = canvas.clientHeight, d = camera.position.distanceTo(new THREE.Vector3(X, Y + h, Z));
     return [(v3.x + 1) / 2 * W, (1 - v3.y) / 2 * H, H / (2 * Math.tan((camera.fov * Math.PI) / 360) * d), v3.z < 1];
   }
   function cast(sx, sy) {
@@ -916,7 +1027,12 @@ function create(canvas) {
     return ray;
   }
   // where on the shop floor a screen point is, in flat coords
+  const upPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -UP_Y);
   function toFlatAt(sx, sy) {
+    if (run && run.b.tier >= 2) { // Level 2's floor first
+      const a = L.ANNEX, up = cast(sx, sy).ray.intersectPlane(upPlane, new THREE.Vector3());
+      if (up && up.x > a.X0 && up.x < a.X1 && up.z > a.l2[0] && up.z < a.l2[1]) return toFlat(up.x + UP_DX, up.z);
+    }
     const hit = cast(sx, sy).ray.intersectPlane(floorPlane, new THREE.Vector3());
     return hit ? toFlat(hit.x, hit.z) : null;
   }
@@ -928,14 +1044,14 @@ function create(canvas) {
   // where a shelf spot is on screen (for goods flying into a basket)
   function slotOnScreen(sl) {
     const u = L.UNITS[sl.u], gm = unitGeom(u);
-    v3.set(xOf(sl.x, u.base), shelfH(gm, sl.row) + 0.15, gm.front).project(camera);
+    v3.set(xOf(sl.x, u.base) - gm.dx, gm.y0 + shelfH(gm, sl.row) + 0.15, gm.front).project(camera);
     return [(v3.x + 1) / 2 * canvas.clientWidth, (1 - v3.y) / 2 * canvas.clientHeight];
   }
   // a shelving unit's outline on screen [x0, y0, x1, y1], for showing where a box will go
   function unitRect(ui) {
     const gm = unitGeom(L.UNITS[ui]), W = canvas.clientWidth, H = canvas.clientHeight;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (const x of [gm.x0, gm.x1]) for (const y of [0, gm.h]) for (const z of [gm.front, gm.back]) {
+    for (const x of [gm.x0, gm.x1]) for (const y of [gm.y0, gm.y0 + gm.h]) for (const z of [gm.front, gm.back]) {
       v3.set(x, y, z).project(camera);
       const sx = (v3.x + 1) / 2 * W, sy = (1 - v3.y) / 2 * H;
       x0 = Math.min(x0, sx); y0 = Math.min(y0, sy); x1 = Math.max(x1, sx); y1 = Math.max(y1, sy);
@@ -946,15 +1062,20 @@ function create(canvas) {
   const zoomLevel = () => 1 / view.dist;
   // how much the camera is looking out at the street (for the street noise): near the windows and zoomed in
   const streetness = () => clamp((3 - (BASE.look.z + view.tz)) / 3, 0, 1) * clamp((1 - view.dist) / 0.4, 0, 1);
+  // slide the view (two fingers): along the screen, whichever way round you're looking
   function pan(dx, dy) {
-    if (view.dist > 0.98) return;
-    const k = 0.012 * view.dist * 2;
-    view.tx = clamp(view.tx - dx * k, -3.5, 3.5); view.tz = clamp(view.tz - dy * k, -6, 1);
+    const k = 0.012 * view.dist * 2, mx = -dx * k, mz = -dy * k, c = Math.cos(view.yaw), sn = Math.sin(view.yaw);
+    view.tx = clamp(view.tx + mx * c + mz * sn, -4, run && run.b.tier >= 2 ? 8 : 4); view.tz = clamp(view.tz - mx * sn + mz * c, -6, 5);
   }
-  function resetView() { view.dist = 1; view.tx = 0; view.tz = 0; }
+  // turn round the shop (one finger): sideways all the way round, up and down a little
+  function orbit(dx, dy) { view.yaw -= dx * 0.009; view.tilt = clamp(view.tilt + dy * 0.004, -0.5, 0.7); }
+  const rotated = () => Math.abs(Math.sin(view.yaw / 2)) > 0.01 || Math.abs(view.tilt) > 0.01 || Math.abs(view.tx) + Math.abs(view.tz) > 0.05;
+  function resetView() { view.dist = 1; view.tx = 0; view.tz = 0; view.yaw = 0; view.tilt = 0; }
+  // a picture of the shop as it is now (photo mode)
+  function snapshot() { renderer.render(scene, camera); return canvas.toDataURL('image/jpeg', 0.92); }
   const zoomed = () => view.dist < 0.98;
 
-  return { info, _shadows: () => shadowsOn, _mem: () => renderer.info.memory, _scene: () => scene, _camera: camera, attach, detach, render, project, toFlatAt, unitAt, unitRect, slotOnScreen, zoom, zoomLevel, streetness, pan, resetView, zoomed, xOf, zOf };
+  return { info, _shadows: () => shadowsOn, _mem: () => renderer.info.memory, _scene: () => scene, _camera: camera, attach, detach, render, project, toFlatAt, unitAt, unitRect, slotOnScreen, zoom, zoomLevel, streetness, orbit, rotated, snapshot, pan, resetView, zoomed, xOf, zOf };
 }
 
 window.NeonShop3D = { supported, create };

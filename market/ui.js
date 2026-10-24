@@ -265,6 +265,7 @@
     const nextName = (b.kind === 'stall' ? T.STALLS : T.FACTORIES)[b.tier + 1]?.name;
     return `<div class="card"><h3>${b.kind === 'stall' ? '🏪' : '🏭'} ${tier.name} · ${G.icon} ${G.name}<span class="muted" style="margin-left:auto;font-size:12px">${T.D[b.district].icon} ${T.D[b.district].name}</span></h3>
       <p>${status}</p>
+      ${b.kind === 'stall' && b.requests && b.requests.length ? `<p class="muted" style="margin-top:6px">📝 Orders: ${b.requests.map((q) => `${esc(q.name)} ${q.qty}× ${esc(NeonShop.plan.lineNames(b)[q.line] || '')} by day ${q.due}`).join(' · ')}. Run the shop that day so they can collect.</p>` : ''}
       ${here && b.kind === 'stall' && T.shopDayAvailable(s, b) ? `<button class="btn primary shopgo" data-act="shop:${b.id}">🏪 Open shop and serve today</button>` : ''}
       ${here && b.kind === 'stall' && b.servedDay === s.day ? '<p class="muted" style="margin-top:8px">You ran this shop today. Come back tomorrow.</p>' : ''}
       <div class="btns">
@@ -273,6 +274,7 @@
         ${b.kind === 'stall' ? `<button class="btn" data-act="staff:${b.id}">👥 Staff (${T.staffOf(b).length}/${T.STAFF_SLOTS[b.tier]})</button>` : ''}
         ${b.kind === 'stall' ? `<button class="btn" data-act="supply:${b.id}">📦 Order stock</button>` : ''}
         ${b.kind === 'stall' ? `<button class="btn" data-act="arrange:${b.id}">🧱 Arrange shop</button>` : ''}
+        ${b.kind === 'stall' && b.history && b.history.length ? `<button class="btn" data-act="report:${b.id}">📊 Report</button>` : ''}
         ${here && b.kind === 'stall' ? `<button class="btn cyan" data-act="restock:${b.id}">Restock from cargo (${s.cargo[b.good] || 0})</button>` : ''}
         ${here && b.stock > 0 ? `<button class="btn" data-act="collect:${b.id}">Load into cargo</button>` : ''}
         ${up ? `<button class="btn primary" data-act="upgrade:${b.id}">Upgrade to ${nextName} · ${money(up)}</button>` : ''}
@@ -410,6 +412,7 @@
     else if (act === 'staff') openStaff(b);
     else if (act === 'supply') openSupplies(b);
     else if (act === 'arrange') openArrange(b);
+    else if (act === 'report') openReport(b);
     else if (act === 'upgrade') result(T.upgradeBusiness(s, id), 'Upgraded!');
     else if (act === 'product') openProductPicker('Change product', (g) => { if (result(T.setProduct(s, id, g), `Now ${b.kind === 'stall' ? 'selling' : 'making'} ${T.G[g].name}`)) closeSheet(); }, b.kind);
     else if (act === 'sellbiz') {
@@ -424,6 +427,13 @@
   const priceLine = (b) => {
     const mult = b.mult || T.RETAIL;
     return `<b class="num">${price2(T.shelfPrice(s, b))}</b> <small class="muted">${Math.round(mult * 100)}% of wholesale · ${Math.round(T.willingShare(mult) * 100)}% will pay</small>`;
+  };
+  // the shop's price, or one line's price (as a share of it)
+  let priceFor = 'all';
+  const shopPriceLine = (b) => {
+    if (priceFor === 'all') return priceLine(b);
+    const lm = NeonShop.linePrice(b, priceFor), mult = (b.mult || T.RETAIL) * lm, name = NeonShop.plan.lineNames(b)[priceFor];
+    return `<b class="num">${price2(T.shelfPrice(s, b) * lm)}</b> <small class="muted">${esc(name)}: ${lm === 1 ? 'same as the shop' : `${lm < 1 ? '' : '+'}${Math.round((lm - 1) * 100)}%`} · ${Math.round(T.willingShare(mult) * 100)}% will pay</small>`;
   };
   const nudgePrice = (b, d) => T.setShelfPrice(s, b.id, Math.round(((b.mult || T.RETAIL) + d) * 20) / 20);
   function openPrice(b) {
@@ -442,6 +452,7 @@
 
   // ---------- hands-on shop day ----------
   function openShop(b) {
+    priceFor = 'all';
     if (!window.NeonShop) return;
     const view = $('shopView'), G = T.G[b.good];
     view.classList.remove('hidden');
@@ -452,28 +463,38 @@
       if (run) takings = run.revenue;
       const si = NeonShop.stockInfo();
       const acts = NeonShop.actions(), goal = NeonShop.goal();
-      const key = [NeonShop.clock(), Math.round(takings), b.stock, si && si.shelves, b.mult, NeonShop.frontWaiting(), run && run.till2, NeonShop.pendingReturn(), run && run.zoom.z > 1.01,
-        NeonShop.walking(), NeonShop.canWalk(), acts.map((a) => a.id + a.label).join(), goal && goal.prog + goal.done + goal.failed].join('|');
+      const key = [NeonShop.clock(), Math.round(takings), b.stock, si && si.shelves, b.mult, priceFor, JSON.stringify(b.linePrice), NeonShop.frontWaiting(), run && run.till2, NeonShop.pendingReturn(), run && run.zoom.z > 1.01,
+        NeonShop.walking(), NeonShop.canWalk(), JSON.stringify(NeonShop.request()), JSON.stringify(NeonShop.night()), acts.map((a) => a.id + a.label).join(), goal && goal.prog + goal.done + goal.failed].join('|');
       if (key === lastKey) return;
       lastKey = key;
       $('shopClock').textContent = NeonShop.clock();
       $('shopTake').textContent = money(takings);
       $('shopStock').textContent = si ? `${si.shelves} · ${b.stock - si.shelves}` : b.stock;
-      $('shopPrice').innerHTML = priceLine(b);
+      $('shopPrice').innerHTML = shopPriceLine(b);
+      const names = NeonShop.plan.lineNames(b);
+      $('lineChips').classList.toggle('hidden', names.length < 2);
+      $('lineChips').innerHTML = [['all', 'All lines']].concat(names.map((n, i) => [i, `${n}${NeonShop.linePrice(b, i) < 0.999 ? ' 🏷️' : ''}`])).map(([k, n]) => `<button data-pfor="${k}" class="${String(priceFor) === String(k) ? 'on' : ''}">${esc(n)}</button>`).join('');
       $('shopServe').classList.toggle('ready', NeonShop.frontWaiting());
       $('shopTill').classList.toggle('on', !!(run && run.till2));
       $('shopReturn').classList.toggle('hidden', !NeonShop.pendingReturn());
+      const rq = NeonShop.request();
+      $('shopRequest').classList.toggle('hidden', !rq);
+      if (rq) $('reqText').textContent = `📝 ${rq.name}: ${rq.qty}× ${rq.line} by day ${rq.due}? (+30%)`;
       $('shopZoom').classList.toggle('hidden', !(run && run.zoom.z > 1.01));
+      $('shopZoom').textContent = run && run.r3d ? '🎯' : '🔍 1×';
+      $('shopTeam').classList.toggle('hidden', !(run && run.staff.length));
+      view.classList.toggle('is3d', NeonShop.is3D());
       // out on the floor: what you can do here, and the button back to the till
-      const walking = NeonShop.walking();
-      $('shopWalk').textContent = walking ? '🛎️ Till' : '🚶 Walk';
+      const walking = NeonShop.walking(), night = NeonShop.night();
+      $('shopNight').classList.toggle('hidden', !(night && night.offer));
+      $('shopWalk').textContent = night && night.active ? '🏠 Done' : walking ? '🛎️ Till' : '🚶 Walk';
       $('shopWalk').classList.toggle('on', walking);
-      $('shopWalk').disabled = !NeonShop.canWalk();
+      $('shopWalk').disabled = !(night && night.active) && !NeonShop.canWalk();
       $('shopServe').classList.toggle('away', walking);
       $('shopActs').classList.toggle('hidden', !acts.length);
       $('shopActs').innerHTML = acts.map((a) => `<button class="btn" data-do="${a.id}">${esc(a.label)}</button>`).join('');
       if (goal) {
-        $('shopGoal').textContent = `${goal.done ? '✅' : goal.failed ? '❌' : '🎯'} ${goal.text} · ${goal.prog}`;
+        $('shopGoal').textContent = `${goal.done ? '✅' : goal.failed ? '❌' : goal.night ? '🧹' : '🎯'} ${goal.text} · ${goal.prog}`;
         $('shopGoal').className = `goalpill${goal.done ? ' done' : goal.failed ? ' failed' : ''}`;
       }
       $('cash').textContent = compact(s.cash);
@@ -482,7 +503,7 @@
       canvas: $('shopCanvas'), canvas3d: $('shop3d'),
       onTick: hud,
       onEnd: (sum) => {
-        view.classList.add('hidden');
+        view.classList.add('hidden'); view.classList.remove('photo');
         document.body.classList.remove('noscroll');
         save(); render();
         shopSummary(b, sum);
@@ -491,6 +512,10 @@
     if (!res.ok) { view.classList.add('hidden'); document.body.classList.remove('noscroll'); toast(res.msg); return; }
     save();
     hud();
+    // first time in 3D: how to look round; first time in a megastore: where the annex is
+    const once = (k, msg) => { if (!store.get(k, false)) { store.set(k, true); setTimeout(() => toast(msg), 1800); } };
+    if (NeonShop.is3D()) once('neonTycoon.hint360', '👆 Drag to turn the shop all the way round · two fingers slide · pinch to zoom');
+    if (NeonShop.is3D() && b.tier >= 2) once('neonTycoon.hintAnnex', '🏬 Your annex is through the arch on the right, with stairs up to Level 2');
   }
 
   function shopSummary(b, m) {
@@ -504,6 +529,7 @@
     if (m.holiday) tips.push(`${m.holiday.icon} It's ${m.holiday.name}: some goods are in demand.`);
     if (m.event === 'power') tips.push('⚡ There was a power cut today: card payments and the self-checkout were down.');
     if (m.staff && m.staff.some((x) => x.morale < 30)) tips.push('😫 Some of your staff are worn out. A bonus or a quieter day helps, or they may quit.');
+    if (m.ordersLost && m.ordersLost.length) tips.push(`💔 ${m.ordersLost.join(', ')} stopped coming: their order wasn't ready in time.`);
     if (m.stolen) tips.push(`🚨 ${m.stolen} went out the door unpaid. Tap shoplifters (👀) before they reach the door, or fit security gates.`);
     const g = m.goal;
     if (g && g.met) store.set('neonDash.wallet', store.get('neonDash.wallet', 0) + g.reward);
@@ -520,6 +546,9 @@
         ${m.returns ? `<span>Returns sorted</span><span>${m.good} happy · ${m.bad} refused</span>` : ''}
         ${m.newRegulars || m.regulars ? `<span>Regulars</span><span>${m.regulars}${m.newRegulars ? ` (+${m.newRegulars} new)` : ''}</span>` : ''}
         ${m.knocked ? `<span>Knocked off the shelves</span><span>${m.knocked}</span>` : ''}
+        ${m.orders ? `<span>Orders collected</span><span>📝 ${m.orders}</span>` : ''}
+        ${m.nightTotal ? `<span>Night shift</span><span>🧹 ${m.nightDone}/${m.nightTotal} jobs${m.tidy >= 0.8 ? ' · spotless ✨' : ''}</span>` : ''}
+        ${m.openOrders && m.openOrders.length ? `<span>Orders to come</span><span>${m.openOrders.map((q) => `${esc(q.name)} ${q.qty}× ${esc(q.lineName)} · day ${q.due}`).join('<br>')}</span>` : ''}
         ${m.staff && m.staff.length ? `<span>Staff</span><span>${m.staff.map((x) => `${esc(x.name)} ${x.served}`).join(' · ')}</span>` : ''}
         <span>Walked out</span><span>${lost}</span></div>
       ${m.reviews && m.reviews.length ? `<p class="section-title">Today's reviews · <span class="stars">${starStr(m.stars)}</span></p>
@@ -540,9 +569,73 @@
     NeonShop.plan.draw(ctx, W, H, shapes, opts);
   }
 
+  // ---------- the weekly report: the last seven days you ran this shop ----------
+  // chart colours for the lines: the game's cyan, pink and gold, stepped down to read on the dark card (validated)
+  const LINE_INK = ['#0096a6', '#f0306e', '#b88a00'], HOUR_INK = '#7c6cf0';
+  function openReport(b) {
+    const days = (b.history || []).slice(-7), names = days.length ? days[days.length - 1].lines : [];
+    const sum = (f) => days.reduce((a, d) => a + f(d), 0);
+    const met = days.filter((d) => d.goal).length, last = days[days.length - 1] || {};
+    const sold = (d) => d.lineSold.reduce((a, x) => a + x, 0);
+    const tiles = [['🛍️ Sold', sum(sold).toLocaleString()], ['💰 Takings', money(sum((d) => d.revenue))],
+      ['🚨 Stolen', `${sum((d) => d.stolen)} <small>· ${sum((d) => d.caught)} caught</small>`], ['🎯 Goals', `${met}/${days.length}${last.streak > 1 ? ` <small>· 🔥 ${last.streak}</small>` : ''}`]];
+    // sold per day, stacked by line (2px gaps between segments and bars); 🧱 where you changed the layout
+    const W = 320, H = 170, padL = 28, padB = 30, padT = 14, cw = (W - padL - 6) / Math.max(1, days.length), bw = Math.min(30, cw - 6);
+    const max = Math.max(1, ...days.map((d) => d.lineSold.reduce((a, x) => a + x, 0)));
+    const nice = Math.ceil(max / 10) * 10, y = (v) => H - padB - ((H - padB - padT) * v) / nice;
+    let bars = '';
+    days.forEach((d, i) => {
+      const cx = padL + cw * i + cw / 2; let acc = 0;
+      d.lineSold.forEach((n, l) => {
+        if (!n) return;
+        const y0 = y(acc), y1 = y(acc + n), top = acc + n === d.lineSold.reduce((a, x) => a + x, 0);
+        bars += `<path d="${roundTop(cx - bw / 2, y1 + (acc ? 0 : 0), bw, y0 - y1 - (acc ? 2 : 0), top ? 4 : 0)}" fill="${LINE_INK[l]}"/>`;
+        acc += n;
+      });
+      bars += `<text x="${cx}" y="${H - padB + 13}" class="ax" text-anchor="middle">Day ${d.day}</text>`;
+      if (i && d.layout !== days[i - 1].layout) bars += `<text x="${cx}" y="${H - 4}" text-anchor="middle" font-size="11">🧱</text>`;
+      bars += `<rect x="${cx - cw / 2}" y="${padT}" width="${cw}" height="${H - padB - padT}" fill="transparent" data-tip="${i}"/>`;
+    });
+    const grid = [0, nice / 2, nice].map((v) => `<line x1="${padL}" x2="${W - 4}" y1="${y(v)}" y2="${y(v)}" class="grid"/><text x="${padL - 4}" y="${y(v) + 3}" class="ax" text-anchor="end">${v}</text>`).join('');
+    // busiest hours: everything sold, by the hour, across these days
+    const hours = Array.from({ length: 12 }, (_, h) => sum((d) => (d.hours ? d.hours[h] : 0))), hmax = Math.max(1, ...hours), best = hours.indexOf(hmax);
+    const H2 = 120, hw = (W - padL - 6) / 12, y2 = (v) => H2 - 22 - ((H2 - 22 - 16) * v) / hmax;
+    const hbars = hours.map((v, h) => `<path d="${roundTop(padL + hw * h + 1, y2(v), hw - 2, H2 - 22 - y2(v), v ? 3 : 0)}" fill="${HOUR_INK}" opacity="${h === best ? 1 : 0.55}"><title>${9 + h}:00–${10 + h}:00 · ${v} sold</title></path>`
+      + (h % 3 === 0 ? `<text x="${padL + hw * h + hw / 2}" y="${H2 - 8}" class="ax" text-anchor="middle">${9 + h}:00</text>` : '')).join('')
+      + `<text x="${padL + hw * best + hw / 2}" y="${y2(hmax) - 4}" class="lbl" text-anchor="middle">${hmax}</text>`;
+    openSheet(`<h2>📊 ${esc(T.G[b.good].name)} · last ${days.length} shop day${days.length === 1 ? '' : 's'}<button class="close" data-close>✕</button></h2>
+      <div class="tiles">${tiles.map(([k, v]) => `<div class="tile"><small>${k}</small><b>${v}</b></div>`).join('')}</div>
+      <p class="section-title">Sold by line, each day you ran the shop</p>
+      <div class="legend">${names.map((n, l) => `<span><i style="background:${LINE_INK[l]}"></i>${esc(n)}</span>`).join('')}<span class="muted">🧱 layout changed</span></div>
+      <div class="chartbox"><svg viewBox="0 0 ${W} ${H}" class="rchart" role="img" aria-label="Units sold per day by product line">${grid}${bars}</svg><div class="tip hidden" id="repTip"></div></div>
+      <p class="section-title">Busiest hours <span class="muted">· peak ${9 + best}:00–${10 + best}:00</span></p>
+      <div class="chartbox"><svg viewBox="0 0 ${W} ${H2}" class="rchart" role="img" aria-label="Units sold by hour of the day">${hbars}</svg></div>
+      <details class="tablev"><summary>Show as a table</summary><table><tr><th>Day</th>${names.map((n) => `<th>${esc(n)}</th>`).join('')}<th>Takings</th><th>Stolen</th><th>Goal</th></tr>
+        ${days.map((d) => `<tr><td>${d.day}</td>${d.lineSold.map((n) => `<td>${n}</td>`).join('')}<td>${money(d.revenue)}</td><td>${d.stolen}</td><td>${d.goal ? '✅' : '❌'}</td></tr>`).join('')}</table></details>
+      <p class="muted">Only days you ran the shop yourself are counted.</p>`);
+    // tap or hover a day for its numbers
+    const tip = $('repTip');
+    for (const el of document.querySelectorAll('[data-tip]')) {
+      const show = () => {
+        const d = days[+el.dataset.tip], tot = d.lineSold.reduce((a, x) => a + x, 0);
+        tip.innerHTML = `<b>Day ${d.day}</b> · ${tot} sold${d.lineSold.map((n, l) => `<div><i style="background:${LINE_INK[l]}"></i>${esc(d.lines[l])}<span>${n}</span></div>`).join('')}<div class="muted">${money(d.revenue)} · ${d.stolen} stolen</div>`;
+        const box = el.getBoundingClientRect(), host = tip.parentElement.getBoundingClientRect();
+        tip.style.left = `${Math.min(host.width - 150, Math.max(0, box.left - host.left + box.width / 2 - 75))}px`; tip.classList.remove('hidden');
+      };
+      el.addEventListener('pointerenter', show); el.addEventListener('click', show);
+    }
+    tip.parentElement.addEventListener('pointerleave', () => tip.classList.add('hidden'));
+  }
+  // a bar with rounded top corners only (its base sits on the axis)
+  function roundTop(x, y, w, h, r) {
+    if (h <= 0) return '';
+    r = Math.min(r, w / 2, h);
+    return `M${x},${y + h}V${y + r}Q${x},${y} ${x + r},${y}H${x + w - r}Q${x + w},${y} ${x + w},${y + r}V${y + h}Z`;
+  }
+
   // arrange the shop: drag the islands and floor props, choose the line on each shelving unit
   function openArrange(b) {
-    const P = NeonShop.plan, names = P.lineNames(b), UNIT_NAMES = ['Left wall shelves', 'Right wall shelves', 'Left island', 'Right island'];
+    const P = NeonShop.plan, names = P.lineNames(b), UNIT_NAMES = ['Left wall shelves', 'Right wall shelves', 'Left island', 'Right island', 'Annex island', 'Level 2 shelves'];
     let lay = JSON.parse(JSON.stringify(b.layout || {})), pick = null;
     const trend = P.trend(s, b);
     openSheet(`<h2>🧱 Arrange your shop<button class="close" data-close>✕</button></h2>
@@ -550,14 +643,38 @@
       <canvas class="plan" id="planCv" aria-label="Your shop from above"></canvas>
       <div id="planInfo"></div>
       <p class="muted">${names.length > 1 ? `You sell ${names.map((n, i) => `<b style="color:${P.colors[i]}">${esc(n)}</b>`).join(', ')}. 🔥 Trending today: <b>${esc(names[trend])}</b>. ` : ''}Islands near the door get more impulse buys, but more shoplifters. 🧺 Baskets by the door make shoppers buy a bit more, and 🍬 sweets by the till sell at the counter.</p>
+      <p class="section-title">🛒 Promotions</p><div id="promoBuy" class="decor"></div>
       <div class="btns"><button class="btn" id="planReset">↺ Reset</button><button class="btn primary" id="planSave">Save layout</button></div>`);
     const cv = $('planCv');
+    // promotions: buy one (it's placed on the plan), then drag it and choose its line
+    const promoList = () => {
+      $('promoBuy').innerHTML = Object.entries(P.PROMOS).map(([id, pm]) => {
+        const own = b.promos && b.promos[id];
+        return `<button class="dec${own ? ' on' : ''}" data-promo="${id}"${own ? '' : s.cash < pm.cost ? ' disabled' : ''}><b>${pm.name}</b><small>${own ? '✓ Placed: drag it on the plan' : `${money(pm.cost)} · ${esc(pm.desc)}`}</small></button>`;
+      }).join('');
+      for (const el of document.querySelectorAll('[data-promo]')) el.onclick = () => {
+        const id = el.dataset.promo, pm = P.PROMOS[id];
+        if (b.promos && b.promos[id]) { pick = { type: 'promo', id }; draw(); info(); return; }
+        if (s.cash < pm.cost) { toast(`You need ${money(pm.cost)}`); return; }
+        s.cash -= pm.cost; b.promos = Object.assign({}, b.promos, { [id]: true }); save(); render();
+        pick = { type: 'promo', id }; promoList(); draw(); info(); toast(`${pm.name} bought: drag it where you want it`);
+      };
+    };
     const draw = () => drawPlanCanvas(cv, P.shapes(b, lay), { pick });
     const info = () => {
       if (!pick) { $('planInfo').innerHTML = ''; return; }
+      if (pick.type === 'promo') {
+        const pm = P.PROMOS[pick.id], cur = (lay.promos && lay.promos[pick.id] && lay.promos[pick.id].line) || 0;
+        $('planInfo').innerHTML = `<p class="section-title">${pm.name} (drag to move)</p><p class="muted">${esc(pm.desc)}</p>
+          <div class="linechips">${names.map((n, i) => `<button data-pline="${i}" class="${i === cur ? 'on' : ''}" style="border-color:${P.colors[i]};${i === cur ? `background:${P.colors[i]}33` : ''}">${esc(n)}</button>`).join('')}</div>`;
+        for (const el of document.querySelectorAll('[data-pline]')) el.onclick = () => {
+          lay.promos = lay.promos || {}; lay.promos[pick.id] = Object.assign({}, lay.promos[pick.id], { line: +el.dataset.pline }); draw(); info();
+        };
+        return;
+      }
       if (pick.type === 'prop') { $('planInfo').innerHTML = `<p class="muted">${P.PROP_KINDS[P.shapes(b, lay).props[pick.i].kind]}: drag it anywhere on the floor.</p>`; return; }
       const cur = P.unitLines(Object.assign({}, b, { layout: lay }))[pick.i];
-      $('planInfo').innerHTML = `<p class="section-title">${UNIT_NAMES[pick.i]}${pick.i < 2 ? '' : ' (drag to move)'}</p>
+      $('planInfo').innerHTML = `<p class="section-title">${UNIT_NAMES[pick.i]}${pick.i === 2 || pick.i === 3 ? ' (drag to move)' : ''}</p>
         <div class="linechips">${names.map((n, i) => `<button data-line="${i}" class="${i === cur ? 'on' : ''}" style="border-color:${P.colors[i]};${i === cur ? `background:${P.colors[i]}33` : ''}">${esc(n)}${i === trend ? ' 🔥' : ''}</button>`).join('')}</div>`;
       for (const el of document.querySelectorAll('[data-line]')) el.onclick = () => {
         lay.lines = P.unitLines(Object.assign({}, b, { layout: lay })); lay.lines[pick.i] = +el.dataset.line; draw(); info();
@@ -570,51 +687,100 @@
     const up = () => { down = null; };
     cv.addEventListener('pointerup', up); cv.addEventListener('pointercancel', up);
     $('planReset').onclick = () => { lay = {}; pick = null; draw(); info(); };
+    promoList();
     $('planSave').onclick = () => { b.layout = lay; save(); closeSheet(); toast('🧱 Layout saved: you\'ll see it next time you open the shop'); };
     draw();
   }
   $('shopServe').addEventListener('click', () => NeonShop.serve());
   {
     const cv = $('shopCanvas'), pts = new Map();
-    let mode = null, start = null, last = null, pinch = 0;
+    let mode = null, start = null, last = null, pinch = 0, mid = null;
     const at = (e) => { const rc = cv.getBoundingClientRect(); return [e.clientX - rc.left, e.clientY - rc.top]; };
     const gap = () => { const [a, b] = [...pts.values()]; return [Math.hypot(a[0] - b[0], a[1] - b[1]), (a[0] + b[0]) / 2, (a[1] + b[1]) / 2]; };
     cv.addEventListener('pointerdown', (e) => {
       try { cv.setPointerCapture(e.pointerId); } catch { /* ignore */ }
       pts.set(e.pointerId, at(e));
-      if (pts.size === 2) { if (mode === 'drag') NeonShop.pointerUp(); mode = 'pinch'; pinch = gap()[0]; return; }
+      if (pts.size === 2) { if (mode === 'drag') NeonShop.pointerUp(); mode = 'pinch'; pinch = gap()[0]; mid = null; return; }
       start = last = at(e);
       mode = NeonShop.pointerDown(...start) === 'drag' ? 'drag' : 'press';
     });
     cv.addEventListener('pointermove', (e) => {
       if (!pts.has(e.pointerId)) return;
       const p = at(e); pts.set(e.pointerId, p);
-      if (mode === 'pinch' && pts.size === 2) { const [d, mx, my] = gap(); if (pinch) NeonShop.zoomBy(d / pinch, mx, my); pinch = d; return; }
+      if (mode === 'pinch' && pts.size === 2) {
+        const [d, mx, my] = gap();
+        if (pinch) NeonShop.zoomBy(d / pinch, mx, my);
+        if (mid && NeonShop.is3D()) NeonShop.panBy(mx - mid[0], my - mid[1]); // two fingers slide the 3D view
+        pinch = d; mid = [mx, my]; return;
+      }
       if (mode === 'drag') { NeonShop.pointerMove(...p); return; }
       if (mode === 'press' && Math.hypot(p[0] - start[0], p[1] - start[1]) > 10) mode = 'pan';
-      if (mode === 'pan') NeonShop.panBy(p[0] - last[0], p[1] - last[1]);
+      if (mode === 'pan') NeonShop.orbit(p[0] - last[0], p[1] - last[1]);
       last = p;
     });
     const end = (e) => {
       pts.delete(e.pointerId);
       if (mode === 'drag') { if (NeonShop.pointerUp() === 'stocked') toast('📦 Shelf stocked by hand!'); }
-      else if (mode === 'press') NeonShop.tap(...start);
+      else if (mode === 'press') { if (NeonShop.tap(...start) === 'team') openTeam(); }
       if (!pts.size) mode = null; else if (mode === 'pinch') mode = 'done';
     };
     cv.addEventListener('pointerup', end);
     cv.addEventListener('pointercancel', end);
   }
   $('shopZoom').onclick = () => NeonShop.resetZoom();
+  $('shopTeam').onclick = () => openTeam();
+  // photo mode: hide the buttons, turn the shop to the angle you like, save the picture
+  $('shopPhoto').onclick = () => { $('shopView').classList.add('photo'); toast(NeonShop.is3D() ? '📷 Drag to turn, pinch to zoom, then 📸' : '📷 Pinch to zoom, then 📸'); };
+  $('photoDone').onclick = () => $('shopView').classList.remove('photo');
+  $('photoSnap').onclick = async () => {
+    const url = NeonShop.snapshot(); if (!url) return;
+    const r = NeonShop.current(), name = `neon-shop-day-${r ? r.s.day : ''}.jpg`;
+    try { // share it on a phone, or download it
+      const blob = await (await fetch(url)).blob(), file = new File([blob], name, { type: 'image/jpeg' });
+      if (navigator.canShare && navigator.canShare({ files: [file] })) { await navigator.share({ files: [file], title: 'My Neon Tycoon shop' }); return; }
+    } catch { /* fall back to a download */ }
+    const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+    toast('📸 Saved!');
+  };
+  // your team in the shop: energy, mood, and a job for each (it updates while it's open)
+  let teamTimer = 0;
+  function openTeam() {
+    const col = (v) => (v > 50 ? '#4ade80' : v > 25 ? '#ffd23f' : '#ff6b6b');
+    openSheet(`<h2>👥 Your team<button class="close" data-close>✕</button></h2>
+      <p class="muted">Give each helper a job. 🧾 serves at the till, 📦 restocks the shelves from the stockroom, 🚪 guards the door (stops most shoplifters), ☕ rests until full of energy.</p>
+      <div id="teamList">${NeonShop.team().map((m) => `<div class="card teamcard"><h3>${m.icon} ${esc(m.name)} <small class="muted">${esc(T.SKILLS[m.skill].name)} · served <span data-served="${m.i}">${m.served}</span></small></h3>
+        <div class="bars"><span>⚡ Energy</span><i class="bar"><b data-energy="${m.i}"></b></i><span>😊 Mood</span><i class="bar"><b data-morale="${m.i}"></b></i></div>
+        <div class="linechips">${Object.entries(NeonShop.JOBS).map(([id, label]) => `<button data-job="${m.i}:${id}">${label}</button>`).join('')}</div>
+        <p class="warn hidden" data-tired="${m.i}">Worn out: slow, and fumbling packs. A break helps.</p></div>`).join('')}</div>`);
+    // refresh the bars and the chosen job in place, so a tap never lands on a button that's being redrawn
+    const update = () => {
+      if (!NeonShop.active() || $('sheet').classList.contains('hidden') || !$('teamList')) { clearInterval(teamTimer); return; }
+      for (const m of NeonShop.team()) {
+        const e = document.querySelector(`[data-energy="${m.i}"]`), mo = document.querySelector(`[data-morale="${m.i}"]`);
+        e.style.width = `${m.energy}%`; e.style.background = col(m.energy); mo.style.width = `${m.morale}%`; mo.style.background = col(m.morale);
+        document.querySelector(`[data-served="${m.i}"]`).textContent = m.served;
+        document.querySelector(`[data-tired="${m.i}"]`).classList.toggle('hidden', m.energy >= 30);
+        for (const b of document.querySelectorAll(`[data-job^="${m.i}:"]`)) b.classList.toggle('on', b.dataset.job.split(':')[1] === m.job);
+      }
+    };
+    for (const el of document.querySelectorAll('[data-job]')) el.onclick = () => { const [i, job] = el.dataset.job.split(':'); NeonShop.setJob(+i, job); update(); };
+    update(); clearInterval(teamTimer); teamTimer = setInterval(update, 700);
+  }
   $('shopWalk').onclick = () => {
+    const night = NeonShop.night();
+    if (night && night.active) { NeonShop.endNight(); return; }
     const res = NeonShop.toggleWalk();
     if (res === 'nocover') toast('🧾 Open Till 2 or hire a cashier first, so someone serves while you walk the floor.');
     else if (res === 'walking') toast('🚶 Tap the floor to walk. Tap a shopper to go to them.');
   };
   $('shopActs').addEventListener('click', (e) => { const el = e.target.closest('[data-do]'); if (el) NeonShop.act(el.dataset.do); });
+  for (const el of document.querySelectorAll('[data-night]')) el.onclick = () => { if (NeonShop.nightShift(el.dataset.night === 'yes') && el.dataset.night === 'yes') toast('🧹 Mop the scuffs, face the shelves, pick up packs, empty the bin. Tap the floor to walk.'); };
+  for (const el of document.querySelectorAll('[data-req]')) el.onclick = () => { if (NeonShop.answerRequest(el.dataset.req === 'yes')) toast(el.dataset.req === 'yes' ? '📝 Order taken: have it on the shelves when they come in' : 'Order turned down'); };
   for (const el of document.querySelectorAll('[data-ret]')) el.onclick = () => NeonShop.resolveReturn(el.dataset.ret);
   $('shopTill').onclick = () => { const on = NeonShop.toggleTill2(); toast(on ? '🧾 The clerk opens till 2' : 'Till 2 closed: the clerk is back on the shop floor'); };
-  $('shopUp').onclick = () => { const r = NeonShop.current(); if (r) nudgePrice(r.b, 0.05); };
-  $('shopDown').onclick = () => { const r = NeonShop.current(); if (r) nudgePrice(r.b, -0.05); };
+  $('shopUp').onclick = () => { const r = NeonShop.current(); if (r) { if (priceFor === 'all') nudgePrice(r.b, 0.05); else NeonShop.nudgeLine(priceFor, 0.05); } };
+  $('shopDown').onclick = () => { const r = NeonShop.current(); if (r) { if (priceFor === 'all') nudgePrice(r.b, -0.05); else NeonShop.nudgeLine(priceFor, -0.05); } };
+  $('lineChips').addEventListener('click', (e) => { const el = e.target.closest('[data-pfor]'); if (el) priceFor = el.dataset.pfor === 'all' ? 'all' : +el.dataset.pfor; });
   $('shopRefill').onclick = () => { const r = NeonShop.current(); if (r) openSupplies(r.b); };
   $('shopClose').onclick = () => NeonShop.closeEarly();
 
