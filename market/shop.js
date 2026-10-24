@@ -43,6 +43,32 @@ window.NeonShop = (() => {
   const FRIDGE_SPOT = { x: 0.82, y: 0.31 };
   // kinds of shopper: [type, chance, badge]
   const TYPES = [['thief', 0.06, ''], ['returner', 0.04, '🔁'], ['influencer', 0.03, '📱'], ['regular', 0.0, '⭐'], ['rushed', 0.13, '⏱️'], ['bargain', 0.1, '🏷️'], ['tourist', 0.08, '📸']];
+  // who shops here: each group has its own budget, patience and pace, and comes at its own time of day
+  // (peak: [middle of their busy time, how wide], as a share of the day; more students and families at the weekend)
+  const GROUPS = {
+    worker: { icon: '💼', name: 'Office worker', limit: 1.06, patience: 0.72, spd: 1.15, qty: 1, peak: [0.12, 0.14], weekend: 0.35, wear: 'briefcase' },
+    student: { icon: '🎒', name: 'Student', limit: 0.88, patience: 1.1, spd: 1.05, qty: 0.8, peak: [0.68, 0.12], weekend: 1.6, wear: 'backpack' },
+    family: { icon: '👨‍👩‍👧', name: 'Family', limit: 1, patience: 0.9, spd: 0.9, qty: 1.7, peak: [0.5, 0.16], weekend: 2.2 },
+    senior: { icon: '🧓', name: 'Senior', limit: 1.03, patience: 1.5, spd: 0.72, qty: 0.9, peak: [0.25, 0.18], weekend: 1, wear: 'cane' },
+  };
+  const weekend = (s) => s.day % 7 === 6 || s.day % 7 === 0;
+  function pickGroup(k) {
+    const w = Object.entries(GROUPS).map(([id, g]) => [id, (0.6 + 1.6 * bump(k, g.peak[0], g.peak[1])) * (weekend(run.s) ? g.weekend : 1)]);
+    let x = Math.random() * w.reduce((a, [, v]) => a + v, 0);
+    for (const [id, v] of w) { x -= v; if (x <= 0) return id; }
+    return 'worker';
+  }
+  // what people wear for the weather and the season: scarves and hats in winter, sunglasses in summer
+  function seasonWear(look) {
+    const r = run, sea = r.season && r.season.id, wear = look.wear = (look.wear || []).filter((w) => !['scarf', 'beanie', 'shades'].includes(w));
+    if (sea === 'winter' || r.weather === 'snow') { if (Math.random() < 0.7) wear.push('scarf'); if (Math.random() < 0.45) wear.push('beanie'); }
+    else if (sea === 'autumn' && Math.random() < 0.35) wear.push('scarf');
+    if ((sea === 'summer' && r.weather !== 'rain') || r.weather === 'hot') { if (Math.random() < (r.weather === 'hot' ? 0.6 : 0.4)) wear.push('shades'); }
+    return look;
+  }
+  // holiday lights, by holiday
+  const HOL_COLS = { xmas: ['#ff3b3b', '#4ade80', '#ffd23f', '#05d9e8'], halloween: ['#ff7a00', '#9b5de5'], valentine: ['#ff5c8a', '#ffffff'], summer: ['#ffd23f', '#05d9e8'],
+    lunar: ['#ff3b3b', '#ffd23f'], neonfest: ['#ff2a6d', '#05d9e8', '#9b5de5', '#ffd23f'], school: ['#05d9e8', '#ffd23f', '#4ade80'] };
   // how busy the street is through the day: a morning rush, lunch, and the after-work rush
   const bump = (k, c, w) => Math.exp(-(((k - c) / w) ** 2));
   const rushRate = (k) => 1 + 0.9 * bump(k, 0.05, 0.06) + 0.8 * bump(k, 0.3, 0.06) + 1.0 * bump(k, 0.72, 0.08) - 0.35 * bump(k, 0.5, 0.1);
@@ -558,9 +584,9 @@ window.NeonShop = (() => {
     const units = T.unitsPerDay(T.STALLS[tier].cap, b.good);
     // festivals and heatwaves, the weather, your shop's rating, and a coffee corner all change the crowd
     const weather = T.weather(s), up = b.upgrades || {};
-    const events = [null, null, 'market', 'parade', 'power'], event = events[(Math.random() * events.length) | 0];
+    const events = [null, null, null, 'market', 'parade', 'power', 'inspector', 'celebrity', 'pipe', 'critic'], event = events[(Math.random() * events.length) | 0];
     const buzz = b.buzz && b.buzz.day === s.day ? b.buzz.mult : 1;
-    const crowd = T.effectMod(s, b.district, b.good) * T.WEATHER[weather].crowd * T.ratingMod(b) * T.repMod(b) * (up.coffee ? 1.12 : 1) * buzz * (event === 'market' ? 1.08 : 1);
+    const crowd = T.effectMod(s, b.district, b.good) * T.WEATHER[weather].crowd * T.weatherDemand(s, b.good) * (T.holiday(s.day) ? 1.06 : 1) * T.ratingMod(b) * T.repMod(b) * (up.coffee ? 1.12 : 1) * buzz * (event === 'market' ? 1.08 : 1);
     b.regulars = b.regulars || [];
     const staff = T.staffOf(b);
     // a present owner draws a bigger crowd than the automatic day (35% more shoppers)
@@ -602,6 +628,7 @@ window.NeonShop = (() => {
       me: null, greetT: 0, lines: lineNames(b), unitLine: ul, trend: trending(s, b), lineSold: lineNames(b).map(() => 0),
       heat: new Float32Array(HEAT_X * HEAT_Y), goal: pickGoal(s, b), hourSold: Array(12).fill(0),
       rep: T.repOf(b), repD: { price: 0, stock: 0, queue: 0, service: 0 }, // what people say about you, and today's experiences
+      groups: {}, mud: 0, // who came today; muddy footprints by the door on a wet day
       stats: { waits: [], stolen: 0, caught: 0, helped: 0, extras: 0, good: 0, bad: 0, returns: 0, newRegulars: 0, rewards: 0, reducedSold: 0, knocked: 0, haul: false },
     };
     // wear and tear builds up over the season: scuffs on the floor, smudges on the windows
@@ -661,8 +688,10 @@ window.NeonShop = (() => {
       reducedSold: st.reducedSold, knocked: st.knocked, haul: st.haul, event: r.event, holiday: r.holiday,
       staff: r.staff.map((x) => ({ name: x.m.name, served: x.served, morale: x.m.morale })),
       stars: r.stars, rating: r.b.rating, reviews: r.b.reviews || [],
-      goal: r.goalResult || null, rep: r.b.rep, repBefore: r.repBefore, tidy: r.stats.tidy, nightDone: r.stats.nightDone, nightTotal: r.stats.nightTotal, orders: r.stats.orders || 0, ordersLost: r.ordersLost, openOrders: (r.b.requests || []).map((x) => ({ ...x, lineName: r.lines[x.line] })), lines: r.lines, lineSold: r.lineSold, trend: r.trend,
+      goal: r.goalResult || null, eventResult: r.eventResult || null, critic: r.critic || null, splashed: st.splashed || 0, rep: r.b.rep, repBefore: r.repBefore, tidy: r.stats.tidy, nightDone: r.stats.nightDone, nightTotal: r.stats.nightTotal, orders: r.stats.orders || 0, ordersLost: r.ordersLost, openOrders: (r.b.requests || []).map((x) => ({ ...x, lineName: r.lines[x.line] })), lines: r.lines, lineSold: r.lineSold, trend: r.trend,
       heat: { x: HEAT_X, y: HEAT_Y, data: Array.from(r.heat) }, plan: planShapes(r.b),
+      matched: st.matched || 0, toRival: st.toRival || 0, rivalName: r.rival && r.rival.name,
+      groups: r.groups, slips: st.slips || 0, mopped: st.mopped || 0, weekend: weekend(r.s),
     };
   }
 
@@ -712,27 +741,33 @@ window.NeonShop = (() => {
   // ---------- people ----------
   function addPasser(startFrac = 0) {
     const dir = Math.random() < 0.5 ? 1 : -1;
-    run.people.push({ kind: 'passer', look: randomLook(), x: dir > 0 ? -0.1 + startFrac * 1.2 : 1.1 - startFrac * 1.2, y: L.street, dir, speed: 0.08 + Math.random() * 0.05, phase: Math.random() * 6 });
+    run.people.push({ kind: 'passer', look: seasonWear(randomLook()), x: dir > 0 ? -0.1 + startFrac * 1.2 : 1.1 - startFrac * 1.2, y: L.street, dir, speed: 0.08 + Math.random() * 0.05, phase: Math.random() * 6 });
   }
 
   function addShopper() {
     const r = run, dir = Math.random() < 0.5 ? 1 : -1;
     r.spawned++;
-    const look = randomLook(), k = dayK();
-    look.outfit = pick(OUTFITS_BY_TIME.find(([until]) => k <= until)[1]); // office wear in the morning, students later on
+    const look = randomLook(), k = dayK(), group = pickGroup(k), G0 = GROUPS[group];
+    look.outfit = group === 'worker' ? pick(['classic', 'ninja', 'classic', 'dj']) : pick(OUTFITS_BY_TIME.find(([until]) => k <= until)[1]); // suits for the office, the rest by time of day
+    look.wear = G0.wear ? [G0.wear] : [];
+    if (group === 'senior') look.grey = true;
+    seasonWear(look);
     r.people.push({
       kind: 'shopper', state: 'street', look, name: pick(T.NAMES), x: dir > 0 ? -0.08 : 1.08, y: L.street, dir, speed: 0.11 + Math.random() * 0.04,
       phase: Math.random() * 6, limit: T.shopperLimit(), qty: Math.max(1, Math.round(r.qtyMean * (0.6 + Math.random() * 0.8))),
       patience: (10 + Math.random() * 8) * r.patienceMul, wait: 0, bubble: null, timer: 0, mood: undefined, bag: false, basket: 0, facing: 'back', extra: 0, spd: 1,
       compares: Math.random() < 0.6, // looks across the road at the rival's prices
+      group,
     });
     const lead = r.people[r.people.length - 1];
+    if (r.criticNext) { r.criticNext = false; lead.critic = true; }
+    lead.limit *= G0.limit; lead.patience *= G0.patience; lead.spd = G0.spd; lead.qty = Math.max(1, Math.round(lead.qty * G0.qty));
     // a regular you've seen before (with a stamp card), or another kind of shopper
     const regs = r.b.regulars.filter((g) => !r.people.some((p) => p.reg === g));
     let roll = Math.random();
     if (regs.length && Math.random() < Math.min(0.25, 0.04 * r.b.regulars.length)) {
       const g = pick(regs);
-      Object.assign(lead, { type: 'regular', badge: '⭐', reg: g, name: g.name, look: g.look });
+      Object.assign(lead, { type: 'regular', badge: '⭐', reg: g, name: g.name, look: seasonWear(Object.assign({}, g.look)) });
     } else for (const [type, chance, badge] of TYPES) { const c = type === 'thief' ? chance * (1 + 0.5 * doorK()) * (guard() ? 0.6 : 1) : chance; if (roll < c) { lead.type = type; lead.badge = badge; break; } roll -= c; }
     if (lead.type === 'returner') lead.qty = 1;
     const rp = r.rep; // what they've heard
@@ -751,14 +786,17 @@ window.NeonShop = (() => {
     const usual = run.b.usual || T.RETAIL;
     if (lead.type === 'regular') lead.limit = Math.max(usual, T.RETAIL) * 1.06;            // wants the usual price
     if (lead.type === 'rushed') { lead.patience = rand(5, 8); lead.spd = 1.45; }
+    if (lead.reg) { lead.group = lead.reg.group || (lead.reg.group = lead.group); }
+    (r.groups[lead.group] = r.groups[lead.group] || { came: 0, served: 0, lost: 0 }).came++;
     if (lead.type === 'bargain') lead.limit = T.RETAIL * 0.99;                              // only buys on SALE
     if (lead.type === 'tourist') lead.qty = Math.ceil(lead.qty * 2.5);
     // some come as a couple, or a parent with a child, who tag along without buying
     roll = Math.random();
-    if (roll < 0.3 && lead.type !== 'thief' && lead.type !== 'rushed') {
-      const child = roll < 0.1;
-      run.people.push({ kind: 'companion', leader: lead, child, look: randomLook(), x: lead.x - dir * 0.05, y: lead.y, side: Math.random() < 0.5 ? -1 : 1, phase: Math.random() * 6, facing: 'back' });
+    if ((roll < 0.3 || lead.group === 'family') && lead.type !== 'thief' && lead.type !== 'rushed') {
+      const child = roll < 0.1 || lead.group === 'family';
+      run.people.push({ kind: 'companion', leader: lead, child, look: seasonWear(randomLook()), x: lead.x - dir * 0.05, y: lead.y, side: Math.random() < 0.5 ? -1 : 1, phase: Math.random() * 6, facing: 'back' });
     }
+    return lead;
   }
 
   const queue = () => run.people.filter((p) => p.state === 'queue' || p.state === 'serving' || p.state === 'returning').sort((a, b) => a.qAt - b.qAt);
@@ -848,12 +886,16 @@ window.NeonShop = (() => {
   const react = (p, icon) => { p.react = { icon, t: 1.6 }; };
   const pick = (a) => a[(Math.random() * a.length) | 0];
   function leaveShop(p, mood, bubble) {
+    if (p.critic && !p.reviewed) { p.reviewed = true; criticReview(p, mood === 'happy'); }
+    if (p.kind === 'shopper' && p.group && run.groups[p.group] && mood !== 'happy' && !p.counted) { p.counted = true; run.groups[p.group].lost++; }
     if (p.basket) { pileIn(p.basket, Number.isInteger(p.got) ? p.got : p.line); p.basket = 0; } // a dropped basket goes back to the stockroom
     p.state = 'leaving'; p.mood = mood; p.hold = false; say(p, bubble);
     p.exitDir = Math.random() < 0.5 ? -1 : 1;
     p.path = routeTo(p, { x: 0.5, y: L.enter }).concat([[0.5, L.street]]);
   }
 
+  const MUD_SPOT = { x: 0.5, y: 0.335 };
+  const wetSignNear = () => { const w = PROPS.find((pr) => pr[0] === 'wet'); return !!w && metres({ x: w[1], y: w[2] }, MUD_SPOT) < 2.6; };
   const doorPull = (u) => (u.wall ? 0 : clamp((ISLAND_BASE - u.base) / 0.08, -1, 1)); // 0 where islands usually stand, 1 right by the door, -1 at the back
   const doorK = () => (doorPull(UNITS[2]) + doorPull(UNITS[3])) / 2;
   const lineItems = (line) => run.slots.reduce((a, sl) => a + (sl.line === line ? sl.n : 0), 0);
@@ -937,7 +979,7 @@ window.NeonShop = (() => {
     if (open && r.spawned < r.entrants && r.t >= r.nextSpawn) {
       addShopper();
       const gap = (DAY_SECONDS * 0.9) / r.entrants / (rushRate(dayK()) / RUSH_AVG); // busier at rush hour
-      r.nextSpawn = r.t + gap * (0.5 + Math.random());
+      r.nextSpawn = r.t + (r.burst > 0 ? (r.burst--, 0.7) : gap * (0.5 + Math.random())); // fans arrive in a rush
     }
     if (open && Math.random() < dt * 0.6 * (r.event === 'market' ? 1.8 : 1) * (rushRate(dayK()) / RUSH_AVG)) addPasser();
 
@@ -981,6 +1023,13 @@ window.NeonShop = (() => {
               say(p, pick(['🔁 It\'s broken!', '🔁 Wrong size!', '🔁 It doesn\'t work!']), 2);
               break;
             }
+            if (!p.greeted && (r.weather === 'rain' || r.weather === 'snow')) { // wet shoes: mud on the floor by the door
+              r.mud = Math.min(1, r.mud + 0.04);
+              if (r.mud > 0.45 && Math.random() < 0.3) {
+                if (wetSignNear()) say(p, '⚠️ Ooh, careful, it\'s wet!', 1.4);
+                else { say(p, '😬 Whoa, slippery!', 1.6); hear('service', -0.8); r.stats.slips = (r.stats.slips || 0) + 1; }
+              }
+            }
             if (!p.greeted) {
               p.greeted = true; r.greetT = 1.2; // the staff wave hello
               if (p.kind === 'shopper') wordOfMouth(p);
@@ -1010,7 +1059,7 @@ window.NeonShop = (() => {
           p.timer -= dt;
           if (p.timer > 0) break;
           // some put a hand up to ask you something
-          if (!p.asked && p.type !== 'thief' && Math.random() < 0.15) {
+          if (!p.asked && p.type !== 'thief' && Math.random() < (p.group === 'senior' ? 0.3 : 0.15)) {
             p.asked = true; p.state = 'help'; p.timer = 8; p.hand = true;
             say(p, pick(HELP_Q), 99);
             break;
@@ -1028,14 +1077,19 @@ window.NeonShop = (() => {
             break;
           }
           // some pick a pack up to look at it first, then buy it or put it back
-          const pm = mult * linePrice(r.b, p.line); // the price of the line they want
+          let pm = mult * linePrice(r.b, p.line) * (p.matched || 1); // the price of the line they want
+          // they can see the rival's prices across the road: you match it, or they go over there
+          if (r.rival && p.compares && p.type !== 'regular' && pm > r.rival.mult * 1.05) {
+            if (r.b.priceMatch) {
+              p.matched = r.rival.mult / (mult * linePrice(r.b, p.line)); pm = r.rival.mult;
+              say(p, `🤝 ${r.rival.name} is cheaper… you'll match it? Great!`, 1.8); r.stats.matched = (r.stats.matched || 0) + 1;
+            } else {
+              r.lostPrice++; r.stats.toRival = (r.stats.toRival || 0) + 1; hear('price', -2); leaveShop(p, 'angry', `😒 Cheaper at ${r.rival.name}!`); p.toRival = true;
+              break;
+            }
+          }
           if (shelfTotal() > 0 && !p.considered && Math.random() < (pm > p.limit ? 0.6 : 0.3)) {
             p.considered = true; p.state = 'consider'; p.timer = rand(0.9, 1.5); p.hold = true; react(p, '🤔');
-            break;
-          }
-          // they can see the rival's prices across the road
-          if (r.rival && p.compares && p.type !== 'regular' && pm > r.rival.mult * 1.05) {
-            r.lostPrice++; hear('price', -2); leaveShop(p, 'angry', `😒 Cheaper at ${r.rival.name}!`);
             break;
           }
           if (pm > p.limit) {
@@ -1062,7 +1116,7 @@ window.NeonShop = (() => {
           p.timer -= dt;
           if (p.timer > 0) break;
           p.hold = false;
-          if (mult * linePrice(r.b, p.line) > p.limit) { // puts it back
+          if (mult * linePrice(r.b, p.line) * (p.matched || 1) > p.limit) { // puts it back
             const sl = run.slots.filter((x) => x.u === p.unit && x.n > 0).sort((a, b) => Math.abs(a.x - p.x) - Math.abs(b.x - p.x))[0];
             if (sl) sl.pop = 0.2;
             r.lostPrice++; hear('price', -2); leaveShop(p, 'angry', pick(['😒 Too pricey!', '🤔 Not at that price.']));
@@ -1137,7 +1191,16 @@ window.NeonShop = (() => {
           break;
         }
         case 'leaving':
-          if (walk(p, dt, 0.24)) { p.x += p.exitDir * 0.14 * dt; p.phase += dt * 8; p.moving = true; }
+          if (p.cross !== undefined) { // over the road to the rival's shop
+            p.cross = Math.min(1, p.cross + dt / 3.4); p.phase += dt * 8; p.moving = true;
+            p.x = p.cx0 + (0.68 - p.cx0) * p.cross; p.y = L.street - (L.street - FRONT.road0 + 0.006) * p.cross;
+            if (p.cross >= 1) p.x = 9;
+            break;
+          }
+          if (walk(p, dt, 0.24)) {
+            if (p.toRival) { p.cross = 0; p.cx0 = p.x; break; }
+            p.x += p.exitDir * 0.14 * dt; p.phase += dt * 8; p.moving = true;
+          }
           break;
       }
     }
@@ -1186,6 +1249,7 @@ window.NeonShop = (() => {
       const len = r.event === 'power' ? 9 : r.event === 'parade' ? 14 : 99;
       if (r.eventT > len) { r.eventT = -1; r.power = false; if (r.event === 'power') r.effects.push({ kind: 'text', text: '💡 Power back on', x: 0.5, y: 0.45, t: 0, color: '#4ade80' }); }
     }
+    stepEvent(dt, opening);
     if (r.power) r.doorOpen = 1; // the automatic doors stay open in a power cut
     if (r.police && (r.police.x += 0.55 * dt) > 1.4) r.police = null;
     stepClerk(dt);
@@ -1322,6 +1386,10 @@ window.NeonShop = (() => {
             c.target = sm; c.chore = 'wipe'; c.state = 'chore'; c.path = routeTo(c, { x: a + (b - a) * sm[1], y: L.enter });
             break;
           }
+          if (r.mud > 0.6 && !r.me && Math.random() < dt * 0.1) {
+            c.target = 'mud'; c.chore = 'mop'; c.state = 'chore'; c.path = routeTo(c, MUD_SPOT);
+            break;
+          }
           if (w.scuffs.length && Math.random() < dt * 0.06) {
             const sc = pick(w.scuffs);
             c.target = sc; c.chore = 'mop'; c.state = 'chore'; c.path = routeTo(c, { x: sc[0], y: sc[1] });
@@ -1361,6 +1429,7 @@ window.NeonShop = (() => {
         if (c.timer <= 0) {
           const list = c.chore === 'wipe' ? r.b.wear.smudges : r.b.wear.scuffs, i = list.indexOf(c.target);
           if (i >= 0) list.splice(i, 1);
+          if (c.target === 'mud') { r.mud = 0; r.stats.mopped = (r.stats.mopped || 0) + 1; }
           c.state = 'back'; c.path = routeTo(c, CLERK_HOME);
         }
         break;
@@ -1458,6 +1527,106 @@ window.NeonShop = (() => {
     for (let i = 0; i < 8; i++) run.dust.push({ x, y, vx: rand(-0.12, 0.12), vy: rand(-0.06, 0), t: 0 });
   }
 
+  // ---------- today's challenge events: an inspector, a celebrity, a burst pipe, a food critic ----------
+  const banner = (text, color = '#ffd23f') => run.effects.push({ kind: 'text', text, x: 0.5, y: 0.45, t: 0, color });
+  const eventDone = (ok, text) => { const r = run; r.eventResult = { ok, text }; banner(text, ok ? '#4ade80' : '#ff6b6b'); if (ok) sfx.approved(); };
+  // what the inspector writes down: packs on the floor, mud, scuffs, dirty windows, old stock on the shelves
+  function inspectIssues() {
+    const r = run, out = [];
+    if (r.floor.length) out.push(`${r.floor.length} pack${r.floor.length > 1 ? 's' : ''} on the floor`);
+    if (r.mud > 0.4) out.push('a muddy doorway');
+    if (r.pipe && !r.pipe.fixed) out.push('a flood');
+    if (r.b.wear.scuffs.length > 10) out.push('a scuffed floor');
+    if (r.b.wear.smudges.length > 6) out.push('dirty windows');
+    if ((T.freshness(r.s, r.b) || {}).expiring > 0) out.push('stock about to go off');
+    return out;
+  }
+  function stepEvent(dt, opening) {
+    const r = run, ev = r.event, open = !opening && r.t < DAY_SECONDS;
+    if (!ev || opening) return;
+    if (ev === 'critic' && !r.criticWarned) { r.criticWarned = true; banner('🕵️ A food critic is in town today…', '#ffd23f'); }
+    if ((ev === 'inspector' || ev === 'celebrity') && !r.warned && r.t >= r.eventAt - 9 && r.eventT >= 0) {
+      r.warned = true; sfx.click();
+      banner(ev === 'inspector' ? '📋 Health inspector on the way!' : '⭐ A celebrity is coming!', '#ffd23f');
+    }
+    // the inspector walks round, stopping to make notes, then gives the verdict
+    const ins = r.inspector;
+    if (ins && r.people.includes(ins) && ins.state === 'inspect') {
+      if (ins.timer > 0) { ins.timer -= dt; if (ins.timer <= 0) ins.path = ins.stops.length ? routeTo(ins, ins.stops.shift()) : null; }
+      else if (walk(ins, dt, 0.17)) {
+        if (ins.path === null) { // done: the verdict
+          const issues = inspectIssues(), pass = !issues.length;
+          if (pass) { hear('service', 6); r.stats.good++; eventDone(true, '✅ Inspection passed! ⭐ Top hygiene score'); say(ins, '📋 Very clean. Well done!', 2); }
+          else { T.shopExtra(r.s, r.b.id, -120); r.stats.extras -= 120; hear('service', -4); eventDone(false, `❌ Inspection failed: fined $120 (${issues.slice(0, 2).join(', ')})`); say(ins, '📋 Not good enough…', 2); }
+          ins.state = 'leaving'; ins.exitDir = 1; ins.path = routeTo(ins, { x: 0.5, y: L.enter }).concat([[0.5, L.street]]);
+        } else { ins.timer = 2; ins.facing = 'back'; say(ins, pick(['📋 Hmm…', '📋 Let me see…', '🔦 Checking…']), 1.6); }
+      }
+    }
+    // a burst pipe: the puddle spreads until someone fixes it, then it dries
+    const pp = r.pipe;
+    if (pp) {
+      pp.t += dt;
+      if (!pp.fixed) {
+        pp.size = Math.min(1, pp.size + dt * 0.05);
+        if (pp.plumber && (pp.plumber -= dt) <= 0) fixPipe('plumber');
+      } else pp.size = Math.max(0, pp.size - dt * 0.12);
+      for (const p of r.people) { // shoppers who walk through it
+        if (p.kind !== 'shopper' || p.splashed || !(pp.size > 0.15) || metres(p, pp) > 0.4 + pp.size * 1.3) continue;
+        p.splashed = true; hear('service', -0.6); r.stats.splashed = (r.stats.splashed || 0) + 1;
+        say(p, pick(['💦 Ugh, wet socks!', '💦 It\'s flooding in here!', '💦 Eww!']), 1.6); react(p, '💦');
+      }
+      if (!pp.fixed && pp.t > 30) { pp.fixed = true; T.shopExtra(r.s, r.b.id, -150); r.stats.extras -= 150; hear('service', -3); eventDone(false, '💦 The landlord sent an emergency plumber: −$150'); }
+    }
+    // the celebrity's verdict comes when they leave
+    const cel = r.celeb;
+    if (cel && !r.eventResult && cel.state === 'leaving') {
+      if (cel.bag) { r.b.buzz = { day: r.s.day + 1, mult: 1.3 }; hear('service', 4); eventDone(true, '📸 The celebrity loved it! Big crowds tomorrow'); }
+      else { hear('service', -4); eventDone(false, '😒 The celebrity walked out… the photos are everywhere'); }
+    }
+    if (!open) return;
+  }
+  // fix the leak yourself (free) or call a plumber ($80, about 6 seconds)
+  function fixPipe(how) {
+    const r = run, pp = r && r.pipe;
+    if (!pp || pp.fixed) return;
+    pp.fixed = true; sfx.click();
+    if (how === 'plumber') { T.shopExtra(r.s, r.b.id, -80); r.stats.extras -= 80; eventDone(true, '🔧 The plumber fixed the leak (−$80)'); }
+    else { hear('service', 2); eventDone(true, `🔧 You fixed the leak${pp.t < 12 ? ' in no time' : ''}!`); }
+  }
+  function callPlumber() {
+    const r = run, pp = r && r.pipe;
+    if (!pp || pp.fixed || pp.plumber) return false;
+    pp.plumber = 6; banner('📞 A plumber is on the way ($80)', '#7fe9ff');
+    return true;
+  }
+  // the critic: a shopper like any other, who writes it all up when they leave
+  function criticReview(p, bought) {
+    const r = run;
+    if (r.eventResult) return;
+    const pm = (r.b.mult || T.RETAIL) * linePrice(r.b, p.line) * (p.matched || 1);
+    let stars = bought ? 5 : 2;
+    if (bought) { if ((p.wait || 0) > 4) stars--; if ((p.wait || 0) > 8) stars--; if (pm > p.limit * 0.95) stars--; }
+    if (r.floor.length > 2 || r.mud > 0.5 || (r.pipe && !r.pipe.fixed)) stars -= 0.5;
+    if (p.helped) stars += 0.5;
+    stars = clamp(Math.round(stars * 2) / 2, 1, 5);
+    const ok = stars >= 3.5, words = stars >= 4.5 ? '"Quick, friendly, fair prices. A gem."' : stars >= 3.5 ? '"A solid little shop."' : stars >= 2.5 ? '"Fine, but nothing special."' : '"Slow, dear, and I left empty-handed."';
+    hear('service', (stars - 3) * 3); hear('price', (stars - 3) * 1.5);
+    r.b.buzz = { day: r.s.day + 1, mult: ok ? 1.15 : 0.9 };
+    r.critic = { stars, words };
+    eventDone(ok, `📰 The critic gives you ${'★'.repeat(Math.round(stars))}${'☆'.repeat(5 - Math.round(stars))}`);
+    say(p, '🕵️ (That was the food critic!)', 2.2);
+  }
+  const eventInfo = () => {
+    const r = run;
+    if (!r || !r.event) return null;
+    if (r.eventResult) return { text: r.eventResult.text, ok: r.eventResult.ok, done: true };
+    if (r.event === 'pipe' && r.pipe && !r.pipe.fixed) return { text: r.pipe.plumber ? '💦 Burst pipe: the plumber is coming…' : '💦 Burst pipe! Tap here for a plumber ($80), or 🚶 walk over and fix it', tap: !r.pipe.plumber };
+    if (r.event === 'inspector' && (r.warned || r.inspector)) return { text: r.inspector ? '📋 The inspector is looking round…' : '📋 Inspector coming: pick up packs, mop up!' };
+    if (r.event === 'celebrity' && (r.warned || r.celeb)) return { text: r.celeb ? '⭐ A celebrity is in! Serve them quickly' : '⭐ A celebrity is on the way…' };
+    if (r.event === 'critic') return { text: '🕵️ A food critic is here somewhere: treat everyone well' };
+    return null;
+  };
+
   function startEvent() {
     const r = run;
     if (r.event === 'parade') {
@@ -1468,6 +1637,24 @@ window.NeonShop = (() => {
       r.power = true;
       r.effects.push({ kind: 'text', text: '⚡ Power cut! Cash only', x: 0.5, y: 0.45, t: 0, color: '#ff6b6b' });
       sfx.click();
+    } else if (r.event === 'inspector') { // in a grey suit with a clipboard: two shelves and the stockroom, then the verdict
+      const look = Object.assign(randomLook(), { outfit: 'classic', wear: ['clipboard'] });
+      const stops = [unitSpot(UNITS[2]), unitSpot(UNITS[3]), { x: PILE.x + 0.1, y: PILE.y - 0.04 }];
+      const p = { kind: 'inspector', name: 'Inspector', badge: '📋', state: 'inspect', look, x: 0.5, y: L.street, dir: 1, phase: 0, facing: 'back', stops, timer: 0, path: [[0.5, L.enter]].concat(routeTo({ x: 0.5, y: L.enter }, stops.shift())), mood: 'meh' };
+      r.people.push(p); r.inspector = p;
+    } else if (r.event === 'celebrity') { // a star in gold and sunglasses, with fans close behind
+      const p = addShopper();
+      Object.assign(p, { type: 'celeb', badge: '⭐', name: pick(['Nova Star', 'DJ Lumen', 'Kira Blaze', 'Rex Neon']), qty: 3, compares: false, skip: false, patience: 16 });
+      p.limit = Math.max(p.limit, 1.9); p.look = Object.assign({}, p.look, { outfit: 'gold', wear: ['shades'] });
+      say(p, '😎 Hi everyone!', 2);
+      r.celeb = p; r.entrants += 6; r.burst = 6; r.nextSpawn = r.t + 1.2;
+    } else if (r.event === 'pipe') { // somewhere on the floor, away from the shelves
+      const spots = [[0.3, 0.6], [0.7, 0.6], [0.5, 0.46], [0.25, 0.4], [0.75, 0.4]].filter(([x, y]) => !blocked(x, y, 0.3));
+      const [x, y] = pick(spots.length ? spots : [[0.5, 0.46]]);
+      r.pipe = { x, y, t: 0, size: 0.05, fixed: false };
+      sfx.thud(); banner('💦 A pipe has burst!', '#7fe9ff');
+    } else if (r.event === 'critic') { // the next shopper is the critic (you don't know which)
+      r.criticNext = true;
     }
   }
   // you decide what to do about a return: refund the money, swap it for a new one, or refuse
@@ -1500,7 +1687,7 @@ window.NeonShop = (() => {
   }
   function helpShopper(p) {
     const r = run, tip = Math.round((T.shelfPrice(r.s, r.b) * 0.1 + 1) * 100) / 100;
-    p.hand = false; p.qty += 1; p.mood = 'happy'; p.state = 'look'; p.timer = 0.3; hear('service', 2);
+    p.hand = false; p.helped = true; p.qty += 1; p.mood = 'happy'; p.state = 'look'; p.timer = 0.3; hear('service', 2);
     say(p, '🙏 Thanks for the help!', 1.6);
     T.shopExtra(r.s, r.b.id, tip); r.stats.extras += tip; r.stats.helped++;
     r.effects.push({ kind: 'text', text: `💁 +$${tip.toFixed(2)} tip`, x: p.x, y: p.y - 0.12, t: 0 });
@@ -1607,6 +1794,8 @@ window.NeonShop = (() => {
     if (fl) acts.push({ id: 'floor', label: '🫳 Pick up', f: fl });
     const sc = r.b.wear.scuffs.find((w) => d({ x: w[0], y: w[1] }) < 1.2);
     if (sc) acts.push({ id: 'mop', label: '🧽 Mop', w: sc });
+    if (r.pipe && !r.pipe.fixed && d(r.pipe) < 1.9) acts.unshift({ id: 'fix', label: '🔧 Fix the leak' });
+    if (r.mud > 0.15 && d(MUD_SPOT) < 1.8) acts.unshift({ id: 'mop', label: '🧽 Mop the muddy doorway', w: 'mud' });
     if (me.y < L.enter + 0.06) {
       const sm = r.b.wear.smudges.find((w) => { const [a, b] = FRONT.windows[w[0]]; return Math.abs(me.x - (a + (b - a) * w[1])) < 0.12; });
       if (sm) acts.push({ id: 'wipe', label: '🪟 Wipe window', w: sm });
@@ -1646,6 +1835,8 @@ window.NeonShop = (() => {
       r.floor.splice(r.floor.indexOf(a.f), 1);
       if (me.carry > 0 && me.carryLine !== a.f.line) pileIn(a.f.n, a.f.line); else { me.carry += a.f.n; me.carryLine = a.f.line; }
       sfx.pop();
+    } else if (id === 'fix') { // turn the water off and patch the pipe
+      me.state = 'choring'; me.chore = 'mop'; me.timer = 1.5; me.facing = 'front'; me.task = { id: 'fix' };
     } else if (id === 'face' || id === 'bin') { // tidy the packs to the front, or empty the bin
       me.state = 'choring'; me.chore = 'wipe'; me.timer = 0.9; me.facing = 'back'; me.task = { id, ui: a.ui };
       if (id === 'face') for (const sl of r.slots) if (sl.u === a.ui && sl.n > 0) sl.pop = 0.25;
@@ -1670,7 +1861,9 @@ window.NeonShop = (() => {
     if (me.state === 'choring') {
       me.timer -= dt; me.phase += dt * 16;
       if (me.timer <= 0) {
-        if (me.task) { if (r.night) { if (me.task.id === 'face') r.night.faced.add(me.task.ui); else r.night.bin = true; } me.task = null; }
+        if (me.task && me.task.id === 'fix') { fixPipe('you'); me.task = null; }
+        else if (me.task) { if (r.night) { if (me.task.id === 'face') r.night.faced.add(me.task.ui); else r.night.bin = true; } me.task = null; }
+        else if (me.chore === 'mop' && me.target === 'mud') { r.mud = 0; r.stats.mopped = (r.stats.mopped || 0) + 1; hear('service', 1); }
         else if (me.chore === 'mop' || me.chore === 'wipe') { const list = me.chore === 'wipe' ? r.b.wear.smudges : r.b.wear.scuffs, i = list.indexOf(me.target); if (i >= 0) list.splice(i, 1); }
         me.state = 'walk';
       }
@@ -1783,6 +1976,7 @@ window.NeonShop = (() => {
     p.basket = 0;
     const avg = r.served ? r.revenue / r.served : 0;
     r.served++; r.sold += res.qty; r.revenue += res.revenue;
+    if (p.group && r.groups[p.group]) r.groups[p.group].served++;
     r.stats.waits.push(p.wait || 0);
     if (Number.isInteger(p.got) && r.lineSold[p.got] !== undefined) r.lineSold[p.got] += res.qty;
     r.hourSold[clamp(Math.floor(dayK() * 12), 0, 11)] += res.qty; // 9:00 to 21:00, by the hour
@@ -1790,7 +1984,7 @@ window.NeonShop = (() => {
       const free = Math.floor(res.qty / 2), off = -Math.round((res.revenue / res.qty) * free * 100) / 100;
       T.shopExtra(r.s, r.b.id, off); r.revenue += off; res.revenue += off; r.stats.bogo = (r.stats.bogo || 0) + free;
     }
-    const lm = Number.isInteger(p.got) ? linePrice(r.b, p.got) : 1;
+    const lm = (Number.isInteger(p.got) ? linePrice(r.b, p.got) : 1) * (p.matched && p.got === p.line ? p.matched : 1);
     if (Math.abs(lm - 1) > 0.001) { const diff = Math.round(res.revenue * (lm - 1) * 100) / 100; T.shopExtra(r.s, r.b.id, diff); r.revenue += diff; res.revenue += diff; }
     if ((p.wait || 0) < 2.5 && via !== 'kiosk') react(p, '⚡');
     { // what they'll tell their friends
@@ -1817,8 +2011,8 @@ window.NeonShop = (() => {
     if (p.reg) { // a regular's stamp card: every fifth visit, one is free
       p.reg.visits = (p.reg.visits || 0) + 1; p.reg.stamps = (p.reg.stamps || 0) + 1;
       if (p.reg.stamps >= 5) { p.reg.stamps = 0; T.shopExtra(r.s, r.b.id, -price); r.stats.extras -= price; r.stats.rewards++; say(p, '🎁 Free one on my stamp card!', 2); }
-    } else if (!['thief', 'returner', 'caught'].includes(p.type) && r.b.regulars.length < 10 && Math.random() < 0.12) {
-      r.b.regulars.push({ name: p.name, look: p.look, stamps: 1, visits: 1 }); r.stats.newRegulars++;
+    } else if (!['thief', 'returner', 'caught'].includes(p.type) && r.b.regulars.length < (r.up.loyalty ? 14 : 10) && Math.random() < (r.up.loyalty ? 0.2 : 0.12)) {
+      r.b.regulars.push({ name: p.name, look: p.look, group: p.group, stamps: 1, visits: 1 }); r.stats.newRegulars++;
       say(p, `💳 I'll be back! (${p.name})`, 2);
     }
     if (p.order) { // a collected order: they pay a third more for you getting it in
@@ -2048,6 +2242,7 @@ window.NeonShop = (() => {
     if (r.up.coffee) { items.push({ y: COFFEE.y, draw: () => drawCoffee(ctx, W, H) }); items.push({ y: TABLE.y, draw: () => drawTable(ctx, W, H) }); }
     if (r.up.gates) for (const gx of [FRONT.door[0] + 0.01, FRONT.door[1] - 0.01]) items.push({ y: L.door + 0.02, draw: () => drawGate(ctx, gx, W, H) });
     // packs dropped on the floor
+    if (r.pipe && r.pipe.size > 0.01) items.push({ y: r.pipe.y - 0.05, draw: () => drawPuddle(ctx, W, H) });
     for (const f of r.floor) items.push({ y: f.y, draw: () => { ctx.save(); ctx.translate(f.x * W, f.y * H); ctx.rotate(f.rot); art.pack(ctx, r.b.good, 0, 2, scaleAt(f.y, H) * 0.3, 0, dpr); ctx.restore(); } });
     for (const p of r.people) if (!outside(p)) items.push({ y: p.y, draw: () => drawPerson(ctx, p, W, H, G) });
     items.push({ y: r.clerk.y, draw: () => drawPerson(ctx, r.clerk, W, H, G) });
@@ -2691,7 +2886,7 @@ window.NeonShop = (() => {
   function drawHoliday(ctx, W, H, gy0) {
     const r = run, h = r.holiday;
     if (!h) return;
-    const cols = { xmas: ['#ff3b3b', '#4ade80', '#ffd23f', '#05d9e8'], halloween: ['#ff7a00', '#9b5de5'], valentine: ['#ff5c8a', '#ffffff'], summer: ['#ffd23f', '#05d9e8'] }[h.id];
+    const cols = HOL_COLS[h.id] || HOL_COLS.summer;
     // a string of lights along the bottom of the sign board
     ctx.strokeStyle = '#1a1a22'; ctx.lineWidth = 1; ctx.beginPath();
     for (let x = 0; x <= W; x += 4) ctx.lineTo(x, gy0 + 4 + Math.sin(x / 18) * 3);
@@ -2714,6 +2909,9 @@ window.NeonShop = (() => {
     if (h.id === 'xmas') return [['xmastree', BX(0.37), 0.33]];
     if (h.id === 'halloween') return [['pumpkin', BX(0.37), 0.32], ['pumpkin', BX(0.63), 0.32]];
     if (h.id === 'valentine') return [['hearts', BX(0.37), 0.32]];
+    if (h.id === 'lunar') return [['lantern', BX(0.37), 0.32], ['lantern', BX(0.63), 0.32]];
+    if (h.id === 'neonfest') return [['glowsticks', BX(0.37), 0.33]];
+    if (h.id === 'school') return [['backpacks', BX(0.37), 0.33]];
     return [];
   }
   function drawHolidayProp(ctx, kind, x, y, W, H) {
@@ -2730,6 +2928,15 @@ window.NeonShop = (() => {
       ctx.beginPath(); ctx.moveTo(px - s * 0.12, py - s * 0.26); ctx.lineTo(px - s * 0.05, py - s * 0.26); ctx.lineTo(px - s * 0.085, py - s * 0.32); ctx.fill();
       ctx.beginPath(); ctx.moveTo(px + s * 0.05, py - s * 0.26); ctx.lineTo(px + s * 0.12, py - s * 0.26); ctx.lineTo(px + s * 0.085, py - s * 0.32); ctx.fill();
       ctx.fillRect(px - s * 0.1, py - s * 0.15, s * 0.2, s * 0.04);
+    } else if (kind === 'lantern') {
+      ctx.strokeStyle = '#2a2a35'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(px, py - s * 0.9); ctx.stroke();
+      ctx.fillStyle = '#ff3b3b'; ctx.beginPath(); ctx.ellipse(px, py - s * 1.05, s * 0.2, s * 0.17, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffd23f'; ctx.fillRect(px - s * 0.1, py - s * 1.23, s * 0.2, s * 0.04); ctx.fillRect(px - s * 0.1, py - s * 0.9, s * 0.2, s * 0.04);
+    } else if (kind === 'glowsticks') {
+      for (let i = 0; i < 5; i++) { ctx.strokeStyle = HOL_COLS.neonfest[i % 4]; ctx.lineWidth = Math.max(2, s * 0.06); ctx.beginPath(); ctx.moveTo(px + (i - 2) * s * 0.1, py - s * 0.2); ctx.lineTo(px + (i - 2) * s * 0.14, py - s * (0.75 + 0.1 * Math.sin(r.t * 4 + i))); ctx.stroke(); }
+      ctx.fillStyle = '#2a2a35'; ctx.fillRect(px - s * 0.3, py - s * 0.25, s * 0.6, s * 0.25);
+    } else if (kind === 'backpacks') {
+      for (let i = 0; i < 3; i++) { ctx.fillStyle = HOL_COLS.school[i]; roundRect(ctx, px + (i - 1.5) * s * 0.3, py - s * (0.45 + (i % 2) * 0.1), s * 0.26, s * 0.38, s * 0.06); ctx.fill(); }
     } else if (kind === 'hearts') {
       ctx.font = `${Math.round(s * 0.35)}px system-ui`; ctx.fillStyle = '#fff';
       for (let i = 0; i < 3; i++) ctx.fillText('💖', px + (i - 1) * s * 0.3, py - s * (0.3 + (i % 2) * 0.25) + Math.sin(r.t * 3 + i) * 2);
@@ -2742,7 +2949,8 @@ window.NeonShop = (() => {
     const kinds = { regular: `⭐ Regular · ${p.reg ? p.reg.stamps || 0 : 0}/5 stamps`, rushed: '⏱️ In a hurry', bargain: '🏷️ Bargain hunter', tourist: '📸 Tourist', influencer: '📱 Influencer', returner: '🔁 Bringing something back' };
     const doing = { look: 'Browsing', consider: 'Reading the label', pick: 'Picking up', queue: 'In the queue', toQueue: 'Heading to the till', wait: 'Waiting for stock', help: 'Wants help', fridge: 'Getting a drink', enter: 'Walking round', leaving: 'Leaving', sneak: 'Heading for the door' }[p.state] || 'Shopping';
     const moodTxt = { happy: '😊 Happy', meh: '😐 So-so', angry: '😠 Annoyed', sad: '😢 Unhappy' }[p.mood] || '🙂 Fine';
-    const lines = [`${p.name || 'Shopper'}`, kinds[p.type] || '🛍️ Shopper', `${doing} · ${moodTxt}`, `Wants ${p.qty}× ${G.icon} ${r.lines[p.line] || ''}${p.basket ? ` · has ${p.basket}` : ''}`];
+    const grp = GROUPS[p.group];
+    const lines = [`${p.name || 'Shopper'}`, [grp ? `${grp.icon} ${grp.name}` : '', kinds[p.type] || (grp ? '' : '🛍️ Shopper')].filter(Boolean).join(' · '), `${doing} · ${moodTxt}`, `Wants ${p.qty}× ${G.icon} ${r.lines[p.line] || ''}${p.basket ? ` · has ${p.basket}` : ''}`];
     const s = scaleAt(p.y, H), hd = head ? head(p) : [(p.x + (p.ox || 0)) * W, p.y * H - s * 2.3], x = clamp(hd[0], W * 0.22, W * 0.78), y = hd[1];
     ctx.font = '700 11px system-ui, sans-serif';
     const w = Math.max(...lines.map((l) => ctx.measureText(l).width)) + 16, hh = lines.length * 14 + 10;
@@ -3131,6 +3339,7 @@ window.NeonShop = (() => {
       }
     }
     NeonLooks.drawRunner(ctx, px, py, s, { front, phase: p.phase, stride, mood: p.mood }, NeonLooks.byId(NeonLooks.OUTFITS, p.look.outfit), r.t, p.look);
+    drawWear(ctx, p, px, py, s, front);
     // an umbrella when it's raining outside
     if ((r.weather === 'rain' || r.weather === 'snow') && p.y < L.wall + 0.005 && p.kind !== 'courier') {
       const ux = px + s * 0.1, uy = py - s * 2.05;
@@ -3177,6 +3386,33 @@ window.NeonShop = (() => {
     }
     if (p.bag) { ctx.font = `${Math.round(s * 0.45)}px system-ui, sans-serif`; ctx.fillStyle = '#fff'; ctx.fillText('🛍️', px + s * 0.35, py - s * 0.75); }
     drawTags(ctx, p, px, py, s, W, G);
+  }
+
+  // a burst pipe: water spreading over the floor, and a spray from the leak until it's fixed
+  function drawPuddle(ctx, W, H) {
+    const r = run, pp = r.pipe, s = scaleAt(pp.y, H), rad = s * (0.3 + pp.size * 1.6);
+    ctx.fillStyle = 'rgba(120,190,255,.38)'; ctx.beginPath(); ctx.ellipse(pp.x * W, pp.y * H, rad, rad * 0.35, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(220,240,255,.5)'; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(pp.x * W, pp.y * H, rad * (0.5 + 0.3 * Math.sin(r.t * 3)), rad * 0.17, 0, 0, Math.PI * 2); ctx.stroke();
+    if (!pp.fixed) {
+      ctx.fillStyle = '#9aa0b5'; ctx.fillRect(pp.x * W - 3, pp.y * H - s * 0.12, 6, s * 0.12);
+      ctx.fillStyle = 'rgba(160,215,255,.85)';
+      for (let i = 0; i < 10; i++) { const k = (r.t * 2.5 + i / 10) % 1; ctx.beginPath(); ctx.arc(pp.x * W + Math.sin(i * 2.3) * k * s * 0.4, pp.y * H - s * 0.12 - Math.sin(k * Math.PI) * s * 0.5, 1.6, 0, Math.PI * 2); ctx.fill(); }
+    }
+  }
+  // scarves, hats and sunglasses for the season; a backpack, briefcase or walking stick for who they are
+  function drawWear(ctx, p, px, py, s, front) {
+    const wear = p.look.wear, lift = p.moving ? 0.02 * s : 0;
+    if (!wear || !wear.length) return;
+    const col = CAR_COLORS[(p.look.skin * 3 + p.look.hairColor) % CAR_COLORS.length];
+    const y = (h) => py - h * s - lift;
+    if (wear.includes('backpack') && !front) { ctx.fillStyle = '#3b4a6b'; roundRect(ctx, px - s * 0.15, y(1.42), s * 0.3, s * 0.36, s * 0.06); ctx.fill(); ctx.fillStyle = col; ctx.fillRect(px - s * 0.1, y(1.2), s * 0.2, s * 0.06); }
+    if (wear.includes('backpack') && front) { ctx.fillStyle = '#3b4a6b'; ctx.fillRect(px - s * 0.17, y(1.42), s * 0.04, s * 0.3); ctx.fillRect(px + s * 0.13, y(1.42), s * 0.04, s * 0.3); }
+    if (wear.includes('scarf')) { ctx.fillStyle = col; roundRect(ctx, px - s * 0.13, y(1.53), s * 0.26, s * 0.08, s * 0.03); ctx.fill(); ctx.fillRect(px + (front ? -0.08 : 0.04) * s, y(1.47), s * 0.06, s * 0.2); }
+    if (wear.includes('beanie')) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(px, y(1.74), s * 0.14, Math.PI, 0); ctx.fill(); ctx.fillStyle = 'rgba(255,255,255,.8)'; ctx.beginPath(); ctx.arc(px, y(1.9), s * 0.035, 0, Math.PI * 2); ctx.fill(); }
+    if (wear.includes('shades') && front) { ctx.fillStyle = '#111'; roundRect(ctx, px - s * 0.1, y(1.73), s * 0.2, s * 0.05, s * 0.02); ctx.fill(); }
+    if (wear.includes('briefcase')) { ctx.fillStyle = '#4a2f1d'; roundRect(ctx, px + s * 0.2, y(0.66), s * 0.2, s * 0.15, s * 0.02); ctx.fill(); ctx.fillStyle = '#c9a227'; ctx.fillRect(px + s * 0.29, y(0.64), s * 0.03, s * 0.03); }
+    if (wear.includes('clipboard')) { ctx.fillStyle = '#c9a26b'; ctx.fillRect(px - s * 0.38, y(1.05), s * 0.18, s * 0.24); ctx.fillStyle = '#fff'; ctx.fillRect(px - s * 0.36, y(1.02), s * 0.14, s * 0.18); }
+    if (wear.includes('cane')) { ctx.strokeStyle = '#6b4423'; ctx.lineWidth = Math.max(1.5, s * 0.035); ctx.beginPath(); ctx.moveTo(px + s * 0.28, y(0.62)); ctx.lineTo(px + s * 0.34, py); ctx.stroke(); }
   }
 
   // name badges, the queue's patience bars and speech bubbles, over a person (both views)
@@ -3454,8 +3690,9 @@ window.NeonShop = (() => {
     nightShift, night: nightInfo, endNight: () => { if (run && run.night) endNight(); },
     getView, setView, has3D, nudgeLine, linePrice, answerRequest, request: requestInfo, team, setJob, JOBS, toggleWalk, canWalk, walking: () => !!(run && run.me), actions: () => nearby().map(({ id, label }) => ({ id, label })), act: doAction, goal: goalInfo,
     plan: { PROMOS, trend: trending, shapes: planShapes, draw: drawPlan, hit: planHit, move: planMove, lineNames, unitLines, PROP_KINDS, colors: LINE_COLORS },
-    layout: () => ({ ANNEX, LEVEL2_DX, LEVEL2_Y, BAY_X, BAY_Z, L, UNITS, ROWS, unitLine: run && run.unitLine, lines: run && run.lines, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
+    layout: () => ({ HOL_COLS, MUD_SPOT, ANNEX, LEVEL2_DX, LEVEL2_Y, BAY_X, BAY_Z, L, UNITS, ROWS, unitLine: run && run.unitLine, lines: run && run.lines, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
     _drawPOS: (...a) => drawPOS(...a),
+    eventInfo, callPlumber, fixPipe,
     toggleTill2, resolveReturn, pendingReturn: () => !!(run && run.pendingReturn), active: () => !!run, current: () => run,
   };
 })();

@@ -212,7 +212,7 @@ window.NeonLooks = (() => {
     if (typeof lk === 'number') lk = { skin: lk };
     const of = outfit;
     const skin = SKINS[lk.skin === undefined ? 2 : lk.skin] || SKINS[2];
-    const hairColor = HAIR_COLORS[lk.hairColor || 0] || HAIR_COLORS[0];
+    const hairColor = lk.grey ? '#cfcfd8' : HAIR_COLORS[lk.hairColor || 0] || HAIR_COLORS[0];
     let jacket = of.jacket, sleeve = of.arms;
     if (of.holo) {
       const h = (t * 90) % 360;

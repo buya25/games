@@ -233,3 +233,22 @@ svg.rchart .lbl { fill: #fff; font-size: 10px; font-weight: 800; }
 .repchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
 .repchip { padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--card); border: 1px solid var(--line); }
 .repchip.good { border-color: #4ade80; color: #b9f5cf; } .repchip.bad { border-color: #ff6b6b; color: #ffc4c4; }
+/* forecast strip, getting started, tips */
+.forecast { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.forecast > div { padding: 8px 10px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); font-size: 12px; color: var(--ink2); display: flex; flex-direction: column; gap: 2px; }
+.forecast b { font-size: 12px; color: var(--ink); }
+.btn.mini { margin-left: auto; padding: 4px 10px; font-size: 12px; }
+.btn.on { border-color: var(--cyan); color: var(--cyan); }
+.card.start { border-color: var(--gold); }
+.card.start ol { list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.card.start li.done { text-decoration: line-through; opacity: .6; } .card.start li.now { color: var(--ink); font-weight: 800; }
+.card.hintcard { border-color: var(--cyan); }
+.card.hintcard .btn.mini { display: block; margin: 8px 0 0 auto; }
+main > * { flex-shrink: 0; }
+/* today's event: a second pill under the goal (tap it for a plumber) */
+.eventpill { position: absolute; left: 8px; top: 40px; max-width: calc(100% - 16px); padding: 5px 10px; border-radius: 999px; font-size: 12px; font-weight: 800; text-align: left;
+  color: #fff; background: rgba(11, 2, 33, .82); border: 1px solid var(--gold); z-index: 3; }
+.eventpill.tap { border-color: var(--cyan); animation: pulse 1.2s ease-in-out infinite; }
+.eventpill.done { border-color: #4ade80; color: #b9f5cf; } .eventpill.failed { border-color: #ff6b6b; color: #ffb4b4; }
+.shopview.photo .eventpill { visibility: hidden; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 4px rgba(5, 217, 232, .35); } }
