@@ -22,7 +22,7 @@
     <p class="tag">Trade across the city, build stalls and factories, play the stock market. 120 days to make your fortune.</p>
     <div id="challengeBox" class="challenge hidden"></div>
     <button id="visitBtn" class="big alt hidden"></button>
-    <div class="titlerow"><button id="chBtn" class="btn">🏆 Challenge days</button><button id="setBtn" class="btn">⚙️ Settings</button></div>
+    <div class="titlerow"><button id="wkBtn" class="btn">🗓️ This week</button><button id="chBtn" class="btn">🏆 Challenge days</button><button id="setBtn" class="btn">⚙️ Settings</button><button id="guideBtn" class="btn">📖 Guide</button></div>
     <button id="continueBtn" class="big hidden">CONTINUE · DAY <span id="contDay"></span></button>
     <button id="newBtn" class="big alt">NEW SEASON</button>
     <details class="how">
@@ -44,6 +44,7 @@
         <li><b>Word of mouth and running costs:</b> what shoppers say about your prices, stock, queue and service brings more (or fewer) of them. Sign a 📜 supplier contract in Order stock for a locked price; rents are reviewed every 30 days; 10% tax on each week's profit. 📒 Cash flow is on the Bank tab.</li>
         <li><b>A living city:</b> check the ☀️ forecast (weather changes what sells), watch the rival (🤝 price match or a 💳 loyalty scheme keeps shoppers), hire a 🧑‍💼 manager for shops you're not running, place 🪑 furniture in Arrange, and handle the day's event: an inspector, a celebrity, a burst pipe or a food critic. 🔗 Share shop sends a friend a link to look round.</li>
         <li><b>Build it up:</b> 🏬 rent storage in a district (it keeps your shops there stocked), 🏗️ Grow a shop (bigger stockroom, more floor, staff room, buy the building, a 🥡 side counter), 📣 run marketing and post photos to NeonGram, and take 📱 online orders. 🏆 Challenge days and ⚙️ Settings are on the title screen and the Stats tab.</li>
+        <li><b>Run a chain:</b> 👁️ first person in 3D Walk, 🏷️ your own brand, 🚚 truck routes, 📊 the chain dashboard, late or 24-hour opening (🏗️ Grow), staff careers (👥), 🛡️ insurance (🏦 Bank) and a shop pet (🎨 Decorate). 📖 Guide on the title screen explains everything.</li>
         <li><b>3D shop:</b> your shop is built in 3D. Drag to turn it all the way round (360°), two fingers to slide, pinch to zoom; 📷 hides the buttons for a photo. A megastore opens an annex through the right-hand wall, with stairs up to Level 2. Prefer the drawn look? Pick 🖼️ Classic under 🎨 Decorate → Shop view.</li>
         <li><b>Exchange:</b> buy shares in Neon City companies; news moves them.</li>
         <li><b>Bank:</b> the loan costs 0.5% a day; savings earn 0.1% and are safe from pickpockets.</li>
@@ -81,9 +82,9 @@
       <div class="stat"><small>Time</small><b id="shopClock"></b></div>
       <div class="stat grow"><small id="shopTitle"></small><b id="shopTake">$0</b></div>
       <div class="stat"><small>Shelf · back</small><b id="shopStock"></b></div>
-      <button id="shopPhoto" class="btn" aria-label="Photo mode">📷</button><button id="shopTeam" class="btn hidden" aria-label="Your team">👥</button><button id="shopOnline" class="btn hidden" aria-label="Online orders">📱</button><button id="shopZoom" class="btn hidden">🔍 1×</button><button id="shopClose" class="btn">Close</button>
+      <button id="shopPhoto" class="btn" aria-label="Photo mode">📷</button><button id="shopTeam" class="btn hidden" aria-label="Your team">👥</button><button id="shopOnline" class="btn hidden" aria-label="Online orders">📱</button><button id="shopFP" class="btn hidden" aria-label="First-person view">👁️</button><button id="shopZoom" class="btn hidden">🔍 1×</button><button id="shopClose" class="btn">Close</button>
     </div>
-    <div id="shopStage"><canvas id="shop3d" aria-hidden="true"></canvas><canvas id="shopCanvas"></canvas><div id="shopGoal" class="goalpill"></div><button id="shopEvent" class="eventpill hidden"></button><div id="shopCoach" class="coach hidden"><p id="coachText"></p><div class="btns"><button class="btn" id="coachSkip">Skip tips</button><button class="btn primary" id="coachNext">Next ▸</button></div></div><div class="photobar"><button class="btn" id="photoDone">✕ Done</button><button class="btn" id="photoPost">📤 Post</button><button class="btn primary" id="photoSnap">📸 Save picture</button></div></div>
+    <div id="shopStage"><canvas id="shop3d" aria-hidden="true"></canvas><canvas id="shopCanvas"></canvas><div id="shopGoal" class="goalpill"></div><button id="shopEvent" class="eventpill hidden"></button><div id="fpStick" class="fpstick hidden" aria-label="Walk"><i></i></div><div id="shopCoach" class="coach hidden"><p id="coachText"></p><div class="btns"><button class="btn" id="coachSkip">Skip tips</button><button class="btn primary" id="coachNext">Next ▸</button></div></div><div class="photobar"><button class="btn" id="photoDone">✕ Done</button><button class="btn" id="photoPost">📤 Post</button><button class="btn primary" id="photoSnap">📸 Save picture</button></div></div>
     <div class="shopbar">
       <div id="shopReturn" class="returnrow hidden"><span>🔁 A return:</span><button class="btn" data-ret="refund">💵 Refund</button><button class="btn" data-ret="swap">🔄 Swap</button><button class="btn danger" data-ret="refuse">✋ Refuse</button></div>
       <div id="shopRequest" class="returnrow hidden"><span id="reqText"></span><button class="btn" data-req="yes">✅ Accept</button><button class="btn" data-req="no">✋ No</button></div>

@@ -51,10 +51,12 @@ window.NeonShop = (() => {
     student: { icon: '🎒', name: 'Student', limit: 0.88, patience: 1.1, spd: 1.05, qty: 0.8, peak: [0.68, 0.12], weekend: 1.6, wear: 'backpack' },
     family: { icon: '👨‍👩‍👧', name: 'Family', limit: 1, patience: 0.9, spd: 0.9, qty: 1.7, peak: [0.5, 0.16], weekend: 2.2 },
     senior: { icon: '🧓', name: 'Senior', limit: 1.03, patience: 1.5, spd: 0.72, qty: 0.9, peak: [0.25, 0.18], weekend: 1, wear: 'cane' },
+    nightowl: { icon: '🦉', name: 'Night owl', limit: 1.12, patience: 0.9, spd: 1, qty: 1.1, peak: [0.95, 0.1], weekend: 1.4, late: true },
   };
   const weekend = (s) => s.day % 7 === 6 || s.day % 7 === 0;
   function pickGroup(k) {
-    const w = Object.entries(GROUPS).map(([id, g]) => [id, (0.6 + 1.6 * bump(k, g.peak[0], g.peak[1])) * (weekend(run.s) ? g.weekend : 1)]);
+    const late = run.b.hours && run.b.hours !== 'day'; // night owls only come to a shop that's open late
+    const w = Object.entries(GROUPS).filter(([, g]) => !g.late || late).map(([id, g]) => [id, (g.late ? 2.2 * bump(k, g.peak[0], g.peak[1]) : 0.6 + 1.6 * bump(k, g.peak[0], g.peak[1])) * (weekend(run.s) ? g.weekend : 1)]);
     let x = Math.random() * w.reduce((a, [, v]) => a + v, 0);
     for (const [id, v] of w) { x -= v; if (x <= 0) return id; }
     return 'worker';
@@ -648,7 +650,7 @@ window.NeonShop = (() => {
     b.regulars = b.regulars || [];
     const staff = T.staffOf(b);
     // a present owner draws a bigger crowd than the automatic day (35% more shoppers)
-    const ads = T.adMod(s, b), floorK = 1 + 0.12 * T.expOf(b).floor;
+    const ads = T.adMod(s, b) * T.hoursOf(b).demand * T.brandMod(s, b), floorK = 1 + 0.12 * T.expOf(b).floor;
     const entrants = Math.max(3, Math.round(Math.min(CUSTOMERS[tier] * (1 + 0.15 * T.expOf(b).floor), units * 1.35 * floorK) * crowd * ads * T.followerMod(s)) + Math.floor(b.regulars.length / 2));
     for (const a of T.adsOf(s, b)) a.shop = (a.shop || 0) + Math.round(entrants * (1 - 1 / ads) * (T.CAMPAIGNS[a.id].boost / Math.max(0.01, ads - 1)));
     const qtyMean = Math.max(1, (units * 1.35 * floorK * crowd * ads * T.followerMod(s)) / entrants);
@@ -662,12 +664,12 @@ window.NeonShop = (() => {
       pile: 0, incoming: 0, deliveries: [], van: null,
       people: [], effects: [], boxes: [], dust: [],
       // your staff at the tills: each has a skill, gets tired, and takes a break when worn out
-      staff: staff.map((m, i) => ({ m, timer: 1 + i * 1.3, energy: 100, brk: 0, served: 0, look: lookFor(m.look || i * 7919 + b.id), job: 'till', body: null })),
+      staff: staff.map((m, i) => ({ m, timer: 1 + i * 1.3, energy: 100, brk: 0, served: 0, look: lookFor(m.look || i * 7919 + b.id), job: m.strike === s.day ? 'break' : 'till', strike: m.strike === s.day, body: null })),
       served: 0, sold: 0, revenue: 0, lostPrice: 0, lostWait: 0, lostStock: 0, closed: false, last: performance.now(), raf: 0,
       sellerLook: (() => { try { return Object.assign({ outfit: 'classic', skin: 2, hair: 'short', hairColor: 0 }, JSON.parse(localStorage.getItem('neonDash.look') || '{}')); } catch { return {}; } })(),
       rival: T.rival(s, b), holiday: T.holiday(s.day), season: T.season(s.day), event, eventAt: rand(18, 48), eventT: 0,
       reduced: (T.freshness(s, b) || { reduced: 0 }).reduced,
-      patienceMul: staff.some((m) => m.skill === 'friendly') ? 1.25 : 1,
+      patienceMul: (staff.some((m) => m.skill === 'friendly') ? 1.25 : 1) * (1 + 0.08 * staff.filter((m) => m.strike !== s.day && T.traitOf(m) === 'cheerful').length),
       clerkSpeed: Math.min(1.8, 1 + 0.4 * staff.filter((m) => m.skill === 'stocker').length),
       dogs: [], parade: [], police: null, pendingReturn: null, zoom: { z: 1, tx: 0, ty: 0 }, info: null, inv: null,
       clerk: { kind: 'clerk', look: { outfit: 'dj', skin: (Math.random() * 5) | 0, hair: 'short', hairColor: 2 }, x: CLERK_HOME.x, y: CLERK_HOME.y, state: 'idle', carry: 0, phase: 0, facing: 'front' },
@@ -710,6 +712,9 @@ window.NeonShop = (() => {
     for (const rq of b.requests.filter((x) => x.due < s.day)) loseOrder(rq);
     run.collect = b.requests.filter((x) => x.made < s.day).map((rq, i) => ({ rq, at: rand(6, 14) + i * 9 }));
     run.promos = promosOf(b);
+    window.NeonShopArt.setBrand(b.ownLabel && s.brand ? s.brand : null); // own-label packs in your brand's colours
+    const petKind = run.decor.pet && run.decor.pet.id !== 'none' ? run.decor.pet.id : null;
+    run.pet = petKind ? { kind: petKind, x: petKind === 'parrot' ? 0.86 : 0.62, y: petKind === 'parrot' ? 0.74 : 0.6, state: 'idle', t: 2, facing: 0, phase: 0, talk: 0, pets: 0 } : null;
     run.furn = furnOf(b);
     try { run.trophies = Object.keys((JSON.parse(localStorage.getItem('neonTycoon.ach') || '{}').got) || {}).length; } catch { run.trophies = 0; }
     const has = (id) => run.furn.some((f) => f.id === id);
@@ -742,7 +747,7 @@ window.NeonShop = (() => {
       markStickers();
       if (run.r3d) { run.r3d.render(dt); drawOverlay3D(); } else draw();
       ui.onTick(run);
-      if (run && run.done) { if (run.r3d) run.r3d.detach(); ambience.stop(); const sum = summary(); const cb = ui.onEnd; run = null; cb(sum); return; }
+      if (run && run.done) { if (run.r3d) run.r3d.detach(); ambience.stop(); window.NeonShopArt.setBrand(null); const sum = summary(); const cb = ui.onEnd; run = null; cb(sum); return; }
       run.raf = requestAnimationFrame(loop);
     };
     run.raf = requestAnimationFrame(loop);
@@ -757,7 +762,7 @@ window.NeonShop = (() => {
       weather: r.weather, extras: Math.round(st.extras * 100) / 100, stolen: st.stolen, caught: st.caught, helped: st.helped,
       returns: st.returns, good: st.good, bad: st.bad, newRegulars: st.newRegulars, regulars: r.b.regulars.length, rewards: st.rewards,
       reducedSold: st.reducedSold, knocked: st.knocked, haul: st.haul, event: r.event, holiday: r.holiday,
-      staff: r.staff.map((x) => ({ name: x.m.name, served: x.served, morale: x.m.morale })),
+      staff: r.staff.map((x) => ({ name: x.m.name, served: x.served, morale: x.m.morale, strike: !!x.strike })), levelUps: r.levelUps || [],
       stars: r.stars, rating: r.b.rating, reviews: r.b.reviews || [],
       goal: r.goalResult || null, eventResult: r.eventResult || null, critic: r.critic || null, splashed: st.splashed || 0, rep: r.b.rep, repBefore: r.repBefore, tidy: r.stats.tidy, nightDone: r.stats.nightDone, nightTotal: r.stats.nightTotal, orders: r.stats.orders || 0, ordersLost: r.ordersLost, openOrders: (r.b.requests || []).map((x) => ({ ...x, lineName: r.lines[x.line] })), lines: r.lines, lineSold: r.lineSold, trend: r.trend,
       heat: { x: HEAT_X, y: HEAT_Y, data: Array.from(r.heat) }, plan: planShapes(r.b),
@@ -773,8 +778,9 @@ window.NeonShop = (() => {
     const avgWait = st.waits.length ? st.waits.reduce((a, x) => a + x, 0) / st.waits.length : 0;
     let stars = 5 - (r.lostWait / seen) * 4 - (r.lostStock / seen) * 3 - Math.max(0, mult - 1.3) * 3 - (avgWait > 6 ? 0.5 : 0)
       + (st.helped ? 0.3 : 0) + (mult < T.RETAIL ? 0.3 : 0) - (st.stolen ? 0.3 : 0) + st.good * 0.2 - st.bad * 0.5;
-    // staff get worn down by a busy day
+    // staff get worn down by a busy day, and learn from it
     for (const s2 of r.staff) s2.m.morale = clamp(Math.round(s2.m.morale - s2.served * 1.2 + 6), 0, 100);
+    r.levelUps = T.staffXp(r.s, b.id, r.staff.map((s2, i) => [i, s2.served + 2]));
     if (!r.served) stars = Math.min(stars, 2.5);
     stars = clamp(Math.round(stars * 2) / 2, 1, 5);
     const good = ['Friendly and quick!', 'Great little shop.', 'Love the vibe in here.', 'Will be back!'];
@@ -790,6 +796,7 @@ window.NeonShop = (() => {
     if (st.rewards) notes.push('Love my stamp card!');
     if (r.decor.floor.cost || r.decor.plants.id === 'jungle' || r.decor.sign.cost || r.furn.length >= 2) notes.push('Lovely decor!');
     if (r.up.coffee) notes.push('The coffee corner is great.');
+    if (r.pet && (r.pet.pets || r.pet.kind === 'parrot')) { notes.unshift({ cat: 'Loved the shop cat!', dog: 'The shop dog is adorable!', parrot: 'The parrot said hello to me!' }[r.pet.kind]); stars += 0.2; }
     if (st.tidy >= 0.8) notes.unshift('Spotless when I came in!');
     while (notes.length < 3) notes.push(pick(good));
     const reviews = notes.slice(0, 3).map((text) => ({ stars: clamp(Math.round((stars + rand(-0.6, 0.6)) * 2) / 2, 1, 5), text }));
@@ -1323,6 +1330,7 @@ window.NeonShop = (() => {
       if (r.eventT > len) { r.eventT = -1; r.power = false; if (r.event === 'power') r.effects.push({ kind: 'text', text: '💡 Power back on', x: 0.5, y: 0.45, t: 0, color: '#4ade80' }); }
     }
     stepEvent(dt, opening);
+    stepPet(dt);
     stepOnline(dt, open);
     if (open) for (const f of r.furn) { // the vending machine and the arcade machine earn a little
       if ((f.id === 'vending' && Math.random() < dt * 0.07) || (f.id === 'arcade' && r.people.some((p) => p.child && p.y > L.wall) && Math.random() < dt * 0.1)) {
@@ -1360,13 +1368,15 @@ window.NeonShop = (() => {
       const p = queue().find(atTill);
       if (!p) { st.timer = 0.3; return; }
       startServe(p, 0.8, i);
-      st.served++; st.energy -= 7;
-      // worn out, they fumble: a pack slips off the counter
-      if (st.energy < 35 && p.basket > 1 && Math.random() < 0.2) {
+      const tr = T.traitOf(st.m);
+      st.served++; st.energy -= 7 * (tr === 'lazy' ? 1.4 : 1);
+      if (tr === 'chatty') hear('service', 0.4);
+      // worn out, they fumble: a pack slips off the counter (a perfectionist never does)
+      if (tr !== 'perfectionist' && st.energy < 35 && p.basket > 1 && Math.random() < 0.2) {
         p.basket--; r.floor.push({ x: 0.5 + rand(-0.08, 0.08), y: L.counter - 0.025, n: 1, rot: rand(-1.2, 1.2), line: p.got });
         say(p, `😬 ${st.m.name} dropped one!`, 1.4); r.stats.fumbles = (r.stats.fumbles || 0) + 1; hear('service', -1);
       }
-      st.timer = (st.m.skill === 'cashier' ? 3 : STAFF_SERVE) * (st.energy < 40 ? 1.4 : 1) * (0.8 + Math.random() * 0.4);
+      st.timer = (st.m.skill === 'cashier' ? 3 : STAFF_SERVE) * (st.energy < 40 ? 1.4 : 1) * (0.8 + Math.random() * 0.4) * careerSpeed(st);
       if (st.energy < 25) { // worn out: a short break
         st.brk = 8; st.timer = 8.5;
         r.effects.push({ kind: 'text', text: `☕ ${st.m.name} takes a break`, x: 0.25 + i * 0.15, y: L.counter - 0.05, t: 0, color: '#7fe9ff' });
@@ -1606,6 +1616,37 @@ window.NeonShop = (() => {
   }
   function puff(x, y) {
     for (let i = 0; i < 8; i++) run.dust.push({ x, y, vx: rand(-0.12, 0.12), vy: rand(-0.06, 0), t: 0 });
+  }
+
+  // ---------- the shop pet: wanders, naps (a cat on the counter), and makes shoppers smile ----------
+  const PET_SPOTS = [[0.5, 0.45], [0.3, 0.62], [0.72, 0.62], [0.5, 0.68], [0.2, 0.4], [0.8, 0.4], [0.5, 0.36]];
+  function stepPet(dt) {
+    const r = run, pt = r.pet;
+    if (!pt) return;
+    if (pt.talk > 0) pt.talk -= dt;
+    if (pt.kind === 'parrot') { // on its perch by the till, greeting people
+      if (r.people.some((p) => p.kind === 'shopper' && p.state === 'enter' && !p.parroted && (p.parroted = true)) && Math.random() < 0.5) { pt.talk = 1.2; r.effects.push({ kind: 'text', text: pick(['🦜 Hello!', '🦜 Welcome!', '🦜 Bargains!', '🦜 Pretty shop!']), x: pt.x, y: pt.y - 0.2, t: 0, color: '#4ade80' }); }
+    } else {
+      pt.t -= dt;
+      if (pt.state === 'walk') {
+        const [tx, ty] = pt.target, was = { x: pt.x, y: pt.y };
+        const p0 = { x: pt.x, y: pt.y, phase: pt.phase };
+        const done = moveToward(p0, tx, ty, dt, pt.kind === 'dog' ? 0.12 : 0.08);
+        pt.x = p0.x; pt.y = p0.y; pt.phase = p0.phase;
+        if (Math.hypot(pt.x - was.x, pt.y - was.y) > 1e-5) pt.facing = Math.atan2(xOf(pt.x, pt.y) - xOf(was.x, was.y), zOf(pt.y) - zOf(was.y));
+        if (done) { pt.state = pt.onCounter ? 'nap' : 'idle'; pt.t = pt.onCounter ? rand(10, 18) : rand(2, 5); }
+      } else if (pt.t <= 0) {
+        pt.onCounter = pt.kind === 'cat' && Math.random() < 0.3; // up on the counter for a nap
+        const sp = pt.onCounter ? [0.66, L.counter - 0.005] : pick(PET_SPOTS).slice();
+        if (!blocked(sp[0], sp[1], 0.3) || pt.onCounter) { pt.target = sp; pt.state = 'walk'; } else pt.t = 1;
+      }
+      // a shopper nearby stops to say hello
+      for (const p of r.people) {
+        if (p.kind !== 'shopper' || p.petted || p.y < L.wall || metres(p, pt) > 1.3) continue;
+        p.petted = true;
+        if (Math.random() < 0.35) { say(p, pick(pt.kind === 'cat' ? ['🐱 Aww, a shop cat!', '🐱 Hello kitty!'] : ['🐶 Who\'s a good dog?', '🐶 Aww!']), 1.6); react(p, '😍'); hear('service', 0.5); pt.pets++; p.patience *= 1.05; }
+      }
+    }
   }
 
   // ---------- online orders: they come in on the tablet; pack them and a rider takes them out ----------
@@ -1976,7 +2017,16 @@ window.NeonShop = (() => {
   }
   function stepMe(dt) {
     const r = run, me = r.me;
-    if (!me) return;
+    if (!me) { if (r.fp) r.fp = null; return; }
+    if (r.fp && (r.fp.mx || r.fp.my) && me.state !== 'choring' && me.state !== 'return' && !me.climb) { // first person: the joystick walks you
+      const yaw = r.fp.yaw, fwd = -r.fp.my, side = r.fp.mx, sp = 1.9 * dt;
+      const dX = (Math.sin(yaw) * fwd + Math.cos(yaw) * side) * sp, dZ = (-Math.cos(yaw) * fwd + Math.sin(yaw) * side) * sp;
+      const X = xOf(me.x, me.y) + dX, Z = zOf(me.y) + dZ, zone = zoneOf(me);
+      const inMain = X > -RW / 2 + 0.3 && X < RW / 2 - 0.3 && Z > 1.1 && Z < 8.95;
+      if (zone === 'main' && inMain) { const [nx, ny] = toFlat(X, Z); if (!blocked(nx, ny, 0.2)) { me.x = nx; me.y = ny; me.path = []; me.goal = null; me.moving = true; me.phase += sp * 14; r.away = 1; } }
+      if (Math.floor((me.phase - sp * 14) / 3) !== Math.floor(me.phase / 3)) sfx.step(0.03, 0);
+      return;
+    }
     me.moving = false; r.away = 1;
     if (me.bubbleT !== undefined) me.bubbleT -= dt;
     if (r.ending && me.state !== 'return') goBack();
@@ -2045,7 +2095,7 @@ window.NeonShop = (() => {
   const guard = () => run.staff.find((st) => st.job === 'door' && st.body && st.body.state === 'guard');
   function setJob(i, job) {
     const r = run, st = r && r.staff[i];
-    if (!st || !JOBS[job] || r.ending) return false;
+    if (!st || !JOBS[job] || r.ending || st.strike) return false; // on strike: they won't work today
     if (st.job === job) return true;
     st.job = job; st.brk = 0;
     if (job === 'online' && !r.up.online) { st.job = 'till'; return false; }
@@ -2066,7 +2116,7 @@ window.NeonShop = (() => {
       st.energy = Math.max(0, st.energy - dt * 0.4);
       if ((st.timer -= dt) <= 0) { st.timer = 4.5 * (st.energy < 30 ? 1.4 : 1); const o = r.online.find((x) => x.state === 'new' && onlineStock(x)); if (o) packOrder(o.id, st.m.name); }
     }
-    if (st.job === 'break' && st.energy >= 100) { setJob(i, 'till'); r.effects.push({ kind: 'text', text: `💪 ${st.m.name} is back on the till`, x: 0.5, y: L.counter - 0.1, t: 0, color: '#4ade80' }); }
+    if (st.job === 'break' && st.energy >= 100 && !st.strike) { setJob(i, 'till'); r.effects.push({ kind: 'text', text: `💪 ${st.m.name} is back on the till`, x: 0.5, y: L.counter - 0.1, t: 0, color: '#4ade80' }); }
     if (!b) return;
     b.moving = false;
     if (b.bubbleT !== undefined) b.bubbleT -= dt;
@@ -2083,8 +2133,10 @@ window.NeonShop = (() => {
       if (b.state === 'guard') b.facing = 'back';
     }
   }
+  // experience, personality and a supervisor change how quickly each helper works
+  const careerSpeed = (st) => { const tr = T.traitOf(st.m); return (1 - 0.05 * (T.staffLevel(st.m) - 1)) * (tr === 'speedy' ? 0.85 : tr === 'perfectionist' ? 1.1 : 1) * (run.staff.some((x) => x.m.sup && !x.strike) ? 0.95 : 1); };
   // the team, for the sheet: names, skills, energy, morale, job
-  const team = () => (run ? run.staff.map((st, i) => ({ i, name: st.m.name, skill: st.m.skill, icon: T.SKILLS[st.m.skill].icon, energy: Math.round(st.energy), morale: Math.round(st.m.morale), job: st.job, brk: st.brk > 0, served: st.served })) : []);
+  const team = () => (run ? run.staff.map((st, i) => ({ i, name: st.m.name, skill: st.m.skill, icon: T.SKILLS[st.m.skill].icon, energy: Math.round(st.energy), morale: Math.round(st.m.morale), job: st.job, brk: st.brk > 0, served: st.served, strike: !!st.strike, level: T.staffLevel(st.m), trait: T.TRAITS[T.traitOf(st.m)], sup: !!st.m.sup })) : []);
 
   // who: -1 for you, or the helper's index
   function startServe(p, time, who = -1) {
@@ -2366,6 +2418,7 @@ window.NeonShop = (() => {
     const plants = r.decor.plants.id;
     for (const [kind, x, y] of holidayProps()) items.push({ y, draw: () => drawHolidayProp(ctx, kind, x, y, W, H) });
     for (const f of r.furn) items.push({ y: f.y, draw: () => drawFurn(ctx, f, W, H) });
+    if (r.pet) items.push({ y: r.pet.y + (r.pet.onCounter && r.pet.state === 'nap' ? 0.05 : 0), draw: () => drawPet(ctx, W, H) });
     for (const [kind, x, y] of PROPS.concat(plants === 'jungle' ? JUNGLE : [])) {
       if (kind === 'plant' && plants === 'none') continue;
       items.push({ y, draw: () => drawProp(ctx, kind, x, y, W, H) });
@@ -3259,6 +3312,28 @@ window.NeonShop = (() => {
   }
 
   // floor props: a plant, baskets, a wet-floor sign, a bin and a sweets rack by the till
+  // the shop pet, drawn
+  function drawPet(ctx, W, H) {
+    const r = run, pt = r.pet, s = scaleAt(pt.y, H), x = pt.x * W, nap = pt.state === 'nap', y = pt.y * H - (nap && pt.onCounter ? s * 0.55 : 0);
+    if (pt.kind === 'parrot') {
+      ctx.strokeStyle = '#6b4423'; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(x, pt.y * H); ctx.lineTo(x, pt.y * H - s * 1.5); ctx.moveTo(x - s * 0.2, pt.y * H - s * 1.5); ctx.lineTo(x + s * 0.2, pt.y * H - s * 1.5); ctx.stroke();
+      const by = pt.y * H - s * 1.5 - Math.abs(Math.sin(r.t * (pt.talk > 0 ? 12 : 2))) * 2;
+      ctx.fillStyle = '#22c55e'; ctx.beginPath(); ctx.ellipse(x, by - s * 0.14, s * 0.09, s * 0.14, 0, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ff2a6d'; ctx.beginPath(); ctx.arc(x, by - s * 0.3, s * 0.07, 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#ffd23f'; ctx.beginPath(); ctx.moveTo(x + s * 0.05, by - s * 0.3); ctx.lineTo(x + s * 0.12, by - s * 0.27); ctx.lineTo(x + s * 0.05, by - s * 0.25); ctx.fill();
+      return;
+    }
+    const k = pt.kind === 'dog' ? 1.3 : 1, fur = pt.kind === 'cat' ? '#f0a35e' : '#a8713a', ss = s * k;
+    ctx.fillStyle = 'rgba(0,0,0,.25)'; ctx.beginPath(); ctx.ellipse(x, pt.y * H, ss * 0.22, ss * 0.05, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = fur;
+    if (nap) { ctx.beginPath(); ctx.ellipse(x, y - ss * 0.1, ss * 0.2, ss * 0.1, 0, 0, Math.PI * 2); ctx.fill(); ctx.beginPath(); ctx.arc(x + ss * 0.14, y - ss * 0.14, ss * 0.08, 0, Math.PI * 2); ctx.fill(); ctx.fillStyle = '#fff'; ctx.font = `${Math.round(ss * 0.2)}px system-ui`; ctx.fillText('💤', x + ss * 0.2, y - ss * 0.35); return; }
+    const bob = Math.abs(Math.sin(pt.phase || 0)) * 1.5;
+    ctx.beginPath(); ctx.ellipse(x, y - ss * 0.2 - bob, ss * 0.18, ss * 0.1, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(x + ss * 0.16, y - ss * 0.3 - bob, ss * 0.09, 0, Math.PI * 2); ctx.fill();
+    ctx.fillRect(x - ss * 0.14, y - ss * 0.14 - bob, ss * 0.04, ss * 0.14); ctx.fillRect(x + ss * 0.1, y - ss * 0.14 - bob, ss * 0.04, ss * 0.14);
+    ctx.strokeStyle = fur; ctx.lineWidth = Math.max(1.5, ss * 0.03); ctx.beginPath(); ctx.moveTo(x - ss * 0.17, y - ss * 0.24 - bob); ctx.quadraticCurveTo(x - ss * 0.3, y - ss * (0.35 + 0.08 * Math.sin(r.t * (pt.kind === 'dog' ? 12 : 3))), x - ss * 0.26, y - ss * 0.45); ctx.stroke();
+    if (pt.kind === 'cat') { ctx.fillStyle = fur; for (const sx of [0.1, 0.21]) { ctx.beginPath(); ctx.moveTo(x + ss * sx - ss * 0.03, y - ss * 0.36 - bob); ctx.lineTo(x + ss * sx, y - ss * 0.45 - bob); ctx.lineTo(x + ss * sx + ss * 0.03, y - ss * 0.36 - bob); ctx.fill(); } }
+  }
   // furniture in the drawn shop (seen from the till end)
   function drawFurn(ctx, f, W, H) {
     const px = f.x * W, py = f.y * H, s = scaleAt(f.y, H), r = run, side = f.rot % 2 === 1, w = s * (side ? 0.6 : 1) * FURNITURE[f.id].size[0];
@@ -3821,7 +3896,7 @@ window.NeonShop = (() => {
       if (st.job !== 'till' && st.job !== 'break') return; // out on the shop floor
       if (st.brk > 0 || st.job === 'break') { // on a break
         ctx.fillStyle = 'rgba(11,2,33,.85)'; roundRect(ctx, sx - 30, H - sellerS * 0.7, 60, 16, 5); ctx.fill();
-        ctx.fillStyle = '#7fe9ff'; ctx.font = '800 10px system-ui, sans-serif'; ctx.fillText('☕ ON BREAK', sx, H - sellerS * 0.7 + 12);
+        ctx.fillStyle = st.strike ? '#ff9f6b' : '#7fe9ff'; ctx.font = '800 10px system-ui, sans-serif'; ctx.fillText(st.strike ? '🪧 ON STRIKE' : '☕ ON BREAK', sx, H - sellerS * 0.7 + 12);
         return;
       }
       NeonLooks.drawRunner(ctx, sx, H + sellerS * 0.55, sellerS * 0.85, pose(i), NeonLooks.byId(NeonLooks.OUTFITS, st.look.outfit), r.t, st.look);
@@ -3873,6 +3948,10 @@ window.NeonShop = (() => {
     layout: () => ({ LINE_COLORS, SIDE, HOL_COLS, MUD_SPOT, ANNEX, LEVEL2_DX, LEVEL2_Y, BAY_X, BAY_Z, L, UNITS, ROWS, unitLine: run && run.unitLine, lines: run && run.lines, FRONT, FRIDGE, PILE, PROPS, JUNGLE, KIOSK, COFFEE, TABLE, LAMPS, CLERK_HOME, VAN_X, BX, holidayProps, onSale, dayK, nightAt, skyAt }),
     _drawPOS: (...a) => drawPOS(...a),
     eventInfo, callPlumber, fixPipe,
+    // first person: on/off, the joystick (-1..1 each way), and whether it's on
+    firstPerson: (on) => { const r = run; if (!r || !r.r3d || !r.me) return false; r.fp = on ? { yaw: 0, pitch: -0.12, mx: 0, my: 0 } : null; return !!r.fp; },
+    fpStick: (mx, my) => { if (run && run.fp) { run.fp.mx = mx; run.fp.my = my; } },
+    isFirstPerson: () => !!(run && run.fp),
     toggleTill2, resolveReturn, pendingReturn: () => !!(run && run.pendingReturn), active: () => !!run, current: () => run,
   };
 })();

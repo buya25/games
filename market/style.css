@@ -283,3 +283,23 @@ html.text-large .shopbar, html.text-large .shophud { zoom: 1.08; } html.text-lar
 html.cb { --up: #3b9eff; --down: #ff9f1a; }
 html.cb .repchip.good { border-color: #3b9eff; color: #bcdcff; } html.cb .repchip.bad { border-color: #ff9f1a; color: #ffd9a8; }
 html.lefty .shopbtns { flex-direction: row-reverse; }
+/* brand designer, logistics form, chain dashboard, staff cards */
+.brandprev { width: 100%; height: 130px; border-radius: 12px; background: #1a0b3a; border: 1px solid var(--line); display: block; }
+.brandname { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--card); color: var(--ink); font-size: 18px; font-weight: 900; letter-spacing: 2px; text-transform: uppercase; }
+.swatches { display: flex; flex-wrap: wrap; gap: 8px; } .swatches button { width: 34px; height: 34px; border-radius: 50%; border: 2px solid var(--line); }
+.swatches button.on { border-color: #fff; box-shadow: 0 0 0 3px rgba(255, 255, 255, .35); }
+.routeform { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; } .routeform label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--muted); }
+.routeform select, .routeform input { padding: 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; }
+.dashwrap { overflow-x: auto; } .dash { width: 100%; border-collapse: collapse; font-size: 12px; }
+.dash th { text-align: left; color: var(--muted); font-weight: 700; padding: 6px 4px; border-bottom: 1px solid var(--line); }
+.dash td { padding: 6px 4px; border-bottom: 1px solid var(--line); vertical-align: top; } .dash tr.low td { background: rgba(255, 159, 26, .08); }
+.dash small { color: var(--muted); } .mini2 button { width: 24px; height: 22px; margin: 2px 2px 0 0; border-radius: 6px; border: 1px solid var(--line); background: var(--card); color: var(--ink); }
+.btns.tight { margin-top: 0; }
+.staffcard { padding: 8px; } .staffcard .row { padding: 0; background: none; border: none; } .staffcard select.btn { max-width: 200px; }
+/* first person: the walking stick, bottom left of the shop */
+.fpstick { position: absolute; left: 16px; bottom: 16px; width: 116px; height: 116px; border-radius: 50%; z-index: 4; touch-action: none;
+  background: radial-gradient(circle, rgba(255,255,255,.08), rgba(11,2,33,.55)); border: 2px solid rgba(255,255,255,.35); }
+.fpstick i { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; background: rgba(255,210,63,.85); box-shadow: 0 0 12px rgba(255,210,63,.6); }
+.shopview.photo .fpstick { visibility: hidden; }
+.guide { padding: 10px 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); margin-top: 8px; }
+.guide summary { font-weight: 800; cursor: pointer; } .guide p { margin-top: 6px; font-size: 13px; color: var(--ink2); line-height: 1.45; }

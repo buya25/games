@@ -124,6 +124,15 @@ shelf in your shop; the Travel sheet has a city map; ⚙️ Settings has text si
 left-handed buttons, vibration, music (which follows the time of day and holidays) and a tutorial replay; and
 after visiting a friend's shop you can send them a 💌 review that shows on their shop card.
 
+**Run a chain.** Walk your 3D shop in 👁️ first person (a joystick walks, dragging looks around). Launch your own
+🏷️ brand (a name, two colours and a logo, printed on own-label packs that cost 15% less to buy in; the brand's
+standing grows with good days). 🚚 Trucks run routes between workshops, warehouses and shops overnight (they show on
+the city map). The 📊 chain dashboard prices and restocks every shop at once. Shops can open late or 24 hours
+(night owls come in; more trade, a night crew and more break-ins). Staff level up, have personalities, ask for
+raises and may strike; make one a ⭐ supervisor or promote them to manage another shop. 🛡️ Insurance covers rare
+fires, break-ins, floods and broken equipment. Adopt a shop cat, dog or parrot (🎨 Decorate → Shop pet). A 🗓️ weekly
+tournament gives everyone the same challenge day, and 📖 Guide explains every system.
+
 Challenges: after a season, share a link; your friend plays the same seed (same prices, news and share
 moves) and sees your net worth next to theirs all season.
 
