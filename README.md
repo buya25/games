@@ -110,6 +110,20 @@ a big plant, a trend display), and 🔗 share a shop: the link opens a copy of i
 New players get a getting-started checklist and a coach on their first shop day; 🔋 battery saver caps the
 shop at 30 frames a second.
 
+**Build it up.** Rent 🏬 storage in a district (storage unit → warehouse → distribution centre): buy straight
+into it from the market, and it tops up your shops there every morning. 🏗️ Grow a shop without moving: a bigger
+stockroom, more floor (new shelf islands appear in the shop), a staff room for more workers; buy the building
+(cash or a 60-day mortgage) to stop paying rent and let the flat upstairs; add a 🥡 side counter selling a second
+product by the till. 📣 Marketing runs flyers (a promoter on the street), a billboard over the road or a radio ad,
+and 📤 posting photo-mode pictures to NeonGram gains followers who shop everywhere. With the 📱 online shop upgrade,
+delivery orders ping in on a tablet: pack them (or put a helper on 📱 Online orders) and a scooter rider takes them.
+
+**Beyond the season.** 🏆 Challenge days (a holiday rush, a price war, a rescue, an inspection, a snow day, a
+celebrity, a delivery rush) are scored in stars; 25 achievements pay arcade coins and stand as trophies on a
+shelf in your shop; the Travel sheet has a city map; ⚙️ Settings has text size, colour-blind friendly colours,
+left-handed buttons, vibration, music (which follows the time of day and holidays) and a tutorial replay; and
+after visiting a friend's shop you can send them a 💌 review that shows on their shop card.
+
 Challenges: after a season, share a link; your friend plays the same seed (same prices, news and share
 moves) and sees your net worth next to theirs all season.
 
