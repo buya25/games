@@ -121,10 +121,14 @@ window.NeonShopArt = (() => {
 
   const cache = new Map();
   // draw a pack with its bottom centre at (x, y), about `size` px tall
+  // your own brand: its two colours on every pack, and its name on a band (set while your own-label shop is open)
+  let brand = null;
+  function setBrand(b) { brand = b ? { name: b.name, a: b.a, b: b.b, logo: b.logo } : null; }
+  const brandKey = () => (brand ? `${brand.name}${brand.a}${brand.b}${brand.logo}` : '');
   function pack(ctx, good, x, y, size, v = 0, dpr = 1) {
-    const pal = PALETTES[good] || PALETTES.drinks;
+    const pal = brand ? [[brand.a, brand.b], [brand.b, brand.a], [brand.a, '#ffffff']] : PALETTES[good] || PALETTES.drinks;
     const px = Math.max(4, Math.round(size));
-    const key = `${good}|${px}|${v % pal.length}|${dpr}`;
+    const key = `${good}|${px}|${v % pal.length}|${dpr}|${brandKey()}`;
     let img = cache.get(key);
     if (!img) {
       const c = document.createElement('canvas');
@@ -133,6 +137,11 @@ window.NeonShopArt = (() => {
       const g = c.getContext('2d');
       g.scale(dpr, dpr); g.translate(c.width / dpr / 2, px * 1.2 + pad / 2);
       (DRAW[good] || DRAW.drinks)(g, px, pal[v % pal.length]);
+      if (brand && px >= 12) { // the brand's band across the middle
+        g.fillStyle = 'rgba(11,2,33,.82)'; g.fillRect(-px * 0.42, -px * 0.62, px * 0.84, px * 0.24);
+        g.fillStyle = '#fff'; g.font = `900 ${Math.max(5, Math.round(px * 0.15))}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'middle';
+        g.fillText(`${brand.logo} ${brand.name}`.slice(0, 10), 0, -px * 0.5);
+      }
       img = { c, w: c.width / dpr, h: c.height / dpr, oy: px * 1.2 + pad / 2 };
       if (cache.size > 600) cache.clear();
       cache.set(key, img);
@@ -216,6 +225,12 @@ window.NeonShopArt = (() => {
       { id: 'none', name: 'No plants', cost: 0 },
       { id: 'jungle', name: 'Urban jungle', cost: 500 },
     ],
+    pet: [
+      { id: 'none', name: 'No pet', cost: 0 },
+      { id: 'cat', name: 'Shop cat', cost: 150 },
+      { id: 'dog', name: 'Shop dog', cost: 250 },
+      { id: 'parrot', name: 'Parrot', cost: 200 },
+    ],
     music: [
       { id: 'chill', name: 'Chill', cost: 0 },
       { id: 'synth', name: 'Synthwave', cost: 300 },
@@ -229,7 +244,7 @@ window.NeonShopArt = (() => {
       { id: 'black', name: 'Black aprons', cost: 250, color: '#1f2937' },
     ],
   };
-  const DECOR_NAMES = { floor: 'Floor', walls: 'Walls', sign: 'Shop sign', plants: 'Plants', music: 'Music', uniform: 'Staff uniforms' };
+  const DECOR_NAMES = { floor: 'Floor', walls: 'Walls', sign: 'Shop sign', plants: 'Plants', music: 'Music', uniform: 'Staff uniforms', pet: 'Shop pet' };
   const DECOR_KEY = 'neonTycoon.decor';
   function loadDecor() {
     let d = {};
@@ -251,5 +266,5 @@ window.NeonShopArt = (() => {
   }
   const owns = (d, cat, id) => DECOR[cat].find((x) => x.id === id).cost === 0 || d.owned.includes(`${cat}:${id}`);
 
-  return { DECOR, DECOR_NAMES, loadDecor, saveDecor, decor, setOverride, owns, pack, plant, bin, wetFloor, basketStack, camera, clock, lamp, palettes: (good) => (PALETTES[good] || PALETTES.drinks).length };
+  return { DECOR, DECOR_NAMES, loadDecor, saveDecor, decor, setOverride, setBrand, brandKey, brandColor: () => brand && brand.a, owns, pack, plant, bin, wetFloor, basketStack, camera, clock, lamp, palettes: (good) => (PALETTES[good] || PALETTES.drinks).length };
 })();

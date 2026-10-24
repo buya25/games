@@ -189,11 +189,11 @@ const SHAPES = {
 };
 const packTexCache = new Map();
 function packTex(good, v) {
-  const key = good + v;
+  const key = good + v + art.brandKey();
   if (!packTexCache.has(key)) {
     packTexCache.set(key, canvasTex(96, 128, (g) => {
       const pal = { drinks: '#ff2a6d', noodles: '#f4f1de', coffee: '#6b4423', vinyl: '#ff2a6d', holo: '#9b5de5', sneakers: '#ff7a00', chips: '#1d3557', signs: '#14082a', bottle: '#4ade80' };
-      g.fillStyle = pal[good] || '#888'; g.fillRect(0, 0, 96, 128);
+      g.fillStyle = art.brandColor() || pal[good] || '#888'; g.fillRect(0, 0, 96, 128); // (your brand's colour on own-label packs)
       art.pack(g, good, 48, 122, 112, v, 1);
     }));
   }
@@ -1011,6 +1011,7 @@ function create(canvas) {
       f.userData.yaw += dy * Math.min(1, dt * 10);
       f.rotation.y = f.userData.yaw;
       f.position.set(X, Y, Z);
+      f.visible = !(p === r.me && r.fp);
       // walking: legs and arms swing; a raised hand for help; carrying things
       const moving = p.kind === 'passer' || p.moving || p.state === 'street', sw = moving ? Math.sin(p.phase || 0) * 0.55 : 0;
       f.userData.legL.rotation.x = sw; f.userData.legR.rotation.x = -sw;
@@ -1047,6 +1048,36 @@ function create(canvas) {
     for (const [p, f] of figs) if (!seen.has(p)) { parts.dynamic.remove(f); figs.delete(p); dropFig(f); }
   }
   // a burst pipe: a spreading puddle that shines, and a spray from the leak until it's fixed
+  // the shop pet: a cat, a dog or a parrot, built once and moved each frame
+  function syncPet() {
+    const pt = run.pet;
+    if (!pt) return;
+    if (!parts.pet) {
+      const g = new THREE.Group(), body = parts.petBody = new THREE.Group();
+      if (pt.kind === 'parrot') {
+        g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 1.6, 6), mat('#6b4423')), 0, 0.8, 0)); g.add(at(box(0.4, 0.04, 0.04, mat('#6b4423')), 0, 1.6, 0));
+        const b = new THREE.Mesh(new THREE.SphereGeometry(0.11, 10, 8), mat('#22c55e')); b.scale.set(0.8, 1.2, 0.8); body.add(at(b, 0, 0.12, 0));
+        body.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.075, 10, 8), mat('#ff2a6d')), 0, 0.27, 0.02));
+        body.add(at(new THREE.Mesh(new THREE.ConeGeometry(0.025, 0.07, 6), mat('#ffd23f')), 0, 0.26, 0.1));
+        body.add(at(box(0.06, 0.18, 0.03, mat('#3b82f6')), 0, 0.0, -0.08));
+        body.position.y = 1.62; g.add(body);
+      } else {
+        const fur = mat(pt.kind === 'cat' ? '#f0a35e' : '#a8713a'), dark = mat('#2a1a10'), big = pt.kind === 'dog' ? 1.35 : 1;
+        const b = new THREE.Mesh(new THREE.CapsuleGeometry(0.11, 0.26, 3, 8), fur); b.rotation.x = Math.PI / 2; body.add(at(b, 0, 0.2, 0));
+        const head = at(new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), fur), 0, 0.3, 0.22); body.add(head);
+        for (const sx of [-1, 1]) { const ear = new THREE.Mesh(new THREE.ConeGeometry(0.035, pt.kind === 'cat' ? 0.07 : 0.05, 5), pt.kind === 'cat' ? fur : dark); ear.position.set(sx * 0.055, 0.4, 0.21); if (pt.kind === 'dog') ear.rotation.z = sx * 2.4; body.add(ear); body.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.014, 6, 4), dark), sx * 0.035, 0.32, 0.31)); }
+        for (const [lx, lz] of [[-0.06, 0.12], [0.06, 0.12], [-0.06, -0.12], [0.06, -0.12]]) body.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.14, 6), fur), lx, 0.07, lz));
+        const tail = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.012, 0.28, 6), fur); tail.position.set(0, 0.32, -0.24); tail.rotation.x = -0.7; body.add(tail); parts.petTail = tail;
+        body.scale.setScalar(big); g.add(body);
+      }
+      parts.pet = g; parts.dynamic.add(g);
+    }
+    const [X, , Z] = wpos(pt.x, pt.y);
+    parts.pet.position.set(X, pt.kind !== 'parrot' && pt.state === 'nap' && pt.onCounter ? 1.02 : 0, Z);
+    if (pt.kind !== 'parrot') parts.pet.rotation.y = pt.facing;
+    parts.petBody.position.y = pt.kind === 'parrot' ? 1.62 + Math.abs(Math.sin(run.t * (pt.talk > 0 ? 12 : 2))) * 0.03 : pt.state === 'nap' ? -0.08 : Math.abs(Math.sin(pt.phase || 0)) * 0.03;
+    if (parts.petTail) parts.petTail.rotation.z = Math.sin(run.t * (pt.kind === 'dog' ? 12 : 3)) * 0.5;
+  }
   function syncPuddle() {
     const pp = run.pipe;
     if (!pp) return;
@@ -1162,7 +1193,7 @@ function create(canvas) {
     if (parts.kioskScreen) parts.kioskScreen.material.color.set(r.kioskBusy && r.kioskBusy.state === 'kiosk' ? '#05d9e8' : '#0f3a46');
     // the road's lane markings, falling rain or snow
     parts.roadTex.offset.x = (r.t * 0.15) % 1;
-    syncPuddle();
+    syncPuddle(); syncPet();
     if (parts.sidePacks) { const n = Math.min(4, Math.ceil(run.b.side.stock / 6)); parts.sidePacks.forEach((m, i) => { m.visible = i < n; }); }
     if (parts.arcadeScreen) parts.arcadeScreen.material.color.setHSL((r.t * 0.25) % 1, 0.9, 0.55);
     if (parts.mud) parts.mud.material.opacity = Math.min(0.85, r.mud * 0.95);
@@ -1289,10 +1320,16 @@ function create(canvas) {
       const focus = new THREE.Vector3(xOf(r.cam.x, r.cam.y), 1, zOf(clamp(r.cam.y, 0.16, 0.85)));
       pos.lerp(focus, (z - 1) * 1.5); tgt.lerp(focus, (z - 1) * 2.5);
     }
+    if (r.fp && r.me) { // first person: your own eyes, turned by dragging
+      const [mx, my, mz] = wpos(r.me.x, r.me.y), bob = r.me.moving ? Math.abs(Math.sin(r.me.phase || 0)) * 0.03 : 0;
+      pos = new THREE.Vector3(mx, (r.me.climb ? UP_Y / 2 : my) + 1.58 + bob, mz);
+      tgt.copy(pos).add(new THREE.Vector3(Math.sin(r.fp.yaw) * Math.cos(r.fp.pitch), Math.sin(r.fp.pitch), -Math.cos(r.fp.yaw) * Math.cos(r.fp.pitch)));
+      camera.fov = clamp(68 / Math.min(1, (W / H) / 0.75), 60, 80);
+    }
     camera.position.copy(pos); camera.lookAt(tgt);
     camera.updateProjectionMatrix();
     // cut away what's between you and the shop: the front wall from the street side, the neighbours from theirs
-    parts.frontWall.visible = pos.z > 0.6 || pos.y > 14;
+    parts.frontWall.visible = pos.z > 0.6 || pos.y > 14 || !!r.fp;
     parts.nb[-1].visible = pos.x > -RW / 2 - 0.5; parts.nb[1].visible = pos.x < RW / 2 + (run.b.tier >= 2 ? 5 : 0.5);
   }
 
@@ -1371,7 +1408,10 @@ function create(canvas) {
     view.tx = clamp(view.tx + mx * c + mz * sn, -4, run && run.b.tier >= 2 ? 8 : 4); view.tz = clamp(view.tz - mx * sn + mz * c, -20, 5); // out over the street, too
   }
   // turn round the shop (one finger): sideways all the way round, up and down a little
-  function orbit(dx, dy) { view.yaw -= dx * 0.009; view.tilt = clamp(view.tilt + dy * 0.004, -0.5, 0.7); }
+  function orbit(dx, dy) {
+    if (run && run.fp) { run.fp.yaw += dx * 0.006; run.fp.pitch = clamp(run.fp.pitch - dy * 0.004, -0.9, 0.6); return; }
+    view.yaw -= dx * 0.009; view.tilt = clamp(view.tilt + dy * 0.004, -0.5, 0.7);
+  }
   const rotated = () => Math.abs(Math.sin(view.yaw / 2)) > 0.01 || Math.abs(view.tilt) > 0.01 || Math.abs(view.tx) + Math.abs(view.tz) > 0.05;
   function resetView() { view.dist = 1; view.tx = 0; view.tz = 0; view.yaw = 0; view.tilt = 0; }
   // a picture of the shop as it is now (photo mode)

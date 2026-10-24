@@ -215,10 +215,10 @@
   }
 
   // A day you run the shop yourself: sales happen live, and the automatic sales are skipped.
-  function shopDayAvailable(s, b) { return b && b.kind === 'stall' && b.district === s.district && b.servedDay !== s.day && !s.finished; }
+  function shopDayAvailable(s, b) { return b && b.kind === 'stall' && b.district === s.district && b.servedDay !== s.day && b.closedDay !== s.day && !s.finished; }
   function startShopDay(s, id) {
     const b = s.businesses.find((x) => x.id === id);
-    if (!shopDayAvailable(s, b)) return { ok: false, msg: b && b.servedDay === s.day ? 'You already ran this shop today.' : 'You need to be at this shop.' };
+    if (!shopDayAvailable(s, b)) return { ok: false, msg: b && b.closedDay === s.day ? 'Closed today for repairs.' : b && b.servedDay === s.day ? 'You already ran this shop today.' : 'You need to be at this shop.' };
     b.servedDay = s.day;
     b.last = { sold: 0, revenue: 0, demand: 0, live: true };
     return { ok: true, b };
@@ -398,7 +398,7 @@
     if (slip && m.style === 'steady') return say('forgot to order stock today! 🤦');
     let q = Math.min(orderRoom(b), Math.ceil(units * 2.5 - b.stock));
     if (slip && m.style === 'seller') q = orderRoom(b); // fills the stockroom to the ceiling
-    const sp = SUPPLIERS[st.supplier], each = round2(price(s, b.district, b.good) * sp.cost);
+    const sp = SUPPLIERS[st.supplier], each = round2(price(s, b.district, b.good) * sp.cost * labelCost(b));
     q = Math.min(q, Math.floor((s.cash - 200) / each));
     if (q <= 0) return say('wanted to order stock but there wasn\'t enough cash.');
     const got = slip && m.style === 'thrifty' ? Math.max(1, Math.floor(q * (0.55 + r() * 0.2))) : q;
@@ -461,7 +461,7 @@
     if (!b || b.kind !== 'stall' || !sp) return { ok: false, msg: 'Not found.' };
     qty = Math.min(Math.floor(qty), orderRoom(b));
     if (qty <= 0) return { ok: false, msg: 'Your shelves and stockroom are full.' };
-    const each = round2(price(s, b.district, b.good) * sp.cost);
+    const each = round2(price(s, b.district, b.good) * sp.cost * labelCost(b));
     if (s.cash < qty * each) return { ok: false, msg: `That costs $${Math.round(qty * each).toLocaleString()}.` };
     const got = Math.random() < sp.short ? Math.max(1, Math.floor(qty * (0.6 + Math.random() * 0.2))) : qty;
     s.cash = round2(s.cash - got * each); spend(s, 'stock', got * each);
@@ -476,7 +476,7 @@
     if (!b || b.kind !== 'stall') return { ok: false, msg: 'Not found.' };
     if (b.contract) return { ok: false, msg: 'This shop already has a contract.' };
     qty = Math.max(1, Math.min(Math.floor(qty), unitsPerDay(STALLS[b.tier].cap, b.good) * 2));
-    b.contract = { qty, each: round2(price(s, b.district, b.good) * CONTRACT.disc), from: s.day, until: s.day + CONTRACT.days };
+    b.contract = { qty, each: round2(price(s, b.district, b.good) * CONTRACT.disc * labelCost(b)), from: s.day, until: s.day + CONTRACT.days };
     return { ok: true, contract: b.contract };
   }
   function cancelContract(s, id) {
@@ -724,6 +724,145 @@
     return { ok: true, got };
   }
 
+  // ---------- your own brand: own-label products, cheaper to buy in, and a name that grows ----------
+  const BRAND_COST = 3000, LABEL_COST = 0.85;
+  const labelCost = (b) => (b.ownLabel ? LABEL_COST : 1);
+  function makeBrand(s, d) {
+    if (s.brand) { Object.assign(s.brand, { name: String(d.name || s.brand.name).slice(0, 14), a: d.a || s.brand.a, b: d.b || s.brand.b, logo: d.logo || s.brand.logo }); return { ok: true, brand: s.brand }; }
+    if (s.cash < BRAND_COST) return { ok: false, msg: `Launching a brand costs $${BRAND_COST.toLocaleString()}.` };
+    s.cash = round2(s.cash - BRAND_COST); spend(s, 'other', BRAND_COST);
+    s.brand = { name: String(d.name || 'NEON').slice(0, 14), a: d.a || '#ff2a6d', b: d.b || '#ffd23f', logo: d.logo || '⚡', rep: 35 };
+    return { ok: true, brand: s.brand };
+  }
+  function setOwnLabel(s, id, on) {
+    const b = s.businesses.find((x) => x.id === id);
+    if (!b || b.kind !== 'stall') return { ok: false, msg: 'Not found.' };
+    if (on && !s.brand) return { ok: false, msg: 'Launch your brand first.' };
+    b.ownLabel = !!on;
+    return { ok: true };
+  }
+  // shoppers trust a brand they know: a little less than the big names at first, more once it's loved
+  const brandMod = (s, b) => (b.ownLabel && s.brand ? 0.92 + s.brand.rep / 400 : 1);
+
+  // ---------- logistics: trucks that move goods on a schedule ----------
+  const TRUCK = { cost: 6000, cap: 400, daily: 45 };
+  // a stop is a district's warehouse ('wh:docks'), a workshop (its id: 'biz:7') or a shop ('biz:3')
+  function stopOf(s, key) {
+    const [t, v] = key.split(':');
+    if (t === 'wh') { const w = whOf(s, v); return w ? { kind: 'wh', w, district: v } : null; }
+    const b = s.businesses.find((x) => x.id === +v); return b ? { kind: b.kind, b, district: b.district } : null;
+  }
+  const stopName = (s, key) => { const st = stopOf(s, key); if (!st) return 'gone'; return st.kind === 'wh' ? `${WAREHOUSES[st.w.tier].name} · ${D[st.district].name}` : `${G[st.b.good].icon} ${(st.kind === 'stall' ? STALLS : FACTORIES)[st.b.tier].name} · ${D[st.district].name}`; };
+  function buyTruck(s) {
+    if (s.cash < TRUCK.cost) return { ok: false, msg: `A truck costs $${TRUCK.cost.toLocaleString()}.` };
+    s.cash = round2(s.cash - TRUCK.cost); spend(s, 'other', TRUCK.cost);
+    s.trucks = (s.trucks || 0) + 1;
+    return { ok: true };
+  }
+  function addRoute(s, from, to, good, qty, every) {
+    const routes = s.routes || [];
+    if (routes.length >= (s.trucks || 0)) return { ok: false, msg: 'Each route needs its own truck: buy another.' };
+    if (!stopOf(s, from) || !stopOf(s, to) || from === to || !G[good]) return { ok: false, msg: 'Pick where it goes from and to.' };
+    s.routes = routes.concat([{ id: (s.routeId = (s.routeId || 0) + 1), from, to, good, qty: clamp(Math.floor(qty), 1, TRUCK.cap), every: clamp(Math.floor(every), 1, 7), from0: s.day }]);
+    return { ok: true };
+  }
+  function dropRoute(s, id) { s.routes = (s.routes || []).filter((r) => r.id !== id); return { ok: true }; }
+  function runRoutes(s, rep) {
+    for (const r of s.routes || []) {
+      s.cash = round2(s.cash - TRUCK.daily); rep.upkeep += TRUCK.daily; rep.trucks = (rep.trucks || 0) + TRUCK.daily;
+      if ((s.day - r.from0) % r.every) continue;
+      const a = stopOf(s, r.from), z = stopOf(s, r.to);
+      if (!a || !z) { r.last = 'a stop has gone'; continue; }
+      const have = a.kind === 'wh' ? a.w.goods[r.good] || 0 : a.b.good === r.good ? a.b.stock : 0;
+      const room = z.kind === 'wh' ? whRoom(z.w) : z.kind === 'stall' && z.b.good === r.good ? shelfRoom(z.b) : z.kind === 'stall' && z.b.side && z.b.side.good === r.good ? sideRoom(z.b) : 0;
+      const q = Math.min(r.qty, have, room);
+      r.last = q > 0 ? `moved ${q}` : have ? 'nowhere to put it' : 'nothing to pick up';
+      if (q <= 0) continue;
+      if (a.kind === 'wh') { a.w.goods[r.good] -= q; if (!a.w.goods[r.good]) delete a.w.goods[r.good]; } else if (a.kind === 'stall') takeStock(s, a.b, q); else a.b.stock -= q;
+      if (z.kind === 'wh') z.w.goods[r.good] = (z.w.goods[r.good] || 0) + q; else if (z.b.good === r.good) addStock(s, z.b, q); else z.b.side.stock += q;
+      rep.lines.push({ icon: '🚚', text: `Truck route: ${q} ${G[r.good].name} from ${stopName(s, r.from)} to ${stopName(s, r.to)}.` });
+    }
+  }
+
+  // ---------- opening hours: open late or all night for more trade (and more wages and risk) ----------
+  const HOURS = {
+    day: { name: '9:00–21:00', icon: '☀️', demand: 1, cost: 0, theft: 0 },
+    late: { name: '9:00–midnight', icon: '🌆', demand: 1.12, cost: 40, theft: 0.004 },
+    allday: { name: 'Open 24 hours', icon: '🌙', demand: 1.25, cost: 95, theft: 0.012 },
+  };
+  const hoursOf = (b) => HOURS[b.hours] || HOURS.day;
+  function setHours(s, id, h) { const b = s.businesses.find((x) => x.id === id); if (!b || b.kind !== 'stall' || !HOURS[h]) return { ok: false, msg: 'Not found.' }; b.hours = h; return { ok: true }; }
+
+  // ---------- staff careers: experience, levels, a personality, raises (and strikes) ----------
+  const TRAITS = {
+    cheerful: { icon: '😄', name: 'Cheerful', desc: 'Shoppers wait a bit longer.' },
+    speedy: { icon: '💨', name: 'Speedy', desc: 'Serves and stocks faster.' },
+    perfectionist: { icon: '🎯', name: 'Perfectionist', desc: 'Never fumbles, a little slower.' },
+    lazy: { icon: '😴', name: 'Laid-back', desc: 'Tires quickly, but rarely complains.' },
+    chatty: { icon: '💬', name: 'Chatty', desc: 'Regulars love a chat: better word of mouth.' },
+  };
+  const traitOf = (m) => m.trait || (m.trait = Object.keys(TRAITS)[Math.abs(Math.floor(Math.sin((m.look || m.name.length) * 9.17) * 1e4)) % 5]);
+  const staffLevel = (m) => 1 + Math.min(4, Math.floor((m.xp || 0) / 40));
+  // after a shop day: experience from the shoppers they served
+  function staffXp(s, id, list) {
+    const b = s.businesses.find((x) => x.id === id), up = [];
+    if (!b) return up;
+    for (const [i, xp] of list) { const m = staffOf(b)[i]; if (!m) continue; const was = staffLevel(m); m.xp = (m.xp || 0) + xp; if (staffLevel(m) > was) up.push(`${m.name} reached level ${staffLevel(m)}`); }
+    return up;
+  }
+  function answerRaise(s, id, i, yes) {
+    const b = s.businesses.find((x) => x.id === id), m = b && staffOf(b)[i];
+    if (!m || !m.ask) return { ok: false, msg: 'Nothing to answer.' };
+    if (yes) { m.wage += m.ask; m.morale = Math.min(100, m.morale + 25); } else { m.morale = Math.max(0, m.morale - (traitOf(m) === 'lazy' ? 8 : 22)); }
+    m.ask = 0;
+    return { ok: true };
+  }
+  function setSupervisor(s, id, i) {
+    const b = s.businesses.find((x) => x.id === id), m = b && staffOf(b)[i];
+    if (!m) return { ok: false, msg: 'Not found.' };
+    if (staffLevel(m) < 2) return { ok: false, msg: 'Supervisors need some experience (level 2).' };
+    for (const x of staffOf(b)) if (x.sup && x !== m) { x.sup = false; x.wage -= 15; }
+    if (!m.sup) { m.sup = true; m.wage += 15; m.morale = Math.min(100, m.morale + 20); }
+    return { ok: true };
+  }
+  // move your best worker up to run another shop as its manager
+  function promoteToManager(s, id, i, toId) {
+    const b = s.businesses.find((x) => x.id === id), to = s.businesses.find((x) => x.id === toId), m = b && staffOf(b)[i];
+    if (!m || !to || to.kind !== 'stall') return { ok: false, msg: 'Not found.' };
+    if (to.manager) return { ok: false, msg: 'That shop already has a manager.' };
+    if (staffLevel(m) < 3) return { ok: false, msg: 'Managers need experience (level 3).' };
+    b.staff.splice(i, 1);
+    to.manager = { name: m.name, style: traitOf(m) === 'chatty' || traitOf(m) === 'cheerful' ? 'seller' : traitOf(m) === 'perfectionist' ? 'steady' : 'thrifty', level: Math.min(MANAGER_MAX, staffLevel(m) - 1), xp: 0, look: m.look, days: 0 };
+    return { ok: true, m: to.manager };
+  }
+
+  // ---------- insurance, and things that go wrong ----------
+  const POLICIES = {
+    fire: { icon: '🔥', name: 'Fire', daily: 6, desc: 'Covers fire damage and lost stock.' },
+    theft: { icon: '🦹', name: 'Break-ins', daily: 4, desc: 'Covers stock and cash taken in a break-in.' },
+    flood: { icon: '🌊', name: 'Flood', daily: 3, desc: 'Covers flood damage (more likely on wet days).' },
+    kit: { icon: '🔧', name: 'Equipment', daily: 3, desc: 'Covers repairs when a fridge, till or self-checkout breaks.' },
+  };
+  const EXCESS = 100; // you pay the first $100 of any claim
+  const policyCost = (s) => Object.keys(s.insurance || {}).filter((k) => s.insurance[k]).reduce((a, k) => a + POLICIES[k].daily, 0) * Math.max(1, s.businesses.filter((b) => b.kind === 'stall').length);
+  function setPolicy(s, k, on) { if (!POLICIES[k]) return { ok: false, msg: 'Not found.' }; s.insurance = Object.assign({}, s.insurance, { [k]: !!on }); return { ok: true }; }
+  // each shop's dice for a bad night (its own stream, so it never changes the market)
+  function disasters(s, b, rep, news) {
+    const r = seeded(mixSeed(s.seed, s.day, 1100 + b.id)), roll = r(), wet = ['rain', 'snow'].includes(weather(s)), ins = s.insurance || {};
+    const where = `your ${STALLS[b.tier].name.toLowerCase()} at ${D[b.district].name}`;
+    const claim = (k, loss, what) => {
+      loss = Math.round(loss);
+      if (ins[k]) { const paid = Math.max(0, loss - EXCESS); s.cash = round2(s.cash - Math.min(loss, EXCESS)); news.push({ icon: POLICIES[k].icon, text: `${what} at ${where}. Insurance paid $${paid.toLocaleString()} (you paid the $${Math.min(loss, EXCESS)} excess).` }); }
+      else { s.cash = round2(s.cash - loss); news.push({ icon: POLICIES[k].icon, text: `${what} at ${where}: it cost you $${loss.toLocaleString()}. Insurance (🏦 Bank) would have covered it.` }); }
+      rep.disaster = (rep.disaster || 0) + loss;
+    };
+    const stockValue = (q) => q * price(s, b.district, b.good);
+    if (roll < 0.003) { const q = Math.floor(b.stock * 0.5); if (q) takeStock(s, b, q); claim('fire', stockValue(q) + STALLS[b.tier].cost * 0.15, `🔥 A fire broke out overnight: ${q} items lost and repairs needed`); b.closedDay = s.day + 1; }
+    else if (roll < 0.003 + 0.006 + hoursOf(b).theft) { const q = Math.floor(b.stock * 0.2); if (q) takeStock(s, b, q); claim('theft', stockValue(q) + 150, `🦹 A break-in: ${q} items and the float taken`); }
+    else if (roll < 0.009 + hoursOf(b).theft + (wet ? 0.012 : 0.003)) { const q = Math.floor(b.stock * 0.3); if (q) takeStock(s, b, q); claim('flood', stockValue(q) + 200, `🌊 The stockroom flooded: ${q} items ruined`); }
+    else if (roll < 0.03 + hoursOf(b).theft && b.upgrades && Object.keys(b.upgrades).length) { claim('kit', 180 + r() * 220, '🔧 Some equipment broke down and needed a repair'); }
+  }
+
   // ---------- businesses ----------
   const tiers = (b) => (b.kind === 'stall' ? STALLS : FACTORIES);
 
@@ -935,6 +1074,9 @@
       b.last = { made, cost: Math.round(made * unitCost + t.upkeep) };
       rep.lines.push({ icon: G[b.good].icon, text: `${t.name} at ${D[b.district].name} made ${made} ${G[b.good].name}${made < want ? ' (short of cash)' : ''}.` });
     }
+    // trucks on their routes, then insurance premiums
+    runRoutes(s, rep);
+    const prem = policyCost(s); if (prem) { s.cash = round2(s.cash - prem); rep.upkeep += prem; rep.insurance = prem; }
     // warehouses: their upkeep, and they top up your shops in their district before opening
     for (const [d, w] of Object.entries(s.warehouses || {})) {
       const up = WAREHOUSES[w.tier].upkeep;
@@ -956,7 +1098,7 @@
       const demand = Math.floor(unitsPerDay(t.cap, b.good) * (0.55 + 0.6 * luck) * effectMod(s, b.district, b.good) * priceDemand(mult)
         * WEATHER[weather(s)].crowd * weatherDemand(s, b.good) * ratingMod(b) * repMod(b) * (b.upgrades && b.upgrades.coffee ? 1.12 : 1)
         * rivalMod(s, b, mult) * buzzMod(s, b) * managerMod(b) * (1 + 0.03 * staffOf(b).filter((m) => m.skill === 'friendly').length)
-        * adMod(s, b) * followerMod(s) * (1 + 0.12 * expOf(b).floor) * (b.upgrades && b.upgrades.online ? 1.08 : 1));
+        * adMod(s, b) * followerMod(s) * (1 + 0.12 * expOf(b).floor) * (b.upgrades && b.upgrades.online ? 1.08 : 1) * hoursOf(b).demand * brandMod(s, b) * (b.closedDay === s.day ? 0 : 1));
       const sold = Math.min(b.stock, demand);
       for (const a of adsOf(s, b)) a.extra = (a.extra || 0) + Math.round(Math.min(sold, demand) * (1 - 1 / adMod(s, b)) * (CAMPAIGNS[a.id].boost / Math.max(0.01, adMod(s, b) - 1)));
       if (b.side && b.side.stock > 0) { // the side counter sells on its own too
@@ -975,6 +1117,9 @@
     // staff wages and morale; perishables past their date are thrown out
     for (const b of s.businesses.filter((x) => x.kind === 'stall')) {
       const staff = staffOf(b), mg = b.manager;
+      const hc = hoursOf(b).cost; if (hc) { s.cash = round2(s.cash - hc); rep.upkeep += hc; rep.wages += hc; } // the night crew
+      if (b.ownLabel && s.brand) s.brand.rep = clamp(s.brand.rep + ((b.rating || 3) - 3) * 0.5 + (b.last && b.last.sold ? 0.15 : -0.1), 0, 100); // your brand's name
+      disasters(s, b, rep, news);
       if (mg) {
         const w = managerWage(mg);
         s.cash = round2(s.cash - w); rep.upkeep += w; rep.wages += w;
@@ -988,6 +1133,10 @@
         for (let i = staff.length - 1; i >= 0; i--) {
           const m = staff[i];
           if (b.servedDay !== s.day) m.morale = Math.min(100, m.morale + 4); // a quieter day
+          // experienced staff ask for a raise now and then; turn them down too often and they may strike
+          if (!m.ask && staffLevel(m) >= 2 && rq() < 0.04 + 0.02 * staffLevel(m)) { m.ask = 5 * staffLevel(m); news.push({ icon: '💬', text: `${m.name} at ${D[b.district].name} asks for a $${m.ask}/day raise (👥 Staff).` }); }
+          m.strike = m.morale < 15 && traitOf(m) !== 'lazy' && rq() < 0.5 ? s.day + 1 : 0;
+          if (m.strike) news.push({ icon: '🪧', text: `${m.name} at ${D[b.district].name} is on strike tomorrow: morale is too low.` });
           if (m.morale < 20 && rq() < 0.4) { staff.splice(i, 1); news.push({ icon: '😤', text: `${m.name} quit your ${STALLS[b.tier].name.toLowerCase()} at ${D[b.district].name}: overworked and fed up.` }); }
         }
       }
@@ -1071,6 +1220,8 @@
     SEASON_DAYS, GOODS, DISTRICTS, STOCKS, STALLS, FACTORIES, VEHICLES, RANKS, PRODUCE_COST, RETAIL, RESALE, PRICE_MIN, PRICE_MAX,
     willingShare, priceDemand, shopperLimit, WEATHER, weather, ratingMod, REP_KEYS, repOf, repMod, season, holiday, HOLIDAYS, LIFE, freshness, SKILLS, STAFF_SLOTS, NAMES, staffOf, candidates, hire, fireStaff, giveBonus,
     rival, rivalMod, matchedMult, MATCH_SHARE, setPriceMatch, WEATHER_GOODS, weatherDemand, forecast,
+    BRAND_COST, LABEL_COST, makeBrand, setOwnLabel, brandMod, TRUCK, buyTruck, addRoute, dropRoute, stopName, stopOf, HOURS, hoursOf, setHours,
+    TRAITS, traitOf, staffLevel, staffXp, answerRaise, setSupervisor, promoteToManager, POLICIES, EXCESS, policyCost, setPolicy,
     EXPANSIONS, expOf, holdOf, staffSlots, expandCost, expandShop, buildingPrice, MORTGAGE, buyBuilding, propertyValue, mortgageLeft, subletIncome, setSublet,
     CAMPAIGNS, campaignCost, adsOf, adMod, runCampaign, followerMod, postPhoto, SIDE_COST, sideCap, openSide, sideRoom, stockSide, sidePrice, sideSale,
     WAREHOUSES, whOf, whUsed, whRoom, buyWarehouse, upgradeWarehouse, whUpgradeCost, whMove, buyToWarehouse, maxBuyToWarehouse, whFeed, sellWarehouse,
