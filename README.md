@@ -76,7 +76,24 @@ stand) are bought and placed in Arrange. A **megastore** knocks through into an 
 **Level 2** that shoppers and you walk up to. After closing there's an optional **🧹 night shift** (mop, face
 the shelves, empty the bin) that lifts the rating, and **📊 Report** charts your last seven shop days (sold by
 line, busiest hours, thefts, goals, layout changes). In 3D you can **turn the shop all the way round** (the walls
-facing you are cut away), and **📷 photo mode** saves or shares a picture. Sounds come from where things happen: the
+facing you are cut away), and **📷 photo mode** saves or shares a picture.
+
+**Looks and sound.** On ✨ Sharp (or 🪄 Auto on a phone that keeps up) the 3D shop uses physically based
+materials lit by a soft studio environment (a polished floor, chrome racks, metal cans, polished stone),
+soft shadows, tone mapping and a bloom pass so neon signs and bulbs glow; ⚡ Smooth keeps the simple
+lighting. The street is built from Kenney's CC0 models (buildings, trees, a fountain, lamp-post road, delivery
+and traffic trucks) and the sound uses Kenney's CC0 recordings (footsteps, coins, thuds, a van engine, city
+ambience), with the synth as a fallback; see `market/assets/CREDITS.md`. Shoppers are rounded figures with
+faces, knees and elbows that bend as they walk.
+
+**Word of mouth.** Every shopper's day feeds what people say about a shop's prices, stock, queue and service
+(shown on the shop card and the closing report). It changes how many come (automatic days too), how patient
+they are and what they'll pay; some won't come in if you're "always out of stock", and regulars remember their
+last visit ("Pricier than last time!").
+
+**Running costs.** Supplier contracts lock a price 10% under wholesale for 14 days with a delivery every two
+days; shop rents are reviewed every 30 days (busy, well-liked shops cost more); there's a 10% tax on each
+week's profit; and the Bank tab shows a 📒 cash flow (sales, rent, wages, stock, tax...). Sounds come from where things happen: the
 scanner, the door chime, footsteps, and the street getting louder when you zoom toward the windows. Phones without WebGL (or anyone who picks 🖼️ Classic under Decorate → Shop view)
 get the drawn 2D shop.
 

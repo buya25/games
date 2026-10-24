@@ -230,3 +230,6 @@ svg.rchart .lbl { fill: #fff; font-size: 10px; font-weight: 800; }
 .tip div { display: flex; align-items: center; gap: 2px; } .tip div span { margin-left: auto; font-weight: 800; }
 .tablev { margin: 10px 0; font-size: 12px; } .tablev table { width: 100%; border-collapse: collapse; margin-top: 6px; }
 .tablev th, .tablev td { padding: 4px 6px; border-bottom: 1px solid var(--line); text-align: right; } .tablev th:first-child, .tablev td:first-child { text-align: left; }
+.repchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+.repchip { padding: 3px 9px; border-radius: 999px; font-size: 12px; font-weight: 700; background: var(--card); border: 1px solid var(--line); }
+.repchip.good { border-color: #4ade80; color: #b9f5cf; } .repchip.bad { border-color: #ff6b6b; color: #ffc4c4; }
