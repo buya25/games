@@ -110,24 +110,45 @@ window.NeonShop = (() => {
     if (pan && actx.createStereoPanner) { const sp = actx.createStereoPanner(); sp.pan.value = clamp(pan, -1, 1); sp.connect(out); out = sp; }
     o.connect(g).connect(out); o.start(t); o.stop(t + dur);
   }
+  // recorded sounds (CC0, Kenney; see assets/CREDITS.md), loaded once the audio starts; the synth stands in until then
+  const SAMPLE_FILES = { step: 'walking', coin: 'coin', thud: 'race-impact', drop: 'city-placement-a', click: 'city-toggle', engine: 'race-engine', land: 'land', street: 'city-ambience' };
+  const SAMPLES = {};
+  let samplesLoading = false;
+  function loadSamples() {
+    if (samplesLoading || !actx) return;
+    samplesLoading = true;
+    for (const [k, f] of Object.entries(SAMPLE_FILES)) {
+      fetch(`assets/sounds/${f}.ogg`).then((res) => res.arrayBuffer()).then((buf) => actx.decodeAudioData(buf)).then((b) => { SAMPLES[k] = b; if (k === 'street') ambience.useRecording(); }).catch(() => {});
+    }
+  }
+  // play a recording (true if it could): vol, playback rate (pitch), and pan left/right
+  function sample(k, vol = 0.5, rate = 1, pan = 0) {
+    if (muted() || !actx || !SAMPLES[k]) return false;
+    const src = actx.createBufferSource(), g = actx.createGain();
+    src.buffer = SAMPLES[k]; src.playbackRate.value = rate; g.gain.value = vol;
+    let out = actx.destination;
+    if (pan && actx.createStereoPanner) { const sp = actx.createStereoPanner(); sp.pan.value = clamp(pan, -1, 1); sp.connect(out); out = sp; }
+    src.connect(g).connect(out); src.start();
+    return true;
+  }
   const sfx = {
     ching: () => { tone(1568, 0.08, 'square', 0.05); tone(2093, 0.18, 'square', 0.045, 0, 0.07); },
     bell: () => { tone(1320, 0.25, 'triangle', 0.04); tone(990, 0.3, 'triangle', 0.03, 0, 0.12); },
     huff: () => tone(220, 0.25, 'sawtooth', 0.04, 110),
-    thud: () => tone(110, 0.14, 'sine', 0.09, 45),
-    horn: () => { tone(415, 0.1, 'square', 0.03); tone(415, 0.14, 'square', 0.03, 0, 0.16); },
-    pop: () => tone(880, 0.05, 'triangle', 0.02, 1200),
+    thud: () => sample('thud', 0.35, 0.9 + Math.random() * 0.2) || tone(110, 0.14, 'sine', 0.09, 45),
+    horn: () => { sample('engine', 0.18, 0.8); tone(415, 0.1, 'square', 0.03); tone(415, 0.14, 'square', 0.03, 0, 0.16); },
+    pop: () => sample('drop', 0.18, 1.1 + Math.random() * 0.2) || tone(880, 0.05, 'triangle', 0.02, 1200),
     beep: (pan = 0) => tone(2600, 0.045, 'square', 0.022, 0, 0, pan),
     chime: () => { tone(1568, 0.35, 'sine', 0.035); tone(1175, 0.5, 'sine', 0.03, 0, 0.18); },
     approved: () => { tone(1320, 0.07, 'sine', 0.04); tone(1760, 0.12, 'sine', 0.04, 0, 0.08); },
-    coins: () => { for (let i = 0; i < 4; i++) tone(2400 + Math.random() * 1600, 0.05, 'triangle', 0.025, 0, 0.05 + i * 0.06); },
+    coins: () => { if (!sample('coin', 0.3, 0.95 + Math.random() * 0.1)) for (let i = 0; i < 4; i++) tone(2400 + Math.random() * 1600, 0.05, 'triangle', 0.025, 0, 0.05 + i * 0.06); },
     alarm: () => { for (let i = 0; i < 4; i++) tone(i % 2 ? 880 : 1175, 0.14, 'square', 0.035, 0, i * 0.15); },
-    click: () => tone(1800, 0.03, 'square', 0.03),
+    click: () => sample('click', 0.4) || tone(1800, 0.03, 'square', 0.03),
     siren: () => { for (let i = 0; i < 6; i++) tone(i % 2 ? 660 : 880, 0.25, 'sawtooth', 0.02, 0, i * 0.25); },
     drum: () => tone(90, 0.12, 'sine', 0.06, 50),
     shutter: () => noiseBurst(1.1, 0.05, 300, 900),
     whoosh: () => noiseBurst(0.45, 0.05, 600, 2400),
-    step: (vol = 0.03, pan = 0) => noiseBurst(0.07, vol, 260, 140, pan),
+    step: (vol = 0.03, pan = 0) => sample('land', vol * 6, 1.3 + Math.random() * 0.3, pan) || noiseBurst(0.07, vol, 260, 140, pan),
   };
   function noiseBuffer(sec) {
     const b = actx.createBuffer(1, Math.ceil(actx.sampleRate * sec), actx.sampleRate), d = b.getChannelData(0);
@@ -161,14 +182,24 @@ window.NeonShop = (() => {
   }
   const ambience = {
     street: null,
+    // swap the noise for the street recording, looping, once it's loaded
+    useRecording() {
+      if (!this.street || this.street.rec || !SAMPLES.street) return;
+      try {
+        const src = actx.createBufferSource(); src.buffer = SAMPLES.street; src.loop = true;
+        src.connect(this.street.g); src.start(); this.street.src.stop(); this.street.src = src; this.street.rec = true;
+      } catch { /* keep the hiss */ }
+    },
     start() {
       if (muted()) return;
       try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); } catch { return; }
+      loadSamples();
       try {
         const src = actx.createBufferSource(), f = actx.createBiquadFilter(), g = actx.createGain();
         src.buffer = noiseBuffer(2); src.loop = true; f.type = 'lowpass'; f.frequency.value = 450; g.gain.value = 0.004;
         src.connect(f).connect(g).connect(actx.destination); src.start();
         this.street = { src, g };
+        this.useRecording(); // (already loaded on a later day)
         // the murmur of other shoppers, louder the busier it gets
         const cs = actx.createBufferSource(), cf = actx.createBiquadFilter(), cg = actx.createGain();
         cs.buffer = noiseBuffer(2); cs.loop = true; cf.type = 'bandpass'; cf.frequency.value = 380; cf.Q.value = 0.7; cg.gain.value = 0;
@@ -178,7 +209,7 @@ window.NeonShop = (() => {
     },
     // called every frame: the next note of the music, and the street volume
     tick(r, dt) {
-      if (this.street) this.street.g.gain.setTargetAtTime(0.004 + r.doorOpen * 0.03 + streetK(r) * 0.022, actx.currentTime, 0.15);
+      if (this.street) this.street.g.gain.setTargetAtTime((0.004 + r.doorOpen * 0.03 + streetK(r) * 0.022) * (this.street.rec ? 3 : 1), actx.currentTime, 0.15); // (the recording is quieter than the hiss)
       // shoppers' footsteps, from where they're walking
       const walkers = r.people.filter((p) => p.moving && p.kind !== 'passer' && p.y > L.wall);
       if (walkers.length && Math.random() < dt * Math.min(6, walkers.length * 1.2)) { const p = pick(walkers); sfx.step(0.012, panAt(p.x, p.y)); }
@@ -529,7 +560,7 @@ window.NeonShop = (() => {
     const weather = T.weather(s), up = b.upgrades || {};
     const events = [null, null, 'market', 'parade', 'power'], event = events[(Math.random() * events.length) | 0];
     const buzz = b.buzz && b.buzz.day === s.day ? b.buzz.mult : 1;
-    const crowd = T.effectMod(s, b.district, b.good) * T.WEATHER[weather].crowd * T.ratingMod(b) * (up.coffee ? 1.12 : 1) * buzz * (event === 'market' ? 1.08 : 1);
+    const crowd = T.effectMod(s, b.district, b.good) * T.WEATHER[weather].crowd * T.ratingMod(b) * T.repMod(b) * (up.coffee ? 1.12 : 1) * buzz * (event === 'market' ? 1.08 : 1);
     b.regulars = b.regulars || [];
     const staff = T.staffOf(b);
     // a present owner draws a bigger crowd than the automatic day (35% more shoppers)
@@ -570,6 +601,7 @@ window.NeonShop = (() => {
       // walking the floor yourself, today's goal, product lines, where shoppers spent their time
       me: null, greetT: 0, lines: lineNames(b), unitLine: ul, trend: trending(s, b), lineSold: lineNames(b).map(() => 0),
       heat: new Float32Array(HEAT_X * HEAT_Y), goal: pickGoal(s, b), hourSold: Array(12).fill(0),
+      rep: T.repOf(b), repD: { price: 0, stock: 0, queue: 0, service: 0 }, // what people say about you, and today's experiences
       stats: { waits: [], stolen: 0, caught: 0, helped: 0, extras: 0, good: 0, bad: 0, returns: 0, newRegulars: 0, rewards: 0, reducedSold: 0, knocked: 0, haul: false },
     };
     // wear and tear builds up over the season: scuffs on the floor, smudges on the windows
@@ -629,7 +661,7 @@ window.NeonShop = (() => {
       reducedSold: st.reducedSold, knocked: st.knocked, haul: st.haul, event: r.event, holiday: r.holiday,
       staff: r.staff.map((x) => ({ name: x.m.name, served: x.served, morale: x.m.morale })),
       stars: r.stars, rating: r.b.rating, reviews: r.b.reviews || [],
-      goal: r.goalResult || null, tidy: r.stats.tidy, nightDone: r.stats.nightDone, nightTotal: r.stats.nightTotal, orders: r.stats.orders || 0, ordersLost: r.ordersLost, openOrders: (r.b.requests || []).map((x) => ({ ...x, lineName: r.lines[x.line] })), lines: r.lines, lineSold: r.lineSold, trend: r.trend,
+      goal: r.goalResult || null, rep: r.b.rep, repBefore: r.repBefore, tidy: r.stats.tidy, nightDone: r.stats.nightDone, nightTotal: r.stats.nightTotal, orders: r.stats.orders || 0, ordersLost: r.ordersLost, openOrders: (r.b.requests || []).map((x) => ({ ...x, lineName: r.lines[x.line] })), lines: r.lines, lineSold: r.lineSold, trend: r.trend,
       heat: { x: HEAT_X, y: HEAT_Y, data: Array.from(r.heat) }, plan: planShapes(r.b),
     };
   }
@@ -666,6 +698,8 @@ window.NeonShop = (() => {
     b.reviews = reviews;
     b.usual = mult; // regulars expect this price next time
     r.goalResult = judgeGoal();
+    r.repBefore = Object.assign({}, r.rep);
+    b.rep = Object.fromEntries(T.REP_KEYS.map((k) => [k, Math.round(clamp(r.rep[k] + r.repD[k] * 0.35 - (r.rep[k] - 50) * 0.05, 0, 100))]));
     // the shop's diary: one line per day you ran it (the last 14), for the weekly report
     b.history = (b.history || []).concat([{
       day: r.s.day, sold: r.sold, revenue: Math.round(r.revenue + st.extras), lines: r.lines.slice(), lineSold: r.lineSold.slice(), hours: r.hourSold.slice(),
@@ -701,6 +735,10 @@ window.NeonShop = (() => {
       Object.assign(lead, { type: 'regular', badge: '⭐', reg: g, name: g.name, look: g.look });
     } else for (const [type, chance, badge] of TYPES) { const c = type === 'thief' ? chance * (1 + 0.5 * doorK()) * (guard() ? 0.6 : 1) : chance; if (roll < c) { lead.type = type; lead.badge = badge; break; } roll -= c; }
     if (lead.type === 'returner') lead.qty = 1;
+    const rp = r.rep; // what they've heard
+    lead.patience *= (0.8 + 0.4 * rp.queue / 100) * (0.9 + 0.2 * rp.service / 100);
+    lead.limit *= 1 + ((rp.price - 50) / 50) * 0.04;
+    if (rp.stock < 35 && lead.type !== 'regular' && Math.random() < (35 - rp.stock) / 100) lead.skip = true; // heard you're always out of stock
     // which line they're after: a regular always wants the same one; today's trend is more popular
     if (lead.reg && Number.isInteger(lead.reg.line) && lead.reg.line < r.lines.length) lead.line = lead.reg.line;
     else {
@@ -789,6 +827,23 @@ window.NeonShop = (() => {
   // back to the centre aisle (from wherever they are)
   const toAisle = (p) => (zoneOf(p) === 'main' ? [[0.5, p.y]] : routeTo(p, { x: 0.5, y: fl(ANNEX.X0 - 0.7, ARCH_Z)[1] }));
   const say = (p, text, sec = 2.2) => { p.bubble = text; p.bubbleT = sec; };
+  // ---------- word of mouth: every shopper's day adds to what people say about the shop ----------
+  const hear = (k, d) => { if (run && run.repD) run.repD[k] += d; };
+  // a regular remembers their last visit: the price they paid, the wait, whether you'd run out
+  const memo = (p, m) => { if (p.reg) p.reg.memo = Object.assign(p.reg.memo || {}, m); };
+  // what they've heard, as they come in (only when it's strong one way or the other)
+  function wordOfMouth(p) {
+    const r = run, rp = r.rep, lines = [];
+    if (rp.price > 70) lines.push('💬 My friend said it\'s cheap here!'); if (rp.price < 30) lines.push('💬 I heard it\'s pricey…');
+    if (rp.queue > 70) lines.push('💬 They say you\'re quick!'); if (rp.queue < 30) lines.push('💬 Heard the queue is awful…');
+    if (rp.stock < 35) lines.push('💬 Hope you\'ve got stock today…'); if (rp.service > 72) lines.push('💬 Everyone says the staff are lovely!');
+    if (lines.length && Math.random() < 0.25) say(p, pick(lines), 2);
+    // a regular remembers last time
+    const m = p.reg && p.reg.memo, pm = (r.b.mult || T.RETAIL) * linePrice(r.b, p.line);
+    if (m && m.mult && pm > m.mult * 1.1) { say(p, '🤨 Pricier than last time!', 2); p.limit *= 0.97; }
+    else if (m && m.out) say(p, '🤞 Hope you\'ve got it this time!', 2);
+    else if (m && m.slow) { say(p, '⏱️ Don\'t keep me waiting like last time!', 2); p.patience *= 0.85; }
+  }
   // a small face over their head: 😍 a bargain, 💸 too dear, 🤔 thinking, 😤 waiting too long
   const react = (p, icon) => { p.react = { icon, t: 1.6 }; };
   const pick = (a) => a[(Math.random() * a.length) | 0];
@@ -911,6 +966,7 @@ window.NeonShop = (() => {
         case 'street': // walk along the pavement, turn in at the door
           p.x += p.dir * p.speed * dt; p.phase += dt * 8; p.moving = true;
           if (!open) { p.kind = 'passer'; break; }
+          if (Math.abs(p.x - 0.5) < 0.02 && p.skip) { p.skip = false; p.kind = 'passer'; say(p, '💬 They\'re always out of stock…', 1.6); break; }
           if (Math.abs(p.x - 0.5) < 0.02) {
             p.x = 0.5; p.state = 'enter'; p.unit = pickUnit(p);
             const spot = unitSpot(UNITS[p.unit]);
@@ -927,6 +983,7 @@ window.NeonShop = (() => {
             }
             if (!p.greeted) {
               p.greeted = true; r.greetT = 1.2; // the staff wave hello
+              if (p.kind === 'shopper') wordOfMouth(p);
               if (r.basketsNear && Math.random() < 0.25) p.qty++;              // grabbed a basket at the door: buys a bit more
               if (Math.random() < 0.2 * Math.max(0, doorPull(UNITS[p.unit]))) p.qty++;     // something by the door caught their eye
               if (GREET[p.type]) say(p, GREET[p.type], 1.6);
@@ -978,11 +1035,11 @@ window.NeonShop = (() => {
           }
           // they can see the rival's prices across the road
           if (r.rival && p.compares && p.type !== 'regular' && pm > r.rival.mult * 1.05) {
-            r.lostPrice++; leaveShop(p, 'angry', `😒 Cheaper at ${r.rival.name}!`);
+            r.lostPrice++; hear('price', -2); leaveShop(p, 'angry', `😒 Cheaper at ${r.rival.name}!`);
             break;
           }
           if (pm > p.limit) {
-            r.lostPrice++; react(p, '💸');
+            r.lostPrice++; hear('price', -2); react(p, '💸'); memo(p, { dear: true });
             leaveShop(p, 'angry', p.type === 'regular' ? '😤 You raised prices!' : p.type === 'bargain' ? '🏷️ No deals today.' : pick(['😒 Too pricey!', '😒 How much?!', '💸 Nope.']));
             break;
           }
@@ -994,12 +1051,12 @@ window.NeonShop = (() => {
               p.path = routeTo(p, unitSpot(UNITS[p.unit])); p.state = 'enter';
             } else takeGoods(p);
           } else if (shelfTotal() > 0 && !p.subbed && Math.random() < 0.55) { // they'll try another line instead
-            p.subbed = true; const was = r.lines[p.line];
+            p.subbed = true; const was = r.lines[p.line]; hear('stock', -1);
             p.line = r.lines.map((_, i) => i).filter((i) => lineItems(i) > 0).sort((a, b) => lineItems(b) - lineItems(a))[0];
             say(p, `🤷 No ${was}… I'll try ${r.lines[p.line]}`, 1.8); react(p, '🤷');
             p.state = 'look'; p.timer = 0.2; p.moved = false;
           } else if (backTotal() > 0) { p.state = 'wait'; p.wait = 0; p.mood = 'meh'; say(p, `⏳ Any more ${r.lines[p.line]}?`, 99); }
-          else { r.lostStock++; leaveShop(p, 'sad', `📦 No ${r.lines[p.line]} left?!`); }
+          else { r.lostStock++; hear('stock', -3); memo(p, { out: true }); leaveShop(p, 'sad', `📦 No ${r.lines[p.line]} left?!`); }
           break;
         case 'consider': // holding a pack, reading the label
           p.timer -= dt;
@@ -1008,13 +1065,13 @@ window.NeonShop = (() => {
           if (mult * linePrice(r.b, p.line) > p.limit) { // puts it back
             const sl = run.slots.filter((x) => x.u === p.unit && x.n > 0).sort((a, b) => Math.abs(a.x - p.x) - Math.abs(b.x - p.x))[0];
             if (sl) sl.pop = 0.2;
-            r.lostPrice++; leaveShop(p, 'angry', pick(['😒 Too pricey!', '🤔 Not at that price.']));
+            r.lostPrice++; hear('price', -2); leaveShop(p, 'angry', pick(['😒 Too pricey!', '🤔 Not at that price.']));
           } else p.state = 'look', p.timer = 0;
           break;
         case 'wait': // shelves are empty but there is stock out back
           p.wait += dt;
           if (lineItems(p.line) > 0) { p.bubbleT = 0; takeGoods(p); }
-          else if (p.wait > p.patience || backTotal() === 0) { r.lostStock++; leaveShop(p, 'sad', `📦 No ${r.lines[p.line]} left?!`); }
+          else if (p.wait > p.patience || backTotal() === 0) { r.lostStock++; hear('stock', -3); memo(p, { out: true }); leaveShop(p, 'sad', `📦 No ${r.lines[p.line]} left?!`); }
           break;
         case 'pick':
           p.timer -= dt;
@@ -1064,7 +1121,7 @@ window.NeonShop = (() => {
           p.facing = 'front';
           p.wait += dt;
           if (p.wait > p.patience * 0.6) { p.mood = 'meh'; if (!p.fumed) { p.fumed = true; react(p, '😤'); } }
-          if (p.wait > p.patience) { r.lostWait++; leaveShop(p, 'angry', pick(['😠 Too slow!', '😠 Forget it!'])); sfx.huff(); }
+          if (p.wait > p.patience) { r.lostWait++; hear('queue', -3); memo(p, { slow: true }); leaveShop(p, 'angry', pick(['😠 Too slow!', '😠 Forget it!'])); sfx.huff(); }
           break;
         }
         case 'returning': // waiting at the till while you decide: refund, swap or refuse
@@ -1162,7 +1219,7 @@ window.NeonShop = (() => {
       // worn out, they fumble: a pack slips off the counter
       if (st.energy < 35 && p.basket > 1 && Math.random() < 0.2) {
         p.basket--; r.floor.push({ x: 0.5 + rand(-0.08, 0.08), y: L.counter - 0.025, n: 1, rot: rand(-1.2, 1.2), line: p.got });
-        say(p, `😬 ${st.m.name} dropped one!`, 1.4); r.stats.fumbles = (r.stats.fumbles || 0) + 1;
+        say(p, `😬 ${st.m.name} dropped one!`, 1.4); r.stats.fumbles = (r.stats.fumbles || 0) + 1; hear('service', -1);
       }
       st.timer = (st.m.skill === 'cashier' ? 3 : STAFF_SERVE) * (st.energy < 40 ? 1.4 : 1) * (0.8 + Math.random() * 0.4);
       if (st.energy < 25) { // worn out: a short break
@@ -1425,7 +1482,7 @@ window.NeonShop = (() => {
       T.shopLoss(r.s, r.b.id, 1); r.b.last.stolen--; // a new one goes out of the door
       r.stats.good++; leaveShop(p, 'happy', '😊 Cheers, that\'s great!');
     } else if (choice === 'refuse') {
-      r.stats.bad++; leaveShop(p, 'angry', '😡 Terrible service!'); sfx.huff();
+      r.stats.bad++; hear('service', -3); leaveShop(p, 'angry', '😡 Terrible service!'); sfx.huff();
     } else { // a refund
       T.shopExtra(r.s, r.b.id, -price); r.stats.extras -= price;
       r.stats.good++; leaveShop(p, 'happy', '🙂 Thanks, that\'s fair.');
@@ -1443,7 +1500,7 @@ window.NeonShop = (() => {
   }
   function helpShopper(p) {
     const r = run, tip = Math.round((T.shelfPrice(r.s, r.b) * 0.1 + 1) * 100) / 100;
-    p.hand = false; p.qty += 1; p.mood = 'happy'; p.state = 'look'; p.timer = 0.3;
+    p.hand = false; p.qty += 1; p.mood = 'happy'; p.state = 'look'; p.timer = 0.3; hear('service', 2);
     say(p, '🙏 Thanks for the help!', 1.6);
     T.shopExtra(r.s, r.b.id, tip); r.stats.extras += tip; r.stats.helped++;
     r.effects.push({ kind: 'text', text: `💁 +$${tip.toFixed(2)} tip`, x: p.x, y: p.y - 0.12, t: 0 });
@@ -1598,7 +1655,7 @@ window.NeonShop = (() => {
       const p = a.p; p.chatted = true; p.mood = 'happy'; p.patience *= 1.5;
       if (Math.random() < 0.5) p.qty++;
       say(p, pick(['😊 Always nice to see you!', '😄 How\'s business?', '💜 Best shop in town!']), 1.8); say(me, '👋 Hi ' + p.name + '!', 1.4);
-      react(p, '💜'); r.stats.chats = (r.stats.chats || 0) + 1;
+      react(p, '💜'); r.stats.chats = (r.stats.chats || 0) + 1; hear('service', 1.5);
     }
     try { navigator.vibrate && navigator.vibrate(10); } catch { /* ignore */ }
     return true;
@@ -1736,6 +1793,13 @@ window.NeonShop = (() => {
     const lm = Number.isInteger(p.got) ? linePrice(r.b, p.got) : 1;
     if (Math.abs(lm - 1) > 0.001) { const diff = Math.round(res.revenue * (lm - 1) * 100) / 100; T.shopExtra(r.s, r.b.id, diff); r.revenue += diff; res.revenue += diff; }
     if ((p.wait || 0) < 2.5 && via !== 'kiosk') react(p, '⚡');
+    { // what they'll tell their friends
+      const pm = (r.b.mult || T.RETAIL) * (Number.isInteger(p.got) ? linePrice(r.b, p.got) : 1);
+      hear('queue', (p.wait || 0) < 3 ? 1.5 : (p.wait || 0) > p.patience * 0.6 ? -1 : 0.3);
+      hear('price', pm < p.limit * 0.85 ? 1.2 : pm > p.limit * 0.95 ? -0.5 : 0.3);
+      hear('service', 0.8);
+      memo(p, { mult: pm, wait: p.wait || 0, out: false, dear: false, slow: false });
+    }
     if (r.candyNear && Math.random() < 0.15) { p.extra += 1.5; r.effects.push({ kind: 'text', text: '🍬 +$1.50', x: p.x - 0.08, y: L.counter - 0.16, t: 0, color: '#ff8fcf' }); }
     p.bag = true;
     // extras: a cold drink from the fridge, and a coffee from the coffee corner
@@ -3385,6 +3449,7 @@ window.NeonShop = (() => {
   return {
     getGfx, setGfx, open, serve, refill, order, setPrice, closeEarly, clock, frontWaiting, stockInfo, pointerDown, pointerMove, pointerUp, tap, zoomBy, panBy, resetZoom,
     _route: (a, b) => routeTo(a, b), _spot: (ui) => unitSpot(UNITS[ui]), _zone: (p) => zoneOf(p),
+    _samples: () => Object.keys(SAMPLES),
     orbit, snapshot, is3D: () => !!(run && run.r3d),
     nightShift, night: nightInfo, endNight: () => { if (run && run.night) endNight(); },
     getView, setView, has3D, nudgeLine, linePrice, answerRequest, request: requestInfo, team, setJob, JOBS, toggleWalk, canWalk, walking: () => !!(run && run.me), actions: () => nearby().map(({ id, label }) => ({ id, label })), act: doAction, goal: goalInfo,

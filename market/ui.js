@@ -245,7 +245,7 @@
     const tier = (b.kind === 'stall' ? T.STALLS : T.FACTORIES)[b.tier];
     let status;
     if (b.kind === 'stall') {
-      status = `Stock ${b.stock} · sells about ${T.unitsPerDay(tier.cap, b.good)} a day · rent ${money(tier.rent)}/day`;
+      status = `Stock ${b.stock} · sells about ${T.unitsPerDay(tier.cap, b.good)} a day · rent ${money(T.rentOf(b))}/day${b.leaseUntil ? ` (review day ${b.leaseUntil})` : ''}${b.contract ? ` · 📜 contract: ${b.contract.qty} every 2 days to day ${b.contract.until}` : ''}`;
       const mult = b.mult || T.RETAIL;
       status += `<br>Shelf price ${price2(T.shelfPrice(s, b))} (${Math.round(mult * 100)}% of wholesale) · ${Math.round(T.willingShare(mult) * 100)}% of shoppers will pay it`;
       if (b.rating) status += `<br><span class="stars">${starStr(b.rating)}</span> ${b.rating.toFixed(1)} from shoppers`;
@@ -265,6 +265,7 @@
     const nextName = (b.kind === 'stall' ? T.STALLS : T.FACTORIES)[b.tier + 1]?.name;
     return `<div class="card"><h3>${b.kind === 'stall' ? '🏪' : '🏭'} ${tier.name} · ${G.icon} ${G.name}<span class="muted" style="margin-left:auto;font-size:12px">${T.D[b.district].icon} ${T.D[b.district].name}</span></h3>
       <p>${status}</p>
+      ${b.kind === 'stall' && b.rep ? `<p class="muted" style="margin-top:6px">💬 Word on the street</p><div class="repchips">${repChips(T.repOf(b))}</div>` : ''}
       ${b.kind === 'stall' && b.requests && b.requests.length ? `<p class="muted" style="margin-top:6px">📝 Orders: ${b.requests.map((q) => `${esc(q.name)} ${q.qty}× ${esc(NeonShop.plan.lineNames(b)[q.line] || '')} by day ${q.due}`).join(' · ')}. Run the shop that day so they can collect.</p>` : ''}
       ${here && b.kind === 'stall' && T.shopDayAvailable(s, b) ? `<button class="btn primary shopgo" data-act="shop:${b.id}">🏪 Open shop and serve today</button>` : ''}
       ${here && b.kind === 'stall' && b.servedDay === s.day ? '<p class="muted" style="margin-top:8px">You ran this shop today. Come back tomorrow.</p>' : ''}
@@ -350,7 +351,12 @@
       <p class="muted">Room for ${room} more. Wholesale here is ${price2(price)}.</p>
       <button class="row" id="supOwn"${own && room ? '' : ' disabled'}><span class="ic">🎒</span><span class="nm"><b>From your cargo and workshop</b><small>Free · ${own} available${live ? ' · here in a few seconds' : ''}</small></span></button>
       ${Object.entries(T.SUPPLIERS).map(([k, sp]) => `<div class="card"><h3>${sp.icon} ${sp.name}<span class="muted" style="margin-left:auto;font-size:12px">${price2(price * sp.cost)} each</span></h3>
-        <p>${esc(sp.desc)}</p><div class="btns">${room ? qtys.map((q) => `<button class="btn" data-sup="${k}:${q}">${q} · ${money(q * price * sp.cost)}</button>`).join('') : '<span class="muted">No room right now.</span>'}</div></div>`).join('')}`);
+        <p>${esc(sp.desc)}</p><div class="btns">${room ? qtys.map((q) => `<button class="btn" data-sup="${k}:${q}">${q} · ${money(q * price * sp.cost)}</button>`).join('') : '<span class="muted">No room right now.</span>'}</div></div>`).join('')}
+      <div class="card"><h3>📜 Supplier contract<span class="muted" style="margin-left:auto;font-size:12px">${price2(price * T.CONTRACT.disc)} each, locked</span></h3>
+        ${b.contract ? `<p>Delivering <b>${b.contract.qty}</b> every 2 days at ${price2(b.contract.each)} each, until day ${b.contract.until}. Paid on delivery.</p><button class="btn danger" id="conCancel">Cancel ($${T.CONTRACT.cancel} fee)</button>`
+          : `<p>${T.CONTRACT.days} days of deliveries every 2 days at 10% under today's wholesale price, whatever the market does. Paid on delivery.</p><div class="btns">${[0.5, 1, 1.5].map((f) => Math.max(1, Math.round(T.unitsPerDay(T.STALLS[b.tier].cap, b.good) * f))).map((q) => `<button class="btn" data-con="${q}">${q} per delivery</button>`).join('')}</div>`}</div>`);
+    for (const el of document.querySelectorAll('[data-con]')) el.onclick = () => { if (result(T.signContract(s, b.id, +el.dataset.con), '📜 Contract signed')) { save(); openSupplies(b); } };
+    if ($('conCancel')) $('conCancel').onclick = () => { if (result(T.cancelContract(s, b.id), 'Contract cancelled')) { save(); openSupplies(b); } };
     $('supOwn').onclick = () => {
       const r = live ? NeonShop.refill() : T.refillShelves(s, b.id);
       closeSheet(); save(); if (!live) render();
@@ -381,7 +387,7 @@
       <div class="decor">${[['3d', '🧊 3D', NeonShop.has3D() ? 'A real 3D shop you can zoom into' : 'Not supported on this device'], ['2d', '🖼️ Classic', 'The drawn shop, lightest on battery']].map(([id, name, desc]) =>
         `<button class="dec${NeonShop.getView() === id ? ' on' : ''}" data-view="${id}"${id === '3d' && !NeonShop.has3D() ? ' disabled' : ''}><b>${name}</b><small>${NeonShop.getView() === id ? '✓ In use' : desc}</small></button>`).join('')}</div>
       <p class="section-title">⚙️ Graphics</p>
-      <div class="decor">${[['auto', '🪄 Auto', 'Sharp, and smoother if your phone needs it'], ['high', '✨ Sharp', 'Full detail'], ['low', '⚡ Smooth', 'Faster on older phones']].map(([id, name, desc]) =>
+      <div class="decor">${[['auto', '🪄 Auto', 'Shadows, reflections and glow when your phone keeps up'], ['high', '✨ Sharp', 'Everything on: shadows, reflections, glowing neon'], ['low', '⚡ Smooth', 'Simple lighting: fastest, for older phones']].map(([id, name, desc]) =>
         `<button class="dec${NeonShop.getGfx() === id ? ' on' : ''}" data-gfx="${id}"><b>${name}</b><small>${NeonShop.getGfx() === id ? '✓ In use' : desc}</small></button>`).join('')}</div>
       ${Object.keys(A.DECOR).map((cat) => `<p class="section-title">${A.DECOR_NAMES[cat]}</p><div class="decor">${A.DECOR[cat].map((it) => {
         const own = A.owns(d, cat, it.id), on = d[cat] === it.id;
@@ -551,6 +557,7 @@
         ${m.openOrders && m.openOrders.length ? `<span>Orders to come</span><span>${m.openOrders.map((q) => `${esc(q.name)} ${q.qty}× ${esc(q.lineName)} · day ${q.due}`).join('<br>')}</span>` : ''}
         ${m.staff && m.staff.length ? `<span>Staff</span><span>${m.staff.map((x) => `${esc(x.name)} ${x.served}`).join(' · ')}</span>` : ''}
         <span>Walked out</span><span>${lost}</span></div>
+      ${m.rep ? `<p class="section-title">💬 Word on the street</p><div class="repchips">${repChips(m.rep, m.repBefore)}</div><p class="muted">What shoppers tell their friends: it changes how many come, how patient they are, and what they'll pay.</p>` : ''}
       ${m.reviews && m.reviews.length ? `<p class="section-title">Today's reviews · <span class="stars">${starStr(m.stars)}</span></p>
         <div class="news">${m.reviews.map((rv) => `<div><span class="stars">${starStr(rv.stars)}</span><span>${esc(rv.text)}</span></div>`).join('')}</div>
         <p class="muted">Shop rating: ${m.rating.toFixed(1)} ★. A better rating brings more shoppers, even on days you don't run it.</p>` : ''}
@@ -568,6 +575,14 @@
     const ctx = cv.getContext('2d'); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     NeonShop.plan.draw(ctx, W, H, shapes, opts);
   }
+
+  // word of mouth, in words: 💲 prices, 📦 stock, ⏱️ queue, 😊 service
+  const REP_LABEL = { price: '💲 Prices', stock: '📦 Stock', queue: '⏱️ Queue', service: '😊 Service' };
+  const repWord = (v) => (v >= 70 ? 'great' : v >= 56 ? 'good' : v >= 44 ? 'okay' : v >= 30 ? 'poor' : 'awful');
+  const repChips = (rp, before) => T.REP_KEYS.map((k) => {
+    const d = before ? rp[k] - before[k] : 0;
+    return `<span class="repchip ${rp[k] >= 56 ? 'good' : rp[k] < 44 ? 'bad' : ''}">${REP_LABEL[k]}: ${repWord(rp[k])}${d >= 2 ? ' ▲' : d <= -2 ? ' ▼' : ''}</span>`;
+  }).join('');
 
   // ---------- the weekly report: the last seven days you ran this shop ----------
   // chart colours for the lines: the game's cyan, pink and gold, stepped down to read on the dark card (validated)
@@ -835,7 +850,20 @@
       <div class="card"><h3>📄 Loan <span class="num down" style="margin-left:auto">${money(s.debt)}</span></h3>
         <p>Costs ${(T.LOAN_RATE * 100).toFixed(1)}% a day (${money(s.debt * T.LOAN_RATE)} today). You can borrow ${money(room)} more.</p>
         <p class="section-title">Repay</p><div class="btns">${amounts('repay')}</div>
-        <p class="section-title">Borrow</p><div class="btns">${amounts('borrow')}</div></div>`;
+        <p class="section-title">Borrow</p><div class="btns">${amounts('borrow')}</div></div>
+      ${flowHtml()}`;
+  }
+  // the cash flow: money in and out over the last week, and the tax coming up
+  function flowHtml() {
+    const days = (s.flow || []).slice(-7);
+    if (!days.length) return '<div class="card"><h3>📒 Cash flow</h3><p class="muted">After your first day you\'ll see money in and out here.</p></div>';
+    const rows = [['Sales', 'sales', 1], ['Rent', 'rent', -1], ['Wages', 'wages', -1], ['Workshops', 'production', -1], ['Stock bought', 'stock', -1], ['Upgrades & fees', 'other', -1], ['Living costs', 'living', -1], ['Loan interest', 'interest', -1], ['Tax', 'tax', -1]];
+    const tot = (k) => days.reduce((a, d) => a + (d[k] || 0), 0);
+    const net = rows.reduce((a, [, k, sg]) => a + sg * tot(k), 0), nextTax = 7 - (s.day - 1) % 7;
+    return `<div class="card"><h3>📒 Cash flow <span class="muted" style="margin-left:auto;font-size:12px">last ${days.length} day${days.length === 1 ? '' : 's'}</span></h3>
+      <div class="kv">${rows.filter(([, k]) => tot(k)).map(([n, k, sg]) => `<span>${n}</span><span class="num ${sg > 0 ? 'up' : 'down'}">${sg > 0 ? '+' : '−'}${money(tot(k))}</span>`).join('')}
+        <span><b>Net</b></span><span class="num ${net >= 0 ? 'up' : 'down'}"><b>${net >= 0 ? '+' : '−'}${money(Math.abs(net))}</b></span></div>
+      <p class="muted">🧾 Business tax: ${Math.round(T.TAX_RATE * 100)}% of each week's profit, due in ${nextTax} day${nextTax === 1 ? '' : 's'}${s.week > 0 ? ` (about ${money(s.week * T.TAX_RATE)} so far)` : ''}. 📜 Shop rents are reviewed every ${T.LEASE_DAYS} days.</p></div>`;
   }
   function bankAction(kind, amt) {
     const all = { deposit: s.cash, withdraw: s.bank, repay: Math.min(s.debt, s.cash), borrow: Math.max(0, T.maxDebt(s) - s.debt) }[kind];

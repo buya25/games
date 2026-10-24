@@ -6,6 +6,13 @@
 // drew, so everything lands in the same place: X across the room, Z from the front wall (0)
 // toward the till (9), Y up.
 import * as THREE from './vendor/three.module.min.js';
+// (the add-ons import "three": the page's import map points that at the same file)
+import { RoomEnvironment } from './vendor/jsm/environments/RoomEnvironment.js';
+import { EffectComposer } from './vendor/jsm/postprocessing/EffectComposer.js';
+import { RenderPass } from './vendor/jsm/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from './vendor/jsm/postprocessing/UnrealBloomPass.js';
+import { OutputPass } from './vendor/jsm/postprocessing/OutputPass.js';
+import { GLTFLoader } from './vendor/jsm/loaders/GLTFLoader.js';
 
 const T = window.NeonTycoon, art = window.NeonShopArt;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -25,12 +32,23 @@ function wpos(x, y) { let X = xOf(x, y), Y = 0; if (X > UP_DX / 2) { X -= UP_DX;
 const ROOM = { ceil: 4, back: 11.3, winLo: 1.55, winHi: 3.3, doorH: 2.5 };
 
 // ---------- materials and textures ----------
+// LOOK.rich: physically based materials lit by a soft studio environment (reflections, shine), for phones that keep up
+const LOOK = { rich: false };
 const mats = new Map();
 function mat(color, opts) {
-  const key = color + (opts ? JSON.stringify(opts) : '');
-  if (!mats.has(key)) mats.set(key, new THREE.MeshLambertMaterial(Object.assign({ color }, opts)));
+  const key = (LOOK.rich ? 'S' : 'L') + color + (opts ? JSON.stringify(opts) : '');
+  if (!mats.has(key)) mats.set(key, LOOK.rich ? new THREE.MeshStandardMaterial(Object.assign({ color, roughness: 0.78, metalness: 0 }, opts)) : new THREE.MeshLambertMaterial(Object.assign({ color }, opts)));
   return mats.get(key);
 }
+// something shiny: polished stone, chrome, a glossy floor (plain matte when the look is simple)
+function shiny(color, roughness, metalness = 0, opts) {
+  if (!LOOK.rich) return mat(color, opts);
+  const key = `X${color}|${roughness}|${metalness}${opts ? JSON.stringify(opts) : ''}`;
+  if (!mats.has(key)) mats.set(key, new THREE.MeshStandardMaterial(Object.assign({ color, roughness, metalness }, opts)));
+  return mats.get(key);
+}
+// a material with a texture, matte or glossy
+const texMat = (map, roughness = 0.8, metalness = 0) => (LOOK.rich ? new THREE.MeshStandardMaterial({ map, roughness, metalness }) : new THREE.MeshLambertMaterial({ map }));
 function canvasTex(w, h, paint, repeat) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const g = c.getContext('2d'); paint(g, w, h);
@@ -69,8 +87,12 @@ function at(o, x, y, z) { o.position.set(x, y, z); return o; }
 function rotX(o, a) { o.rotation.x = a; return o; }
 
 // ---------- fewer draw calls: plain-coloured parts merged into one vertex-coloured mesh ----------
-const vcMat = new THREE.MeshLambertMaterial({ vertexColors: true });
-const plain = (o) => o.isMesh && !o.isInstancedMesh && o.material && o.material.isMeshLambertMaterial && !o.material.map && !o.material.transparent && !o.material.vertexColors && !(o.material.emissiveIntensity > 0 && o.material.emissive.getHex()) && !o.userData.live;
+const vcMats = { L: new THREE.MeshLambertMaterial({ vertexColors: true }), S: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.78, metalness: 0 }) };
+const vcMat = () => vcMats[LOOK.rich ? 'S' : 'L'];
+const isVc = (m) => m === vcMats.L || m === vcMats.S;
+// matte, untextured, unlit-by-itself: safe to merge (shiny things keep their own material)
+const plain = (o) => o.isMesh && !o.isInstancedMesh && o.material && (o.material.isMeshLambertMaterial || (o.material.isMeshStandardMaterial && o.material.roughness >= 0.7 && o.material.metalness < 0.1))
+  && !o.material.map && !o.material.transparent && !o.material.vertexColors && !(o.material.emissiveIntensity > 0 && o.material.emissive.getHex()) && !o.userData.live;
 // meshes: [mesh, matrix] pairs; returns one mesh
 function mergeMeshes(list) {
   let n = 0;
@@ -84,7 +106,7 @@ function mergeMeshes(list) {
   }
   const geo = new THREE.BufferGeometry();
   geo.setAttribute('position', new THREE.BufferAttribute(pos, 3)); geo.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  return new THREE.Mesh(geo, vcMat);
+  return new THREE.Mesh(geo, vcMat());
 }
 // merge a group's direct plain children (in the group's own space)
 function bakeChildren(g) {
@@ -102,6 +124,34 @@ function bakeAll(root, skip) {
   for (const m of list) m.parent.remove(m);
   if (list.length) root.add(mergeMeshes(list.map((m) => [m, m.matrixWorld])));
   for (const m of list) m.geometry.dispose();
+}
+
+// ---------- models: CC0 buildings, trees, a fountain, street lights and trucks (Kenney; see assets/CREDITS.md) ----------
+const MODEL_FILES = ['building-small-a', 'building-small-b', 'building-small-c', 'building-small-d', 'building-garage', 'grass-trees-tall', 'grass-trees',
+  'pavement-fountain', 'road-straight-lightposts', 'vehicle-truck-green', 'vehicle-truck-purple', 'vehicle-truck-red'];
+const MODELS = {}, modelKeep = { mats: new Set(), tex: new Set(), geo: new Set() };
+let modelsP = null;
+// load them all once (a missing one is just skipped)
+function loadModels() {
+  if (!modelsP) {
+    const loader = new GLTFLoader();
+    modelsP = Promise.all(MODEL_FILES.map((n) => loader.loadAsync(`assets/models/${n.startsWith('vehicle') ? 'trucks/' : ''}${n}.glb`).then((g) => {
+      MODELS[n] = g.scene;
+      g.scene.traverse((o) => { if (o.isMesh) { modelKeep.geo.add(o.geometry); modelKeep.mats.add(o.material); if (o.material.map) modelKeep.tex.add(o.material.map); o.material.envMapIntensity = 0.4; o.material.roughness = Math.max(o.material.roughness ?? 1, 0.6); } });
+    }).catch(() => {})));
+  }
+  return modelsP;
+}
+// a copy of a model, scaled so it's `w` metres across, standing on the ground (null if it didn't load)
+function model(name, w) {
+  const src = MODELS[name];
+  if (!src) return null;
+  const m = src.clone(true), b = new THREE.Box3().setFromObject(m), size = b.getSize(new THREE.Vector3()), k = w / Math.max(size.x, size.z);
+  m.scale.setScalar(k); m.position.set(-(b.min.x + size.x / 2) * k, -b.min.y * k, -(b.min.z + size.z / 2) * k);
+  m.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+  // (their materials: a little less reflective than the default, so Kenney's soft colours don't wash out)
+  const g = new THREE.Group(); g.add(m);
+  return g;
 }
 
 // ---------- product shapes (with the 2D pack drawings as their labels) ----------
@@ -156,41 +206,67 @@ function figure(look, opts = {}) {
   const N = window.NeonLooks, of = N.byId(OUT(), look.outfit), skin = N.SKINS[look.skin] || N.SKINS[2];
   const hair = N.HAIR_COLORS[look.hairColor || 0] || '#1a1418';
   const g = new THREE.Group();
-  const jacket = mat(of.holo ? '#05d9e8' : of.jacket), arms = mat(of.arms), pants = mat(of.pants), shoes = mat(of.shoes), skinM = mat(skin), hairM = mat(hair);
-  // legs and arms hang from pivots so they can swing
-  const limb = (w, len, m, x, y) => { const pv = new THREE.Group(); pv.position.set(x, y, 0); const l = box(w, len, w, m); l.position.y = -len / 2; pv.add(l); g.add(pv); return pv; };
-  g.userData.legL = limb(0.14, 0.82, pants, -0.1, 0.86); g.userData.legR = limb(0.14, 0.82, pants, 0.1, 0.86);
-  for (const leg of [g.userData.legL, g.userData.legR]) leg.add(at(box(0.16, 0.08, 0.26, shoes), 0, -0.82, 0.05));
-  const torso = at(box(0.42, 0.62, 0.24, jacket), 0, 1.18, 0); g.add(torso);
-  g.add(at(box(0.43, 0.06, 0.25, mat(of.stripe)), 0, 1.1, 0));
-  g.userData.armL = limb(0.11, 0.62, arms, -0.28, 1.46); g.userData.armR = limb(0.11, 0.62, arms, 0.28, 1.46);
-  for (const arm of [g.userData.armL, g.userData.armR]) arm.add(at(box(0.1, 0.1, 0.1, skinM), 0, -0.66, 0));
-  // the head turns on its own (to look along a shelf, or at a shopper)
-  const headG = new THREE.Group(); headG.position.set(0, 1.55, 0); g.add(headG); g.userData.head = headG;
+  const jacket = mat(of.holo ? '#05d9e8' : of.jacket), arms = mat(of.arms), pants = mat(of.pants), shoes = mat(of.shoes), skinM = mat(skin), hairM = mat(hair), dark = mat('#1a1418');
+  const cap = (r, len, m) => new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 3, 8), m);
+  const turn = (o, x, y, z) => { o.rotation.set(x, y, z); return o; }, squash = (o, x, y, z) => { o.scale.set(x, y, z); return o; };
+  // a joint: a pivot group at (x, y, z) inside `parent`
+  const joint = (parent, x, y, z = 0) => { const pv = new THREE.Group(); pv.position.set(x, y, z); parent.add(pv); return pv; };
+  // legs: thigh from the hip, shin from the knee, and a rounded shoe
+  for (const [k, sx] of [['L', -1], ['R', 1]]) {
+    const hip = joint(g, sx * 0.095, 0.92), knee = joint(hip, 0, -0.44);
+    hip.add(at(cap(0.078, 0.3, pants), 0, -0.22, 0));
+    knee.add(at(cap(0.066, 0.3, pants), 0, -0.21, 0));
+    knee.add(squash(turn(at(cap(0.065, 0.14, shoes), 0, -0.43, 0.05), Math.PI / 2, 0, 0), 1.05, 1, 0.7));
+    g.userData['leg' + k] = hip; g.userData['knee' + k] = knee;
+  }
+  // body: hips, a rounded torso, the stripe, the neck
+  g.add(squash(at(cap(0.16, 0.06, pants), 0, 0.95, 0), 1.12, 1, 0.75));
+  const torso = at(cap(0.18, 0.3, jacket), 0, 1.22, 0); torso.scale.set(1.1, 1, 0.68); g.add(torso);
+  const stripe = at(new THREE.Mesh(new THREE.CylinderGeometry(0.205, 0.205, 0.05, 14), mat(of.stripe)), 0, 1.12, 0); stripe.scale.set(1.0, 1, 0.66); g.add(stripe);
+  g.add(at(new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.055, 0.1, 8), skinM), 0, 1.5, 0));
+  // arms: upper arm from the shoulder, forearm from the elbow, a hand
+  for (const [k, sx] of [['L', -1], ['R', 1]]) {
+    const sh = joint(g, sx * 0.25, 1.42), el = joint(sh, 0, -0.29);
+    sh.add(at(cap(0.058, 0.18, arms), 0, -0.14, 0));
+    el.add(at(cap(0.05, 0.17, arms), 0, -0.13, 0));
+    el.add(at(new THREE.Mesh(new THREE.SphereGeometry(0.055, 8, 6), skinM), 0, -0.29, 0.01));
+    sh.rotation.z = sx * 0.06;
+    g.userData['arm' + k] = sh; g.userData['elbow' + k] = el;
+  }
+  // the head turns on its own (to look along a shelf, or at a shopper); it has a face
+  const headG = joint(g, 0, 1.55); g.userData.head = headG;
   const hadd = (o, x, y, z) => headG.add(at(o, x, y - 1.55, z));
-  hadd(new THREE.Mesh(new THREE.SphereGeometry(0.15, 10, 8), skinM), 0, 1.68, 0);
-  hadd(box(0.04, 0.03, 0.02, mat('#1a1418')), -0.05, 1.7, 0.14); hadd(box(0.04, 0.03, 0.02, mat('#1a1418')), 0.05, 1.7, 0.14); // eyes
+  hadd(new THREE.Mesh(new THREE.SphereGeometry(0.135, 14, 10), skinM), 0, 1.68, 0);
+  for (const sx of [-1, 1]) {
+    hadd(new THREE.Mesh(new THREE.SphereGeometry(0.024, 8, 6), mat('#f4f4f8')), sx * 0.048, 1.7, 0.115); // eyes
+    hadd(new THREE.Mesh(new THREE.SphereGeometry(0.013, 6, 4), dark), sx * 0.048, 1.7, 0.135);
+    hadd(box(0.045, 0.012, 0.01, hairM), sx * 0.05, 1.735, 0.124); // brows
+    hadd(new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 4), skinM), sx * 0.135, 1.68, 0); // ears
+  }
+  hadd(new THREE.Mesh(new THREE.SphereGeometry(0.02, 6, 4), skinM), 0, 1.665, 0.135); // nose
+  hadd(box(0.05, 0.012, 0.01, mat('#7a2a3a')), 0, 1.625, 0.122); // mouth
   // hair styles
   const hs = look.hair;
   if (hs !== 'buzz') {
-    const cap = new THREE.Mesh(new THREE.SphereGeometry(hs === 'afro' ? 0.21 : 0.16, 10, 6, 0, Math.PI * 2, 0, Math.PI * (hs === 'afro' ? 0.7 : 0.55)), hairM);
-    hadd(cap, 0, 1.7, -0.01);
-    if (hs === 'long' || hs === 'locs') hadd(box(0.3, 0.32, 0.08, hairM), 0, 1.55, -0.12);
-    if (hs === 'ponytail' || hs === 'bun') hadd(new THREE.Mesh(new THREE.SphereGeometry(0.07, 8, 6), hairM), 0, hs === 'bun' ? 1.84 : 1.6, -0.17);
-  }
-  if (of.acc === 'cap') hadd(box(0.32, 0.06, 0.36, mat(of.accColor)), 0, 1.82, 0.05);
-  if (of.acc === 'crown') hadd(new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, 0.08, 6), mat(of.accColor)), 0, 1.86, 0);
-  if (of.acc === 'headphones') hadd(box(0.36, 0.08, 0.08, mat(of.accColor)), 0, 1.72, 0);
-  if (of.acc === 'headband') hadd(box(0.32, 0.05, 0.32, mat(of.accColor)), 0, 1.74, 0);
-  if (of.acc === 'mohawk') hadd(box(0.05, 0.14, 0.26, mat(of.accColor)), 0, 1.86, 0);
+    const top = new THREE.Mesh(new THREE.SphereGeometry(hs === 'afro' ? 0.2 : 0.148, 12, 8, 0, Math.PI * 2, 0, Math.PI * (hs === 'afro' ? 0.72 : 0.52)), hairM);
+    hadd(top, 0, 1.7, -0.012);
+    if (hs === 'long' || hs === 'locs') hadd(box(0.27, 0.3, 0.07, hairM), 0, 1.57, -0.11);
+    if (hs === 'ponytail' || hs === 'bun') hadd(new THREE.Mesh(new THREE.SphereGeometry(0.065, 8, 6), hairM), 0, hs === 'bun' ? 1.83 : 1.6, -0.16);
+  } else hadd(new THREE.Mesh(new THREE.SphereGeometry(0.139, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.45), hairM), 0, 1.69, -0.005);
+  if (of.acc === 'cap') { hadd(new THREE.Mesh(new THREE.SphereGeometry(0.15, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2), mat(of.accColor)), 0, 1.72, 0); hadd(box(0.2, 0.02, 0.14, mat(of.accColor)), 0, 1.73, 0.13); }
+  if (of.acc === 'crown') hadd(new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.08, 6), shiny(of.accColor, 0.25, 0.9)), 0, 1.85, 0);
+  if (of.acc === 'headphones') { hadd(new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.015, 6, 14, Math.PI), mat(of.accColor)), 0, 1.71, 0); for (const sx of [-1, 1]) hadd(turn(new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.04, 10), mat(of.accColor)), 0, 0, Math.PI / 2), sx * 0.145, 1.68, 0); }
+  if (of.acc === 'headband') hadd(turn(new THREE.Mesh(new THREE.TorusGeometry(0.138, 0.016, 6, 16), mat(of.accColor)), Math.PI / 2, 0, 0), 0, 1.74, 0);
+  if (of.acc === 'mohawk') hadd(box(0.04, 0.12, 0.24, mat(of.accColor)), 0, 1.83, 0);
   // a soft shadow on the floor
   const sh = new THREE.Mesh(new THREE.CircleGeometry(0.32, 16), new THREE.MeshBasicMaterial({ color: '#000', transparent: true, opacity: 0.28, depthWrite: false }));
   sh.rotation.x = -Math.PI / 2; sh.position.y = 0.01; g.add(sh);
   g.userData.holo = of.holo ? torso : null;
-  if (opts.apron) g.add(at(box(0.34, 0.5, 0.02, mat(opts.apron)), 0, 1.12, 0.13));
+  if (opts.apron) { const ap = at(box(0.3, 0.48, 0.02, mat(opts.apron)), 0, 1.12, 0.13); g.add(ap); }
   if (of.holo) torso.userData.live = true; // its colour shifts every frame
+  // fewer draw calls: each rigid part becomes one mesh
   bakeChildren(g);
-  for (const k of ['legL', 'legR', 'armL', 'armR', 'head']) bakeChildren(g.userData[k]);
+  for (const k of ['legL', 'legR', 'kneeL', 'kneeR', 'armL', 'armR', 'elbowL', 'elbowR', 'head']) bakeChildren(g.userData[k]);
   g.traverse((o) => { if (o.isMesh && !o.material.transparent) o.castShadow = true; });
   return g;
 }
@@ -203,6 +279,22 @@ function supported() {
 function create(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.outputColorSpace = THREE.SRGBColorSpace;
+  // a soft studio light all round, for reflections on glossy things (made once)
+  let envTex = null;
+  const env = () => envTex || (envTex = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture);
+  // the glow round neon and lamps: a bloom pass (only on the sharpest setting, or auto on a strong phone)
+  let composer = null, bloom = null, bloomOn = false;
+  function setBloom(on) {
+    bloomOn = on;
+    if (on && !composer) {
+      composer = new EffectComposer(renderer);
+      composer.addPass(new RenderPass(scene, camera));
+      bloom = new UnrealBloomPass(new THREE.Vector2(256, 256), 0.55, 0.4, 1.5); // only things brighter than white glow: the neon, signs and bulbs (lit surfaces don't)
+      composer.addPass(bloom); composer.addPass(new OutputPass());
+    }
+    if (composer) composer.passes[0].scene = scene;
+    lastW = 0; // resize on the next frame
+  }
   const camera = new THREE.PerspectiveCamera(56, 1, 0.1, 200);
   const view = { dist: 1, tx: 0, tz: 0, yaw: 0, tilt: 0 }; // zoom (1 = default), pan of the target, and the turn round it (360°)
   let scene, run, L, G, parts, figs = new Map(), lastSig = '';
@@ -212,7 +304,12 @@ function create(canvas) {
     run = r; L = window.NeonShop.layout(); G = T.G[r.b.good];
     figs = new Map(); lastSig = '';
     view.dist = 1; view.tx = 0; view.tz = 0; view.yaw = 0; view.tilt = 0;
+    // the look for today: rich (reflections, shine, glow) when the phone keeps up
+    const gfx = window.NeonShop.getGfx(), strong = gfx !== 'low' && (r.dprCap || 2) >= 1.5;
+    LOOK.rich = strong;
+    renderer.toneMapping = strong ? THREE.NeutralToneMapping : THREE.NoToneMapping; renderer.toneMappingExposure = 0.9;
     scene = new THREE.Scene();
+    if (strong) { scene.environment = env(); scene.environmentIntensity = 0.3; }
     parts = {};
     buildRoom(); buildStreet(); buildUnits(); buildFridge(); buildCounter(); buildProps(); buildLights();
     // everything that never moves or changes colour becomes one mesh
@@ -222,12 +319,16 @@ function create(canvas) {
     bakeAll(scene, (o) => { for (let p = o; p; p = p.parent) if (live.has(p)) return true; return false; });
     // what casts and catches shadows: the room's solid things, and the floor
     scene.traverse((o) => {
-      if (!o.isMesh || o.isInstancedMesh || !o.material || !o.material.isMeshLambertMaterial || o.material.transparent) return;
-      o.castShadow = true; o.receiveShadow = o.material === vcMat;
+      if (!o.isMesh || o.isInstancedMesh || !o.material || !(o.material.isMeshLambertMaterial || o.material.isMeshStandardMaterial) || o.material.transparent) return;
+      o.castShadow = true; o.receiveShadow = isVc(o.material);
     });
     parts.floor.receiveShadow = true; parts.floor.castShadow = false;
-    setShadows(window.NeonShop.getGfx() !== 'low' && (run.dprCap || 2) >= 1.5);
+    setShadows(strong);
+    setBloom(strong && (gfx === 'high' || (run.dprCap || 2) >= 2));
+    // signs, neon and bulbs shine a little brighter than white, so they (and only they) glow
+    if (strong) scene.traverse((o) => { if (o.material && o.material.isMeshBasicMaterial && !o.material.transparent && !o.material.userData.lit) { o.material.userData.lit = true; o.material.color.multiplyScalar(2.2); } });
     canvas.style.display = 'block';
+    loadModels().then(() => { if (scene && run === r) placeModels(); }); // the street's buildings and the van (they load once)
   }
   // soft shadows cost a second pass, so they're on only when the phone keeps up
   let shadowsOn = false;
@@ -242,10 +343,11 @@ function create(canvas) {
     // free the day's geometry and textures (shared materials and product labels are kept)
     const keepMats = new Set(mats.values()), keepTex = new Set([...packTexCache.values(), glowCache]);
     if (scene) scene.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
+      if (o.geometry && !modelKeep.geo.has(o.geometry)) o.geometry.dispose();
       for (const m of [].concat(o.material || [])) {
+        if (modelKeep.mats.has(m)) continue; // shared with the loaded models
         if (m.map && !keepTex.has(m.map)) m.map.dispose();
-        if (!keepMats.has(m) && m !== vcMat) m.dispose();
+        if (!keepMats.has(m) && !isVc(m)) m.dispose();
       }
     });
     if (parts.key) parts.key.shadow.dispose(); // the light's shadow map
@@ -264,7 +366,8 @@ function create(canvas) {
       if (fl.planks) { g.fillStyle = 'rgba(0,0,0,.25)'; for (let j = 0; j < 4; j++) for (let k = 0; k < 3; k++) g.fillRect(((j * 97 + k * 83) % 256), j * 64, 2, 64); }
       if (fl.vein) { g.strokeStyle = 'rgba(120,110,150,.35)'; g.lineWidth = 1.5; for (let k = 0; k < 5; k++) { g.beginPath(); g.moveTo(k * 50, 0); g.bezierCurveTo(k * 50 + 40, 90, k * 50 - 20, 170, k * 50 + 30, 256); g.stroke(); } }
     }, [RW / 2.4, (ROOM.back) / 2.4]);
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(RW, ROOM.back), new THREE.MeshLambertMaterial({ map: floorTex }));
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(RW, ROOM.back), texMat(floorTex, 0.42, 0)); // a polished floor (soft reflections, when the look is rich)
+    if (floor.material.isMeshStandardMaterial) floor.material.envMapIntensity = 0.45;
     floor.rotation.x = -Math.PI / 2; floor.position.set(0, 0, ROOM.back / 2); scene.add(floor);
     parts.floor = floor;
     // scuffs from the season's wear
@@ -360,7 +463,7 @@ function create(canvas) {
     parts.doors = [-1, 1].map((s) => {
       const d = new THREE.Group();
       d.add(new THREE.Mesh(new THREE.PlaneGeometry(dw, ROOM.doorH), new THREE.MeshBasicMaterial({ color: '#9fdcff', transparent: true, opacity: 0.18, depthWrite: false })));
-      for (const [w, h, x, y] of [[dw, 0.06, 0, ROOM.doorH / 2], [dw, 0.12, 0, -ROOM.doorH / 2 + 0.06], [0.05, ROOM.doorH, -dw / 2, 0], [0.05, ROOM.doorH, dw / 2, 0]]) d.add(at(box(w, h, 0.05, mat('#a7adbf')), x, y, 0));
+      for (const [w, h, x, y] of [[dw, 0.06, 0, ROOM.doorH / 2], [dw, 0.12, 0, -ROOM.doorH / 2 + 0.06], [0.05, ROOM.doorH, -dw / 2, 0], [0.05, ROOM.doorH, dw / 2, 0]]) d.add(at(box(w, h, 0.05, shiny('#a7adbf', 0.3, 0.85)), x, y, 0));
       d.add(at(box(0.04, 0.5, 0.06, mat('#d7dbe8')), s < 0 ? dw / 2 - 0.1 : -dw / 2 + 0.1, 0, 0.04));
       d.userData = { home: (dx[0] + dx[1]) / 2 + s * dw / 2, s, dw };
       d.position.set(d.userData.home, ROOM.doorH / 2, -0.12); scene.add(d);
@@ -381,6 +484,23 @@ function create(canvas) {
     scene.add(parts.frontWall);
   }
 
+  // ---------- the street from models (once they've loaded): buildings over the road, trees, a fountain, lamp posts ----------
+  function placeModels() {
+    if (!MODELS['building-small-a']) return;
+    for (const b of parts.opposite || []) b.visible = false;
+    const names = ['building-small-a', 'building-small-b', 'building-garage', 'building-small-c', 'building-small-d'];
+    let k = 0;
+    for (let x = -30; x <= 30; x += 6) {
+      if (run.rival && x > 0 && x < 9) continue; // the rival's shop stands there
+      const m = model(names[k++ % names.length], 5.6); if (!m) continue;
+      m.position.set(x, 0, -21); m.rotation.y = 0; scene.add(m);
+    }
+    // the road, with lamp posts along it
+    for (let x = -33; x <= 33; x += 6) { const m = model('road-straight-lightposts', 6.01); if (!m) break; m.position.set(x, 0.006, -12); m.rotation.y = Math.PI / 2; scene.add(m); parts.road.visible = false; }
+    for (const [x, z, n, w] of [[-11.5, -6.8, 'grass-trees-tall', 2.6], [11.5, -6.8, 'grass-trees', 2.6], [-17, -16.2, 'grass-trees-tall', 2.6], [17, -16.2, 'grass-trees', 2.6]]) { const m = model(n, w); if (m) { m.position.set(x, 0, z); scene.add(m); } }
+    const f = model('pavement-fountain', 3.2); if (f) { f.position.set(-9, 0, -16.4); scene.add(f); }
+  }
+
   // ---------- a megastore's annex: a second room with Level 2 above its front half, and stairs ----------
   function buildAnnex() {
     const a = L.ANNEX, dec = run.decor, wallM = mat(dec.walls.wall), H2 = 6.2, cx = (a.X0 + a.X1) / 2;
@@ -399,7 +519,7 @@ function create(canvas) {
     rail.position.set(cx - 0.45, UP_Y + 0.45, z1); scene.add(rail);
     scene.add(at(box(a.X1 - a.X0 - 0.9, 0.05, 0.06, mat('#c9cdd8')), cx - 0.45, UP_Y + 0.92, z1));
     const st = a.stair, n = 12, run2 = (st.Z0 - st.Z1) / n;
-    for (let i = 0; i < n; i++) scene.add(at(box(0.8, UP_Y * (i + 1) / n, run2, mat(i % 2 ? '#9aa0b5' : '#aab0c4')), st.X, (UP_Y * (i + 1) / n) / 2, st.Z0 - run2 * (i + 0.5)));
+    for (let i = 0; i < n; i++) scene.add(at(box(0.8, UP_Y * (i + 1) / n, run2, shiny(i % 2 ? '#9aa0b5' : '#aab0c4', 0.45, 0.6)), st.X, (UP_Y * (i + 1) / n) / 2, st.Z0 - run2 * (i + 0.5)));
     const l2 = new THREE.Mesh(new THREE.PlaneGeometry(1.4, 0.32), new THREE.MeshBasicMaterial({ map: signTex('LEVEL 2', { w: 256, h: 60, bg: '#0b0221', color: '#05d9e8', border: '#05d9e8' }) }));
     l2.position.set(cx, UP_Y + 1.9, z0 + 0.02); scene.add(l2);
     // lights: one over the annex floor, one over Level 2
@@ -409,11 +529,11 @@ function create(canvas) {
   // ---------- outside: pavement, road, buildings, the rival shop ----------
   function buildStreet() {
     const r = run;
-    const pave = new THREE.Mesh(new THREE.PlaneGeometry(60, 9), mat('#8a8496')); pave.rotation.x = -Math.PI / 2; pave.position.set(0, 0, -4.5); scene.add(pave);
+    const pave = new THREE.Mesh(new THREE.PlaneGeometry(60, 9), mat('#77718a')); pave.rotation.x = -Math.PI / 2; pave.position.set(0, 0, -4.5); scene.add(pave);
     scene.add(at(box(60, 0.15, 0.3, mat('#a49cb4')), 0, 0.07, -9));
     const roadTex = canvasTex(64, 64, (g) => { g.fillStyle = '#2a2833'; g.fillRect(0, 0, 64, 64); g.fillStyle = '#ffd23f'; g.fillRect(0, 30, 32, 4); }, [30, 1]);
     parts.roadTex = roadTex;
-    const road = new THREE.Mesh(new THREE.PlaneGeometry(60, 6), new THREE.MeshLambertMaterial({ map: roadTex })); road.rotation.x = -Math.PI / 2; road.position.set(0, 0.005, -12); scene.add(road);
+    const road = new THREE.Mesh(new THREE.PlaneGeometry(60, 6), new THREE.MeshLambertMaterial({ map: roadTex })); road.rotation.x = -Math.PI / 2; road.position.set(0, 0.005, -12); scene.add(road); parts.road = road;
     const far = new THREE.Mesh(new THREE.PlaneGeometry(60, 4), mat('#7a7486')); far.rotation.x = -Math.PI / 2; far.position.set(0, 0.01, -17); scene.add(far);
     // the ground everywhere, and the shops either side of ours (seen from above: their roofs)
     const ground = new THREE.Mesh(new THREE.PlaneGeometry(90, 90), mat('#5f5a6a')); ground.rotation.x = -Math.PI / 2; ground.position.set(0, -0.02, 0); scene.add(ground);
@@ -433,7 +553,7 @@ function create(canvas) {
       const w = 3 + (i * 37 % 5), h = 6 + (i * 53 % 9), x = -26 + i * 4.6 + (i % 3);
       const wm = new THREE.MeshLambertMaterial({ map: canvasTex(64, 128, (g) => { g.fillStyle = '#5d6f8f'; g.fillRect(0, 0, 64, 128); g.fillStyle = '#c8e6ff'; for (let y = 6; y < 124; y += 14) for (let xx = 6; xx < 60; xx += 14) g.fillRect(xx, y, 7, 8); }), emissive: '#ffd27a', emissiveIntensity: 0 });
       parts.winMats.push(wm);
-      scene.add(at(box(w, h, 3, wm), x, h / 2, -21));
+      const bld = at(box(w, h, 3, wm), x, h / 2, -21); scene.add(bld); (parts.opposite = parts.opposite || []).push(bld);
     }
     // the rival shop opposite
     if (r.rival) {
@@ -518,7 +638,11 @@ function create(canvas) {
     const sh = SHAPES[r.b.good] || SHAPES.coffee, geo = sh.geo();
     const cap = r.slots.length * 6 * 2;
     parts.packs = Array.from({ length: 6 }, (_, v) => {
-      const m = new THREE.InstancedMesh(geo, new THREE.MeshLambertMaterial({ map: packTex(r.b.good, v), emissive: r.b.good === 'signs' ? '#ff2a6d' : '#000', emissiveIntensity: r.b.good === 'signs' ? 0.25 : 0 }), cap);
+      // the packs' finish: metal cans, glossy cups and bottles, matte bags and boxes
+      const fin = { drinks: [0.32, 0.55], noodles: [0.45, 0], bottle: [0.2, 0], vinyl: [0.35, 0], holo: [0.3, 0.1] }[r.b.good] || [0.7, 0];
+      const pm = LOOK.rich ? new THREE.MeshStandardMaterial({ map: packTex(r.b.good, v), roughness: fin[0], metalness: fin[1] }) : new THREE.MeshLambertMaterial({ map: packTex(r.b.good, v) });
+      if (r.b.good === 'signs') { pm.emissive = new THREE.Color('#ff2a6d'); pm.emissiveIntensity = 0.25; }
+      const m = new THREE.InstancedMesh(geo, pm, cap);
       m.count = 0; scene.add(m); return m;
     });
     parts.packShape = sh;
@@ -558,7 +682,7 @@ function create(canvas) {
   // ---------- the fridge ----------
   function buildFridge() {
     const F = L.FRIDGE, x0 = xOf(F.x0, 0.27), x1 = xOf(F.x1, 0.27), w = x1 - x0, h = 2.3, z = 0.4, g = new THREE.Group();
-    g.add(at(box(w, h, 0.7, mat('#1b1b26')), (x0 + x1) / 2, h / 2, z));
+    g.add(at(box(w, h, 0.7, shiny('#1b1b26', 0.35, 0.5)), (x0 + x1) / 2, h / 2, z));
     g.add(at(new THREE.Mesh(new THREE.PlaneGeometry(w - 0.12, h - 0.45), new THREE.MeshBasicMaterial({ color: '#dff6ff' })), (x0 + x1) / 2, h / 2 - 0.1, z + 0.36));
     const bottles = new THREE.InstancedMesh(SHAPES.bottle.geo(), new THREE.MeshLambertMaterial({ color: '#fff' }), 40), m4 = new THREE.Matrix4(), col = new THREE.Color();
     let n = 0;
@@ -579,7 +703,7 @@ function create(canvas) {
   function buildCounter() {
     const z0 = zOf(0.79), w = 2 * Math.abs(xOf(0, 0.79)) + 0.4, g = new THREE.Group();
     const stone = canvasTex(256, 64, (gg) => { gg.fillStyle = '#c4bddc'; gg.fillRect(0, 0, 256, 64); for (let i = 0; i < 260; i++) { gg.fillStyle = Math.random() < 0.5 ? 'rgba(60,40,90,.35)' : 'rgba(255,255,255,.6)'; gg.fillRect(Math.random() * 256, Math.random() * 64, 2, 1.5); } });
-    g.add(at(box(w, 0.06, 0.85, new THREE.MeshLambertMaterial({ map: stone })), 0, 1.0, z0 + 0.4));
+    g.add(at(box(w, 0.06, 0.85, texMat(stone, 0.2)), 0, 1.0, z0 + 0.4)); // polished stone
     g.add(at(box(w, 0.97, 0.75, mat('#3b2350')), 0, 0.485, z0 + 0.42));
     g.add(at(box(w, 0.03, 0.03, mat('#ff2a6d')), 0, 1.0, z0 - 0.02));
     // drawers on our side
@@ -620,7 +744,7 @@ function create(canvas) {
     parts.boxMat = [mat('#a8713a'), mat('#a8713a'), mat('#c68d4f'), mat('#a8713a'), new THREE.MeshLambertMaterial({ map: canvasTex(64, 48, (g) => { g.fillStyle = '#a8713a'; g.fillRect(0, 0, 64, 48); g.fillStyle = '#e2c08a'; g.fillRect(28, 0, 8, 48); art.pack(g, run.b.good, 14, 44, 30, 0, 1); }) }), mat('#a8713a')];
     // the stockroom: a metal rack bay for each line, its name on top and a light (green, amber when low, flashing red when empty)
     parts.bays = L.lines.map((name, i) => {
-      const g = new THREE.Group(), steel = mat('#8a90a2'), col = ['#05d9e8', '#ff2a6d', '#ffd23f'][i];
+      const g = new THREE.Group(), steel = shiny('#8a90a2', 0.35, 0.8), col = ['#05d9e8', '#ff2a6d', '#ffd23f'][i];
       for (const x of [-0.25, 0.25]) for (const z of [-0.24, 0.24]) g.add(at(box(0.04, 1.5, 0.04, steel), x, 0.75, z));
       for (const y of [0.08, 0.62, 1.16]) g.add(at(box(0.52, 0.03, 0.5, mat('#5b6273')), 0, y, 0));
       for (const side of [1, -1]) {
@@ -773,6 +897,11 @@ function create(canvas) {
       const moving = p.kind === 'passer' || p.moving || p.state === 'street', sw = moving ? Math.sin(p.phase || 0) * 0.55 : 0;
       f.userData.legL.rotation.x = sw; f.userData.legR.rotation.x = -sw;
       f.userData.armL.rotation.x = -sw * 0.8; f.userData.armR.rotation.x = p.hand ? -Math.PI * 0.9 + Math.sin(r.t * 8) * 0.1 : sw * 0.8;
+      // knees bend as each leg swings back, elbows as each arm swings forward; a little bob with each step
+      const ph = p.phase || 0;
+      f.userData.kneeL.rotation.x = moving ? Math.max(0, Math.sin(ph)) * 0.95 : 0; f.userData.kneeR.rotation.x = moving ? Math.max(0, -Math.sin(ph)) * 0.95 : 0;
+      f.userData.elbowL.rotation.x = -0.18 - (moving ? Math.max(0, sw) * 0.6 : 0); f.userData.elbowR.rotation.x = p.hand ? -0.15 : -0.18 - (moving ? Math.max(0, -sw) * 0.6 : 0);
+      if (moving) f.position.y += Math.abs(Math.sin(ph)) * 0.035;
       const carrying = ((p.kind === 'clerk' || p.kind === 'me' || p.kind === 'staffer') && p.carry > 0) || (p.kind === 'courier' && p.box > 0 && !p.trolley);
       const trolley = p.kind === 'courier' && p.trolley;
       setHeld(f, 'trolley', trolley, () => {
@@ -785,7 +914,7 @@ function create(canvas) {
         return t;
       });
       if (trolley) { f.userData.armL.rotation.x = f.userData.armR.rotation.x = -1.0; const tb = f.userData.held_trolley.userData.boxes; tb.forEach((b, i) => { b.visible = p.box > 0 && i < Math.ceil(p.box / Math.max(1, r.cap * 3)) + 1; }); }
-      if (carrying) { f.userData.armL.rotation.x = f.userData.armR.rotation.x = -1.2; }
+      if (carrying) { f.userData.armL.rotation.x = f.userData.armR.rotation.x = -0.9; f.userData.elbowL.rotation.x = f.userData.elbowR.rotation.x = -0.6; }
       // looking along the shelf while they browse
       const head = f.userData.head, browsing = ['look', 'consider', 'wait', 'help', 'pick'].includes(p.state);
       if (head) head.rotation.y += ((browsing ? Math.sin(r.t * 1.1 + (p.phase || 0)) * 0.6 : 0) - head.rotation.y) * Math.min(1, dt * 4);
@@ -800,7 +929,7 @@ function create(canvas) {
     for (const [p, f] of figs) if (!seen.has(p)) { parts.dynamic.remove(f); figs.delete(p); dropFig(f); }
   }
   // free a figure's own geometry once they've gone (shared box shapes stay)
-  function dropFig(f) { f.traverse((o) => { if (o.geometry && o.geometry !== parts.boxGeo) o.geometry.dispose(); }); }
+  function dropFig(f) { f.traverse((o) => { if (o.geometry && o.geometry !== parts.boxGeo && !modelKeep.geo.has(o.geometry)) o.geometry.dispose(); }); }
   let packMatCache = null;
   const packMat = () => packMatCache || (packMatCache = new THREE.MeshLambertMaterial({ map: packTex(run.b.good, 0) }));
   function setHeld(f, key, on, make) {
@@ -841,16 +970,17 @@ function create(canvas) {
     if (r.weather === 'rain' || r.weather === 'snow') sky.lerp(new THREE.Color('#6a6f7c'), 0.5);
     else if (r.weather === 'cloudy') sky.lerp(new THREE.Color('#8a8f9c'), 0.3);
     scene.background = sky;
-    parts.sun.intensity = 1.6 * (1 - night);
+    parts.sun.intensity = 1.6 * (1 - night) * (LOOK.rich ? 0.55 : 1);
     parts.sun.color.set(k > 0.6 ? '#ffb070' : '#fff3dd');
-    parts.hemi.intensity = (0.8 + 0.7 * (1 - night)) * (0.3 + 0.7 * lights) * (shadowsOn ? 0.55 : 1);
-    parts.amb.intensity = (0.3 + 0.45 * lights) * (shadowsOn ? 0.6 : 1);
-    parts.key.intensity = (shadowsOn ? 1.9 : 0.7) * lights;
+    const fill = LOOK.rich ? 0.6 : 1; // the environment already lights a rich scene from all round
+    parts.hemi.intensity = (0.8 + 0.7 * (1 - night)) * (0.3 + 0.7 * lights) * (shadowsOn ? 0.55 : 1) * fill;
+    parts.amb.intensity = (0.3 + 0.45 * lights) * (shadowsOn ? 0.6 : 1) * fill;
+    parts.key.intensity = (shadowsOn ? (LOOK.rich ? 1.45 : 1.9) : 0.7) * lights;
     for (const pl of parts.pools) pl.material.opacity = 0.22 * lights * (0.6 + 0.4 * night);
     if (parts.signGlow) parts.signGlow.material.opacity = (0.08 + 0.5 * night) * (r.power ? 0 : 1);
     parts.openGlow.material.opacity = !r.closed && r.intro <= 0.3 && !r.power ? 0.12 + 0.45 * night : 0;
-    for (const l of parts.annexLights || []) l.intensity = 7 * lights;
-    for (const l of parts.lamps) { l.light.intensity = 9 * lights; l.bulb.material.color.set(lights > 0.5 ? '#fff2c4' : '#4a4a40'); }
+    for (const l of parts.annexLights || []) l.intensity = 7 * lights * fill;
+    for (const l of parts.lamps) { l.light.intensity = 9 * lights * (LOOK.rich ? 0.42 : 1); l.bulb.material.color.set(lights > 0.5 ? '#fff2c4' : '#4a4a40'); }
     for (const wm of parts.winMats) wm.emissiveIntensity = night * 0.9;
     for (const h of parts.streetLamps || []) h.material.color.set(night > 0.1 ? '#fff2c4' : '#8a8a96');
     // doors and shutters
@@ -931,9 +1061,17 @@ function create(canvas) {
   function syncVehicles() {
     const r = run;
     parts.cars = parts.cars || new Map();
-    for (const c of r.cars) if (!parts.cars.has(c)) { const m = car(c.color); m.position.z = c.dir > 0 ? -11 : -13; scene.add(m); parts.cars.set(c, m); }
+    for (const c of r.cars) if (!parts.cars.has(c)) {
+      const tk = ['vehicle-truck-green', 'vehicle-truck-red', 'vehicle-truck-purple'][(c.speed * 100 | 0) % 3];
+      let m = car(c.color);
+      if ((c.speed * 1000 | 0) % 2 && MODELS[tk]) { m = model(tk, 4.2); m.children[0].rotation.y = -Math.PI / 2; } // some trucks among the cars
+      m.position.z = c.dir > 0 ? -11 : -13; scene.add(m); parts.cars.set(c, m);
+    }
     for (const [c, m] of parts.cars) { if (!r.cars.includes(c)) { scene.remove(m); dropFig(m); parts.cars.delete(c); } else { m.position.x = xOf(c.x, 0.16); m.rotation.y = c.dir > 0 ? 0 : Math.PI; } }
     // the delivery van
+    if (r.van && !parts.van && MODELS['vehicle-truck-purple']) { // the delivery truck
+      parts.van = model('vehicle-truck-purple', 4.6); parts.van.children[0].rotation.y = -Math.PI / 2; scene.add(parts.van);
+    }
     if (r.van && !parts.van) {
       parts.van = new THREE.Group();
       parts.van.add(at(box(4, 2.4, 2, mat('#e8e8f2')), -0.6, 1.4, 0)); parts.van.add(at(box(1.6, 1.7, 1.9, mat('#05d9e8')), 1.9, 1.05, 0));
@@ -1005,11 +1143,15 @@ function create(canvas) {
     if (!scene) return;
     const W = canvas.clientWidth, H = canvas.clientHeight, dpr = Math.min(window.devicePixelRatio || 1, run.dprCap || 2);
     if (!W || !H) return;
-    if (W !== lastW || H !== lastH || dpr !== lastDpr) { renderer.setPixelRatio(dpr); renderer.setSize(W, H, false); lastW = W; lastH = H; lastDpr = dpr; }
-    if (shadowsOn && (run.dprCap || 2) < 1.5) setShadows(false); // the phone's struggling: drop the shadows first
+    if (W !== lastW || H !== lastH || dpr !== lastDpr) {
+      renderer.setPixelRatio(dpr); renderer.setSize(W, H, false); lastW = W; lastH = H; lastDpr = dpr;
+      if (composer) { composer.setPixelRatio(dpr); composer.setSize(W, H); }
+    }
+    if (bloomOn && (run.dprCap || 2) < 1.5) setBloom(false); // the phone's struggling: drop the glow, then the shadows
+    if (shadowsOn && (run.dprCap || 2) < 1.5) setShadows(false);
     placeCamera(W, H, dt);
     updatePacks(); syncPeople(dt); syncStaff(); syncWorld(dt);
-    renderer.render(scene, camera);
+    if (bloomOn) composer.render(dt); else renderer.render(scene, camera);
   }
 
   // ---------- from the screen to the shop and back ----------
@@ -1065,14 +1207,14 @@ function create(canvas) {
   // slide the view (two fingers): along the screen, whichever way round you're looking
   function pan(dx, dy) {
     const k = 0.012 * view.dist * 2, mx = -dx * k, mz = -dy * k, c = Math.cos(view.yaw), sn = Math.sin(view.yaw);
-    view.tx = clamp(view.tx + mx * c + mz * sn, -4, run && run.b.tier >= 2 ? 8 : 4); view.tz = clamp(view.tz - mx * sn + mz * c, -6, 5);
+    view.tx = clamp(view.tx + mx * c + mz * sn, -4, run && run.b.tier >= 2 ? 8 : 4); view.tz = clamp(view.tz - mx * sn + mz * c, -20, 5); // out over the street, too
   }
   // turn round the shop (one finger): sideways all the way round, up and down a little
   function orbit(dx, dy) { view.yaw -= dx * 0.009; view.tilt = clamp(view.tilt + dy * 0.004, -0.5, 0.7); }
   const rotated = () => Math.abs(Math.sin(view.yaw / 2)) > 0.01 || Math.abs(view.tilt) > 0.01 || Math.abs(view.tx) + Math.abs(view.tz) > 0.05;
   function resetView() { view.dist = 1; view.tx = 0; view.tz = 0; view.yaw = 0; view.tilt = 0; }
   // a picture of the shop as it is now (photo mode)
-  function snapshot() { renderer.render(scene, camera); return canvas.toDataURL('image/jpeg', 0.92); }
+  function snapshot() { if (bloomOn) composer.render(0); else renderer.render(scene, camera); return canvas.toDataURL('image/jpeg', 0.92); }
   const zoomed = () => view.dist < 0.98;
 
   return { info, _shadows: () => shadowsOn, _mem: () => renderer.info.memory, _scene: () => scene, _camera: camera, attach, detach, render, project, toFlatAt, unitAt, unitRect, slotOnScreen, zoom, zoomLevel, streetness, orbit, rotated, snapshot, pan, resetView, zoomed, xOf, zOf };
