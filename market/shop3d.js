@@ -344,6 +344,7 @@ function create(canvas) {
   function setShadows(on) {
     shadowsOn = on;
     renderer.shadowMap.enabled = on; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = true; // redrawn every other frame (see render)
     parts.key.castShadow = on;
     if (scene) scene.traverse((o) => { if (o.material && o.receiveShadow) o.material.needsUpdate = true; });
   }
@@ -943,12 +944,15 @@ function create(canvas) {
   // ---------- people ----------
   function syncPeople(dt) {
     const r = run, seen = new Set();
+    let built = 0; // building a person takes a moment: at most two new ones a frame, so a crowd doesn't stutter
     const all = r.people.concat([r.clerk], r.van && r.van.courier ? [r.van.courier] : [], r.me ? [r.me] : [], r.staff.filter((st) => st.body).map((st) => st.body));
     for (const p of all) {
       if (p.kind === 'clerk' && (p.state === 'till' || (p.state === 'toTill' && p.y > L.L.counter - 0.04))) continue;
       seen.add(p);
       let f = figs.get(p);
+      if (!f && built >= 2) continue;
       if (!f) {
+        built++;
         f = figure(p.look, { apron: p.kind === 'clerk' || p.kind === 'me' || p.kind === 'staffer' ? r.decor.uniform.color : null });
         if (p.child) f.scale.setScalar(0.66);
         f.userData.yaw = 0; f.userData.last = null;
@@ -1250,6 +1254,7 @@ function create(canvas) {
 
   let lastW = 0, lastH = 0, lastDpr = 0;
   const info = () => renderer.info.render;
+  let frameN = 0;
   function render(dt) {
     if (!scene) return;
     const W = canvas.clientWidth, H = canvas.clientHeight, dpr = Math.min(window.devicePixelRatio || 1, run.dprCap || 2);
@@ -1262,6 +1267,7 @@ function create(canvas) {
     if (shadowsOn && (run.dprCap || 2) < 1.5) setShadows(false);
     placeCamera(W, H, dt);
     updatePacks(); syncPeople(dt); syncStaff(); syncWorld(dt);
+    if (shadowsOn && (frameN++ & 1) === 0) renderer.shadowMap.needsUpdate = true; // shadows move at half the frame rate: half the cost
     if (bloomOn) composer.render(dt); else renderer.render(scene, camera);
   }
 

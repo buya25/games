@@ -240,12 +240,16 @@ window.NeonShopArt = (() => {
   }
   function saveDecor(d) { try { localStorage.setItem(DECOR_KEY, JSON.stringify(d)); } catch { /* ignore */ } }
   // the chosen item in each category
+  // while you visit a friend's shop, their decor (just for the visit)
+  let override = null;
+  function setOverride(d) { override = d || null; }
   function decor() {
     const d = loadDecor(), out = {};
+    if (override) for (const k of Object.keys(DECOR)) if (DECOR[k].some((x) => x.id === override[k])) d[k] = override[k];
     for (const k of Object.keys(DECOR)) out[k] = DECOR[k].find((x) => x.id === d[k]);
     return out;
   }
   const owns = (d, cat, id) => DECOR[cat].find((x) => x.id === id).cost === 0 || d.owned.includes(`${cat}:${id}`);
 
-  return { DECOR, DECOR_NAMES, loadDecor, saveDecor, decor, owns, pack, plant, bin, wetFloor, basketStack, camera, clock, lamp, palettes: (good) => (PALETTES[good] || PALETTES.drinks).length };
+  return { DECOR, DECOR_NAMES, loadDecor, saveDecor, decor, setOverride, owns, pack, plant, bin, wetFloor, basketStack, camera, clock, lamp, palettes: (good) => (PALETTES[good] || PALETTES.drinks).length };
 })();

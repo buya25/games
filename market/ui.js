@@ -28,7 +28,8 @@
   const youLabel = () => (playerName() === 'You' ? 'You' : `${playerName()} (you)`);
   const playerLook = () => Object.assign({ outfit: 'classic', skin: 2, hair: 'short', hairColor: 0 }, store.get('neonDash.look', {}));
 
-  function save() { if (s) store.set(SAVE, s); }
+  let visiting = null; // a friend's shop you're looking round: nothing is saved
+  function save() { if (s && !visiting) store.set(SAVE, s); }
   function toast(msg) {
     const t = $('toast');
     t.textContent = msg;
@@ -314,6 +315,7 @@
         ${b.kind === 'stall' ? `<button class="btn" data-act="supply:${b.id}">📦 Order stock</button>` : ''}
         ${b.kind === 'stall' ? `<button class="btn" data-act="arrange:${b.id}">🧱 Arrange shop</button>` : ''}
         ${b.kind === 'stall' && b.history && b.history.length ? `<button class="btn" data-act="report:${b.id}">📊 Report</button>` : ''}
+        ${b.kind === 'stall' ? `<button class="btn" data-act="shareshop:${b.id}">🔗 Share shop</button>` : ''}
         ${here && b.kind === 'stall' ? `<button class="btn cyan" data-act="restock:${b.id}">Restock from cargo (${s.cargo[b.good] || 0})</button>` : ''}
         ${here && b.stock > 0 ? `<button class="btn" data-act="collect:${b.id}">Load into cargo</button>` : ''}
         ${up ? `<button class="btn primary" data-act="upgrade:${b.id}">Upgrade to ${nextName} · ${money(up)}</button>` : ''}
@@ -444,11 +446,13 @@
       <p class="section-title">⚙️ Graphics</p>
       <div class="decor">${[['auto', '🪄 Auto', 'Shadows, reflections and glow when your phone keeps up'], ['high', '✨ Sharp', 'Everything on: shadows, reflections, glowing neon'], ['low', '⚡ Smooth', 'Simple lighting: fastest, for older phones']].map(([id, name, desc]) =>
         `<button class="dec${NeonShop.getGfx() === id ? ' on' : ''}" data-gfx="${id}"><b>${name}</b><small>${NeonShop.getGfx() === id ? '✓ In use' : desc}</small></button>`).join('')}</div>
+      <div class="decor"><button class="dec${NeonShop.getSaver() ? ' on' : ''}" id="saverBtn"><b>🔋 Battery saver</b><small>${NeonShop.getSaver() ? '✓ On: 30 frames a second' : `30 frames a second for longer play. Always on with ⚡ Smooth${NeonShop.lowBattery() ? '; on now, your battery is low' : ', and when your battery is low'}.`}</small></button></div>
       ${Object.keys(A.DECOR).map((cat) => `<p class="section-title">${A.DECOR_NAMES[cat]}</p><div class="decor">${A.DECOR[cat].map((it) => {
         const own = A.owns(d, cat, it.id), on = d[cat] === it.id;
         return `<button class="dec${on ? ' on' : ''}" data-dec="${cat}:${it.id}">${swatch(cat, it)}<b>${it.name}</b><small>${on ? '✓ In use' : own ? 'Owned' : `🪙 ${it.cost}`}</small></button>`;
       }).join('')}</div>`).join('')}`);
     for (const el of document.querySelectorAll('[data-view]')) el.onclick = () => { NeonShop.setView(el.dataset.view); openDecor(); toast(el.dataset.view === '3d' ? '🧊 3D shop: opens next time you run a shop' : '🖼️ Classic shop view'); };
+    if ($('saverBtn')) $('saverBtn').onclick = () => { NeonShop.setSaver(!NeonShop.getSaver()); openDecor(); toast(NeonShop.getSaver() ? '🔋 Battery saver on: 30 frames a second' : '🔋 Battery saver off'); };
     for (const el of document.querySelectorAll('[data-gfx]')) el.onclick = () => { NeonShop.setGfx(el.dataset.gfx); openDecor(); toast('Graphics: ' + el.textContent.trim().split('\n')[0]); };
     for (const el of document.querySelectorAll('[data-dec]')) el.onclick = () => {
       const [cat, id] = el.dataset.dec.split(':'), item = A.DECOR[cat].find((x) => x.id === id), d2 = A.loadDecor();
@@ -475,6 +479,7 @@
     else if (act === 'supply') openSupplies(b);
     else if (act === 'arrange') openArrange(b);
     else if (act === 'report') openReport(b);
+    else if (act === 'shareshop') shareShop(b);
     else if (act === 'upgrade') result(T.upgradeBusiness(s, id), 'Upgraded!');
     else if (act === 'product') openProductPicker('Change product', (g) => { if (result(T.setProduct(s, id, g), `Now ${b.kind === 'stall' ? 'selling' : 'making'} ${T.G[g].name}`)) closeSheet(); }, b.kind);
     else if (act === 'sellbiz') {
@@ -521,7 +526,7 @@
     document.body.classList.add('noscroll');
     $('shopTitle').textContent = `${G.icon} ${T.STALLS[b.tier].name} · ${T.D[b.district].name}`;
     let takings = 0, lastKey = '';
-    coach = !store.get('neonTycoon.coached', false) && (location.hash !== '#test' || store.get('neonTycoon.coachTest', false)) ? { i: 0 } : null;
+    coach = !visiting && !store.get('neonTycoon.coached', false) && (location.hash !== '#test' || store.get('neonTycoon.coachTest', false)) ? { i: 0 } : null;
     const hud = (run) => {
       coachTick(run);
       if (run) takings = run.revenue;
@@ -571,6 +576,7 @@
       onTick: hud,
       onEnd: (sum) => {
         if (coach) coachEnd();
+        if (visiting) { view.classList.add('hidden'); view.classList.remove('photo'); document.body.classList.remove('noscroll'); visitEnd(sum); return; }
         view.classList.add('hidden'); view.classList.remove('photo');
         document.body.classList.remove('noscroll');
         save(); render();
@@ -1086,6 +1092,50 @@
     if (s.finished) for (const b of $('sheetBody').querySelectorAll('[data-close]')) b.onclick = showSeasonEnd;
   }
 
+  // ---------- visit a friend's shop: a link carries its layout, decor and stock, and opens a copy to walk round ----------
+  const b64 = (str) => btoa(unescape(encodeURIComponent(str))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const unb64 = (str) => decodeURIComponent(escape(atob(str.replace(/-/g, '+').replace(/_/g, '/'))));
+  function encodeShop(b) {
+    const d = window.NeonShopArt.loadDecor(), dec = {};
+    for (const k of Object.keys(window.NeonShopArt.DECOR)) dec[k] = d[k];
+    return b64(JSON.stringify({ v: 1, n: playerName() === 'You' ? '' : playerName(), g: b.good, t: b.tier, d: b.district, L: b.layout || {}, P: b.promos || {}, F: b.furniture || {}, lp: b.linePrice || null, u: b.upgrades || {}, r: b.rating || 0, m: b.mult || T.RETAIL, dec, st: T.staffOf(b).map((m) => [m.name, m.skill, m.look || 0]) }));
+  }
+  function decodeShop(code) {
+    const v = JSON.parse(unb64(code));
+    if (!v || v.v !== 1 || !T.G[v.g] || !T.D[v.d] || !T.STALLS[v.t]) throw new Error('bad shop');
+    return v;
+  }
+  async function shareShop(b) {
+    const url = `${location.origin}${location.pathname}?visit=${encodeShop(b)}`;
+    const text = `🏪 Come and look round my ${T.STALLS[b.tier].name.toLowerCase()} in Neon Tycoon!`;
+    try { if (navigator.share) { await navigator.share({ title: 'My Neon Tycoon shop', text, url }); return; } } catch { /* fall back to copying */ }
+    try { await navigator.clipboard.writeText(`${text} ${url}`); toast('🔗 Link copied: send it to a friend'); } catch { openSheet(`<h2>🔗 Share your shop<button class="close" data-close>✕</button></h2><p>Send this link to a friend:</p><textarea class="sharebox" readonly>${esc(url)}</textarea>`); }
+  }
+  let pendingVisit = null;
+  // a copy of their shop in a throwaway season: serve, walk round, take photos; nothing is saved
+  function openVisit(v) {
+    const vs = T.newGame(T.newSeed(), { name: v.n });
+    vs.district = v.d; vs.cash = 1e6; vs.debt = 0; vs.day = 9;
+    T.openBusiness(vs, 'stall', v.g);
+    const b = vs.businesses[0];
+    Object.assign(b, { tier: v.t, layout: v.L, promos: v.P, furniture: v.F, upgrades: v.u, rating: v.r || undefined, mult: v.m });
+    if (v.lp) b.linePrice = v.lp;
+    b.stock = T.unitsPerDay(T.STALLS[b.tier].cap, b.good) * 2;
+    b.staff = (v.st || []).slice(0, T.STAFF_SLOTS[b.tier]).map(([name, skill, look]) => ({ name, skill: T.SKILLS[skill] ? skill : 'cashier', wage: 0, morale: 80, look }));
+    visiting = { name: v.n || 'A friend' };
+    window.NeonShopArt.setOverride(v.dec);
+    s = vs;
+    openShop(b);
+    $('shopTitle').textContent = `👀 ${visiting.name}'s ${T.STALLS[b.tier].name.toLowerCase()}`;
+  }
+  function visitEnd(m) {
+    const who = visiting.name;
+    visiting = null; window.NeonShopArt.setOverride(null); s = null;
+    showTitle();
+    openSheet(`<h2>👋 Thanks for visiting!</h2><p>You looked round <b>${esc(who)}</b>'s shop and served ${m.served} shopper${m.served === 1 ? '' : 's'} for ${money(m.revenue + (m.extras || 0))}. Nothing from the visit is saved.</p>
+      <p class="muted">Want your own? Start a season, open a stall and share it back with 🔗 Share shop.</p><button class="btn primary" data-close>Done</button>`);
+  }
+
   // ---------- season end, coins, challenges ----------
   function encodeChallenge() {
     const nw = s.hist.nw;
@@ -1141,6 +1191,8 @@
     s = null;
     $('continueBtn').classList.toggle('hidden', !(saved && !saved.finished && saved.v === 1));
     if (saved) $('contDay').textContent = saved.day;
+    $('visitBtn').classList.toggle('hidden', !pendingVisit);
+    if (pendingVisit) $('visitBtn').textContent = `🏪 VISIT ${(pendingVisit.n || 'A FRIEND').toUpperCase()}'S SHOP`;
     const box = $('challengeBox');
     box.classList.toggle('hidden', !pendingChallenge);
     if (pendingChallenge) {
@@ -1215,7 +1267,13 @@
     history.replaceState(null, '', location.pathname);
     try { pendingChallenge = decodeChallenge(code); } catch { toast('That challenge link looks broken.'); }
   }
+  const vcode = new URLSearchParams(location.search).get('visit');
+  if (vcode) {
+    history.replaceState(null, '', location.pathname + location.hash);
+    try { pendingVisit = decodeShop(vcode); } catch { toast('That shop link looks broken.'); }
+  }
+  $('visitBtn').onclick = () => { if (pendingVisit) openVisit(pendingVisit); };
   showTitle();
 
-  if (location.hash === '#test') window.tycoonTest = { state: () => s, T, endDay, encodeChallenge, shop: window.NeonShop };
+  if (location.hash === '#test') window.tycoonTest = { state: () => s, T, endDay, encodeChallenge, encodeShop, shop: window.NeonShop };
 })();

@@ -259,3 +259,5 @@ main > * { flex-shrink: 0; }
 .coachme { outline: 3px solid var(--gold) !important; outline-offset: 2px; animation: coachpulse 1s ease-in-out infinite; position: relative; z-index: 3; }
 @keyframes coachpulse { 50% { outline-color: rgba(255, 210, 63, .25); } }
 .shopview.photo .coach { visibility: hidden; }
+.sharebox { width: 100%; height: 96px; margin-top: 8px; padding: 8px; border-radius: 10px; background: var(--card); color: var(--ink); border: 1px solid var(--line); font-size: 12px; }
+#visitBtn { margin-top: 10px; border-color: var(--cyan); }

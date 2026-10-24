@@ -97,6 +97,19 @@ week's profit; and the Bank tab shows a 📒 cash flow (sales, rent, wages, stoc
 scanner, the door chime, footsteps, and the street getting louder when you zoom toward the windows. Phones without WebGL (or anyone who picks 🖼️ Classic under Decorate → Shop view)
 get the drawn 2D shop.
 
+**A living city.** The weather and the season change what sells (cold drinks in a heatwave, noodles and coffee in
+the snow; a forecast shows tomorrow's), and holidays bring decorations and crowds. Shoppers are office workers,
+students, families and seniors, each with their own budget, patience and busy hours, dressed for the season.
+The rival over the road fights back if you undercut them, copies your promotions and poaches regulars; shoppers
+who think it's cheaper over there walk across the road unless you 🤝 price match or run a 💳 loyalty scheme.
+Some days bring an event: a health inspector, a celebrity, a burst pipe or an undercover food critic.
+
+**More to run.** Hire a 🧑‍💼 manager to reorder stock at shops you don't run yourself (steady, upseller or
+penny-pincher; they level up), place and turn 🪑 furniture in Arrange (bench, vending and arcade machines,
+a big plant, a trend display), and 🔗 share a shop: the link opens a copy of it for a friend to walk round.
+New players get a getting-started checklist and a coach on their first shop day; 🔋 battery saver caps the
+shop at 30 frames a second.
+
 Challenges: after a season, share a link; your friend plays the same seed (same prices, news and share
 moves) and sees your net worth next to theirs all season.
 

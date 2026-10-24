@@ -93,6 +93,14 @@ window.NeonShop = (() => {
   const GFX_KEY = 'neonTycoon.gfx', GFX_AUTO_KEY = 'neonTycoon.gfxAuto';
   const getGfx = () => { try { return localStorage.getItem(GFX_KEY) || 'auto'; } catch { return 'auto'; } };
   function setGfx(mode) { try { localStorage.setItem(GFX_KEY, mode); localStorage.removeItem(GFX_AUTO_KEY); } catch { /* ignore */ } if (run) run.dprCap = startCap(); }
+  // battery saver: 30 frames a second instead of 60 (on with ⚡ Smooth, when you turn it on, or when the battery is low)
+  const SAVER_KEY = 'neonTycoon.saver';
+  let battery = null;
+  try { if (navigator.getBattery) navigator.getBattery().then((bt) => { battery = bt; }).catch(() => {}); } catch { /* ignore */ }
+  const getSaver = () => { try { return localStorage.getItem(SAVER_KEY) === 'on'; } catch { return false; } };
+  function setSaver(on) { try { localStorage.setItem(SAVER_KEY, on ? 'on' : 'off'); } catch { /* ignore */ } if (run) run.fpsCap = saverOn(); }
+  const lowBattery = () => !!(battery && !battery.charging && battery.level < 0.2);
+  const saverOn = () => getSaver() || getGfx() === 'low' || lowBattery();
   // the shop in 3D (WebGL), or the classic drawn view
   const VIEW_KEY = 'neonTycoon.view';
   const has3D = () => !!(window.NeonShop3D && window.NeonShop3D.supported());
@@ -107,7 +115,7 @@ window.NeonShop = (() => {
   }
   // called each frame with the real time since the last one
   function adaptQuality(r, real) {
-    if (getGfx() !== 'auto' || r.intro > 0 || r.ending || document.hidden) return;
+    if (getGfx() !== 'auto' || r.intro > 0 || r.ending || document.hidden || r.fpsCap) return;
     const q = r.q || (r.q = { t: 0, n: 0, sum: 0 });
     q.t += real; q.n++; q.sum += real;
     if (q.t < 2.5) return;
@@ -697,8 +705,12 @@ window.NeonShop = (() => {
       try { r3dCache = r3dCache || window.NeonShop3D.create(ui.canvas3d); r3dCache.attach(run); run.r3d = r3dCache; }
       catch (e) { console.warn('3D shop unavailable', e); run.r3d = null; ui.canvas3d.style.display = 'none'; }
     } else if (ui.canvas3d) ui.canvas3d.style.display = 'none';
+    run.fpsCap = saverOn();
     const loop = (now) => {
       if (!run) return;
+      if (run.fpsCap && now - (run.lastFrame || 0) < 1000 / 32) { run.raf = requestAnimationFrame(loop); return; } // battery saver: every other frame
+      run.lastFrame = now;
+      if ((run.capCheck = (run.capCheck || 0) + 1) % 120 === 0) run.fpsCap = saverOn(); // the battery may have run low
       const real = (now - run.last) / 1000, dt = Math.min(0.05, real);
       run.last = now;
       if (real > 0 && real < 0.5) adaptQuality(run, real);
@@ -3749,7 +3761,7 @@ window.NeonShop = (() => {
   };
 
   return {
-    getGfx, setGfx, open, serve, refill, order, setPrice, closeEarly, clock, frontWaiting, stockInfo, pointerDown, pointerMove, pointerUp, tap, zoomBy, panBy, resetZoom,
+    getGfx, setGfx, getSaver, setSaver, lowBattery, open, serve, refill, order, setPrice, closeEarly, clock, frontWaiting, stockInfo, pointerDown, pointerMove, pointerUp, tap, zoomBy, panBy, resetZoom,
     _route: (a, b) => routeTo(a, b), _spot: (ui) => unitSpot(UNITS[ui]), _zone: (p) => zoneOf(p),
     _samples: () => Object.keys(SAMPLES),
     orbit, snapshot, is3D: () => !!(run && run.r3d),
